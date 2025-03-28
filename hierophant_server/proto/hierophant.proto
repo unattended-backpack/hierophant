@@ -1,0 +1,56 @@
+syntax = "proto3";
+package network;
+
+// The ProverNetwork service definition
+service ProverNetwork {
+  // Get a program by verification key hash
+  rpc GetProgram (GetProgramRequest) returns (GetProgramResponse);
+  
+  // Get the nonce for an account
+  rpc GetNonce (GetNonceRequest) returns (GetNonceResponse);
+}
+
+// Program structure
+message Program {
+  // The verification key hash
+  bytes vk_hash = 1;
+  
+  // The verification key
+  bytes vk = 2;
+  
+  // The program resource identifier
+  string program_uri = 3;
+  
+  // The optional name of the program
+  optional string name = 4;
+  
+  // The owner of the program
+  bytes owner = 5;
+  
+  // The unix timestamp of when the program was created
+  uint64 created_at = 6;
+}
+
+// Request to get a program
+message GetProgramRequest {
+  // The verification key hash of the program
+  bytes vk_hash = 1;
+}
+
+// Response with the program details
+message GetProgramResponse {
+  // The program details
+  optional Program program = 1;
+}
+
+// Request to get a nonce
+message GetNonceRequest {
+  // The address of the account
+  bytes address = 1;
+}
+
+// Response with the nonce
+message GetNonceResponse {
+  // The nonce of the account
+  uint64 nonce = 1;
+}
