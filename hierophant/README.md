@@ -7,7 +7,7 @@ contemplants.
 > "A hierophant is an interpreter of sacred mysteries and arcane principles."
 [wikipedia](https://en.wikipedia.org/wiki/Hierophant)
 
-> "One who contemplates."
+> "Contemplant: One who contemplates."
 [wikipedia](https://en.wiktionary.org/wiki/contemplant)
 
 # Developing
