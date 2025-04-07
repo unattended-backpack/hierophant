@@ -2,10 +2,11 @@
 
 use anyhow::{Context, Result};
 use axum::{
+    Json, Router,
     extract::{DefaultBodyLimit, Path, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use log::{error, info};
 // use network_lib::{
@@ -15,14 +16,15 @@ use log::{error, info};
 use reqwest::Client;
 use serde::{Deserialize, Deserializer, Serialize};
 use sp1_sdk::{
+    CudaProver, Prover, ProverClient, SP1_CIRCUIT_VERSION, SP1Proof, SP1ProofMode,
+    SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
     network::proto::network::{ExecutionStatus, FulfillmentStatus},
-    utils, CudaProver, Prover, ProverClient, SP1Proof, SP1ProofMode, SP1ProofWithPublicValues,
-    SP1ProvingKey, SP1Stdin, SP1VerifyingKey, SP1_CIRCUIT_VERSION,
+    utils,
 };
 use std::{collections::HashMap, env, fmt::Display, sync::Arc};
 use tokio::{
     sync::RwLock,
-    time::{sleep, Duration},
+    time::{Duration, sleep},
 };
 use tower_http::limit::RequestBodyLimitLayer;
 
@@ -32,11 +34,11 @@ const WORKER_REGISTER_ENDPOINT: &str = "worker";
 // const AGG_ELF: &[u8] = include_bytes!("../../../../elf/aggregation-elf");
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct WorkerInfo {
+pub struct WorkerConfig {
     pub name: String,
 }
 
-impl Display for WorkerInfo {
+impl Display for WorkerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name)
     }
@@ -79,14 +81,16 @@ async fn main() -> Result<()> {
     //     proof_store,
     //     prover,
     // };
+    let worker_config = WorkerConfig {
+        name: "martin luther".into(),
+    };
 
     let app = Router::new()
         .route("/request_proof", post(request_proof))
-        // .route("/request_agg_proof", post(request_agg_proof))
-        // .route("/status/:proof_id", get(get_proof_status))
+        .route("/status/:proof_id", get(get_proof_status))
         .layer(DefaultBodyLimit::disable())
-        .layer(RequestBodyLimitLayer::new(102400 * 1024 * 1024));
-    // .with_state(worker_config);
+        .layer(RequestBodyLimitLayer::new(102400 * 1024 * 1024))
+        .with_state(worker_config);
 
     let port = env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
@@ -101,7 +105,7 @@ async fn main() -> Result<()> {
 
         // TODO: is it a vulnerability to send this info over the network
         let client = Client::new();
-        let worker_info = WorkerInfo {
+        let worker_info = WorkerConfig {
             name: "contemplant".to_string(),
         };
 
@@ -143,36 +147,60 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn request_span_proof(
+// TODO:
+#[derive(Serialize, Deserialize)]
+struct ContemplantProofRequest {}
+
+async fn request_proof(
     State(state): State<WorkerConfig>,
-    Json(payload): Json<WorkerSpanProofRequest>,
-) -> Result<StatusCode, AppError> {
-    info!(
-        "Received proof request for range {}, {} with id {}",
-        payload.start, payload.end, payload.proof_id
-    );
-
-    let initial_status = ProofStatus {
-        fulfillment_status: FulfillmentStatus::Assigned.into(),
-        execution_status: ExecutionStatus::Unexecuted.into(),
-        proof: Vec::new(),
-    };
-    state
-        .proof_store
-        .write()
-        .await
-        .insert(payload.proof_id, initial_status);
-
-    locally_prove(
-        state.clone(),
-        payload.mock_mode,
-        payload.proof_id,
-        payload.into(),
-    )
-    .await?;
-
+    Json(payload): Json<ContemplantProofRequest>,
+) -> axum::response::Result<StatusCode> {
+    // TODO:
     Ok(StatusCode::OK)
 }
+
+// TODO:
+#[derive(Serialize, Deserialize)]
+struct ProofStatus {}
+
+async fn get_proof_status(
+    State(state): State<WorkerConfig>,
+    Path(proof_id): Path<String>,
+) -> axum::response::Result<(StatusCode, Json<ProofStatus>)> {
+    // TODO:
+    let proof_status = ProofStatus {};
+    Ok((StatusCode::OK, Json(proof_status)))
+}
+// async fn request_span_proof(
+//     State(state): State<WorkerConfig>,
+//     Json(payload): Json<WorkerSpanProofRequest>,
+// ) -> Result<StatusCode, AppError> {
+//     info!(
+//         "Received proof request for range {}, {} with id {}",
+//         payload.start, payload.end, payload.proof_id
+//     );
+//
+//     let initial_status = ProofStatus {
+//         fulfillment_status: FulfillmentStatus::Assigned.into(),
+//         execution_status: ExecutionStatus::Unexecuted.into(),
+//         proof: Vec::new(),
+//     };
+//     state
+//         .proof_store
+//         .write()
+//         .await
+//         .insert(payload.proof_id, initial_status);
+//
+//     locally_prove(
+//         state.clone(),
+//         payload.mock_mode,
+//         payload.proof_id,
+//         payload.into(),
+//     )
+//     .await?;
+//
+//     Ok(StatusCode::OK)
+// }
 
 // async fn request_agg_proof(
 //     State(state): State<WorkerConfig>,
@@ -225,6 +253,7 @@ async fn request_span_proof(
 //             Ok((
 //                 StatusCode::OK,
 //                 Json(ProofStatus {
+//
 //                     fulfillment_status: FulfillmentStatus::UnspecifiedFulfillmentStatus.into(),
 //                     execution_status: ExecutionStatus::UnspecifiedExecutionStatus.into(),
 //                     proof: vec![],
