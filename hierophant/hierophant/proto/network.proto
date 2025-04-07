@@ -1,0 +1,232 @@
+syntax = "proto3";
+package network;
+
+// The ProverNetwork service definition
+service ProverNetwork {
+  // Get a program by verification key hash
+  rpc GetProgram (GetProgramRequest) returns (GetProgramResponse);
+  
+  // Get the nonce for an account
+  rpc GetNonce (GetNonceRequest) returns (GetNonceResponse);
+  
+  // Create a new program
+  rpc CreateProgram (CreateProgramRequest) returns (CreateProgramResponse);
+  
+  // Request a proof generation
+  rpc RequestProof (RequestProofRequest) returns (RequestProofResponse);
+  
+  // Get status of a proof request
+  rpc GetProofRequestStatus (GetProofRequestStatusRequest) returns (GetProofRequestStatusResponse);
+}
+
+// Message formats
+enum MessageFormat {
+  UNSPECIFIED_FORMAT = 0;
+  JSON = 1;
+  BINARY = 2;
+}
+
+// Proof generation modes
+enum ProofMode {
+  UNSPECIFIED_PROOF_MODE = 0;
+  SYNC = 1;  // Synchronous proof generation
+  ASYNC = 2; // Asynchronous proof generation
+}
+
+// Fulfillment strategies
+enum FulfillmentStrategy {
+  UNSPECIFIED_FULFILLMENT_STRATEGY = 0;
+  ANY = 1;    // Any prover can fulfill the request
+  SPECIFIC = 2; // A specific prover must fulfill the request
+}
+
+// Fulfillment status
+enum FulfillmentStatus {
+  UNSPECIFIED_FULFILLMENT_STATUS = 0;
+  PENDING = 1;     // Proof request is pending
+  ASSIGNED = 2;    // Proof request is assigned to a prover
+  FULFILLED = 3;   // Proof has been generated
+  FAILED = 4;      // Proof generation failed
+  CANCELLED = 5;   // Proof request was cancelled
+}
+
+// Execution status
+enum ExecutionStatus {
+  UNSPECIFIED_EXECUTION_STATUS = 0;
+  UNEXECUTED = 1;     // Execution is pending
+  EXECUTED = 2;       // Execution completed successfully
+  UNEXECUTABLE = 3;   // Execution failed
+}
+
+// Program structure
+message Program {
+  // The verification key hash
+  bytes vk_hash = 1;
+  
+  // The verification key
+  bytes vk = 2;
+  
+  // The program resource identifier
+  string program_uri = 3;
+  
+  // The optional name of the program
+  optional string name = 4;
+  
+  // The owner of the program
+  bytes owner = 5;
+  
+  // The unix timestamp of when the program was created
+  uint64 created_at = 6;
+}
+
+// Request to get a program
+message GetProgramRequest {
+  // The verification key hash of the program
+  bytes vk_hash = 1;
+}
+
+// Response with the program details
+message GetProgramResponse {
+  // The program details
+  optional Program program = 1;
+}
+
+// Request to get a nonce
+message GetNonceRequest {
+  // The address of the account
+  bytes address = 1;
+}
+
+// Response with the nonce
+message GetNonceResponse {
+  // The nonce of the account
+  uint64 nonce = 1;
+}
+
+// Request to create a program
+message CreateProgramRequest {
+  // The message format of the body
+  MessageFormat format = 1;
+  
+  // The signature of the sender
+  bytes signature = 2;
+  
+  // The body of the request
+  CreateProgramRequestBody body = 3;
+}
+
+// Body of the create program request
+message CreateProgramRequestBody {
+  // The account nonce of the sender
+  uint64 nonce = 1;
+  
+  // The verification key hash
+  bytes vk_hash = 2;
+  
+  // The verification key
+  bytes vk = 3;
+  
+  // The program resource identifier
+  string program_uri = 4;
+}
+
+// Response to create program request
+message CreateProgramResponse {
+  // The transaction hash
+  bytes tx_hash = 1;
+  
+  // The body of the response
+  CreateProgramResponseBody body = 2;
+}
+
+// Body of the create program response
+message CreateProgramResponseBody {
+  // Empty for now
+}
+
+// Request to request a proof
+message RequestProofRequest {
+  // The message format of the body
+  MessageFormat format = 1;
+  
+  // The signature of the sender
+  bytes signature = 2;
+  
+  // The body of the request
+  RequestProofRequestBody body = 3;
+}
+
+// Body of the request proof request
+message RequestProofRequestBody {
+  // The account nonce of the sender
+  uint64 nonce = 1;
+  
+  // The verification key hash of the program
+  bytes vk_hash = 2;
+  
+  // The version of the prover to use
+  string version = 3;
+  
+  // The mode for the request
+  ProofMode mode = 4;
+  
+  // The strategy for fulfiller assignment
+  FulfillmentStrategy strategy = 5;
+  
+  // The stdin resource identifier
+  string stdin_uri = 6;
+  
+  // The deadline for the request
+  uint64 deadline = 7;
+  
+  // The cycle limit for the request
+  uint64 cycle_limit = 8;
+  
+  // The gas limit for the request. If 0, the cycle_limit is used
+  uint64 gas_limit = 9;
+}
+
+// Response to request proof request
+message RequestProofResponse {
+  // The transaction hash
+  bytes tx_hash = 1;
+  
+  // The body of the response
+  RequestProofResponseBody body = 2;
+}
+
+// Body of the request proof response
+message RequestProofResponseBody {
+  // The identifier for the request
+  bytes request_id = 1;
+}
+
+// Request to get the status of a proof request
+message GetProofRequestStatusRequest {
+  // The identifier for the request
+  bytes request_id = 1;
+}
+
+// Response with the status of a proof request
+message GetProofRequestStatusResponse {
+  // The fulfillment status of the request
+  FulfillmentStatus fulfillment_status = 1;
+  
+  // The execution status of the request
+  ExecutionStatus execution_status = 2;
+  
+  // The transaction hash of the request
+  bytes request_tx_hash = 3;
+  
+  // The deadline of the request
+  uint64 deadline = 4;
+  
+  // The optional transaction hash of the proof fulfill
+  optional bytes fulfill_tx_hash = 5;
+  
+  // The optional proof URI
+  optional string proof_uri = 6;
+  
+  // The optional public values hash
+  optional bytes public_values_hash = 7;
+}
