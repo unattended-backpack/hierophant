@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
     FulfillmentStatus, GetNonceRequest, GetNonceResponse, GetProgramRequest, GetProgramResponse,
@@ -37,6 +38,7 @@ pub struct ProofRequestData {
 
 #[derive(Debug, Clone)]
 pub struct HierophantState {
+    pub config: Config,
     // Registered workers
     pub workers: Arc<Mutex<HashMap<String, WorkerInfo>>>,
     // Valid upload URLs
@@ -46,8 +48,9 @@ pub struct HierophantState {
 }
 
 impl HierophantState {
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
+            config,
             upload_urls: Arc::new(Mutex::new(HashSet::new())),
             workers: Arc::new(Mutex::new(HashMap::new())),
             proof_requests: Arc::new(Mutex::new(std::collections::HashMap::new())),
