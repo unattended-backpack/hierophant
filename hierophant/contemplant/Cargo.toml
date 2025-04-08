@@ -26,9 +26,8 @@ anyhow.workspace = true
 dotenv.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-csv.workspace = true
 # server
-axum = "0.7.4"
+axum = { version = "0.7.4", features = ["macros"] }
 bincode.workspace = true
 log.workspace = true
 base64.workspace = true
