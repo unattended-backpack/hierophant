@@ -14,19 +14,11 @@ use axum::{
     routing::{get, post},
 };
 use log::{error, info};
-// use network_lib::{
-//     AggProofRequest, AppError, GenericProofRequest, ProofStatus, ProofStore, ProofType,
-//     SpanProofRequest, WorkerAggProofRequest, WorkerConfig, WorkerInfo, WorkerSpanProofRequest,
-// };
 use reqwest::Client;
-use serde::{Deserialize, Deserializer, Serialize};
 use sp1_sdk::{
-    CpuProver, CudaProver, Prover, ProverClient, SP1_CIRCUIT_VERSION, SP1Proof, SP1ProofMode,
-    SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
-    network::proto::network::{ExecutionStatus, FulfillmentStatus, ProofMode},
-    utils,
+    CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
 };
-use std::{collections::HashMap, env, fmt::Display, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use tokio::{
     sync::RwLock,
     time::{Duration, sleep},
@@ -85,7 +77,7 @@ async fn main() -> Result<()> {
         .unwrap();
     let local_addr = listener.local_addr().unwrap();
 
-    // Send a "ready" notification to the coordinator
+    // Send a "ready" notification to the hierophant
     register_worker(config.clone());
 
     info!("Worker server listening on {}", local_addr);
@@ -100,11 +92,11 @@ fn register_worker(config: Config) {
 
         let client = Client::new();
 
-        // Attempt to register with the coordinator
+        // Attempt to register with the hierophant
         match client
             .put(format!(
                 "{}/{WORKER_REGISTER_ENDPOINT}",
-                config.coordinator_address
+                config.hierophant_address
             ))
             // TODO: what should we send to the hierophant to verify this worker?
             .json(&config)
@@ -114,19 +106,19 @@ fn register_worker(config: Config) {
             Ok(response) => {
                 if response.status().is_success() {
                     info!(
-                        "Successfully registered with coordinator at {}",
-                        config.coordinator_address
+                        "Successfully registered with hierophant at {}",
+                        config.hierophant_address
                     );
                 } else {
                     error!(
-                        "Failed to register with coordinator {}: HTTP {}",
-                        config.coordinator_address,
+                        "Failed to register with hierophant {}: HTTP {}",
+                        config.hierophant_address,
                         response.status()
                     );
                 }
             }
             Err(err) => {
-                error!("Failed to connect to coordinator: {}", err);
+                error!("Failed to connect to hierophant: {}", err);
             }
         }
     });

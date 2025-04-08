@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{
     SP1Stdin,
-    network::proto::network::{ExecutionStatus, ProofMode, RequestProofRequestBody},
+    network::proto::network::{ExecutionStatus, ProofMode},
 };
 use std::{collections::HashMap, fmt::Display};
 use tokio::sync::RwLock;
