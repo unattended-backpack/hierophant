@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
-    pub coordinator_address: String,
-    pub worker_name: String,
+    pub hierophant_address: String,
+    pub contemplant_name: String,
     #[serde(default = "default_port")]
     pub port: usize,
 }
