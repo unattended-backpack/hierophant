@@ -21,7 +21,7 @@ use log::{error, info};
 use reqwest::Client;
 use serde::{Deserialize, Deserializer, Serialize};
 use sp1_sdk::{
-    CudaProver, Prover, ProverClient, SP1_CIRCUIT_VERSION, SP1Proof, SP1ProofMode,
+    CpuProver, CudaProver, Prover, ProverClient, SP1_CIRCUIT_VERSION, SP1Proof, SP1ProofMode,
     SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
     network::proto::network::{ExecutionStatus, FulfillmentStatus, ProofMode},
     utils,
@@ -39,14 +39,9 @@ const WORKER_REGISTER_ENDPOINT: &str = "worker";
 pub struct WorkerState {
     config: Config,
     cuda_prover: Arc<CudaProver>,
+    mock_prover: Arc<CpuProver>,
     proof_store: Arc<ProofStore>,
 }
-
-// impl Display for WorkerState {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "{}", self.name)
-//     }
-// }
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -64,27 +59,15 @@ async fn main() -> Result<()> {
     // Set up the SP1 SDK logger.
     utils::setup_logger();
 
+    // TODO: test if we can have both of these initialized
     let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
+    let mock_prover = Arc::new(ProverClient::builder().mock().build());
 
     let proof_store = Arc::new(RwLock::new(HashMap::new()));
 
-    // Set the aggregation proof type based on environment variable. Default to groth16.
-    // let agg_proof_mode = match env::var("AGG_PROOF_MODE") {
-    //     Ok(proof_type) if proof_type.to_lowercase() == "plonk" => SP1ProofMode::Plonk,
-    //     _ => SP1ProofMode::Groth16,
-    // };
-
-    // let worker_config = WorkerConfig {
-    //     range_vk: Arc::new(range_vk),
-    //     range_pk: Arc::new(range_pk),
-    //     agg_pk: Arc::new(agg_pk),
-    //     agg_proof_mode,
-    //     proof_store,
-    //     prover,
-    // };
-
     let worker_state = WorkerState {
         cuda_prover,
+        mock_prover,
         config: config.clone(),
         proof_store: proof_store.clone(),
     };
@@ -168,43 +151,56 @@ async fn request_proof(
         .insert(payload.proof_id, initial_status);
 
     tokio::spawn(async move {
-        if payload.mock {
-            // TODO: mock proof and return early
-
-            return;
-        }
-
-        // the cuda prover keeps state of the last `setup()` that was called on it.
-        // You must call `setup()` then `prove` *each* time you intend to
-        // prove a certain program
-        let (proving_key, _) = state.cuda_prover.setup(&payload.elf);
-
         let start_time = Instant::now();
 
-        let proof_res = match payload.mode {
-            ProofMode::UnspecifiedProofMode => Err(anyhow!("UnspecifiedProofMode")),
-            ProofMode::Core => state
-                .cuda_prover
-                .prove(&proving_key, &payload.sp1_stdin)
-                .core()
-                .run(),
-            ProofMode::Compressed => state
-                .cuda_prover
-                .prove(&proving_key, &payload.sp1_stdin)
-                .compressed()
-                .run(),
-            ProofMode::Plonk => state
-                .cuda_prover
-                .prove(&proving_key, &payload.sp1_stdin)
-                .plonk()
-                .run(),
-            ProofMode::Groth16 => state
-                .cuda_prover
-                .prove(&proving_key, &payload.sp1_stdin)
-                .groth16()
-                .run(),
+        let mock = payload.mock;
+        let stdin = &payload.sp1_stdin;
+
+        let (pk, _) = if mock {
+            state.mock_prover.setup(&payload.elf)
+        } else {
+            // the cuda prover keeps state of the last `setup()` that was called on it.
+            // You must call `setup()` then `prove` *each* time you intend to
+            // prove a certain program
+            state.cuda_prover.setup(&payload.elf)
         };
 
+        // construct proving function based on ProofMode and if it's a CUDA or mock proof
+        let proof_res = match payload.mode {
+            ProofMode::UnspecifiedProofMode => Err(anyhow!("UnspecifiedProofMode")),
+            ProofMode::Core => {
+                if mock {
+                    state.mock_prover.prove(&pk, stdin).core().run()
+                } else {
+                    state.cuda_prover.prove(&pk, stdin).core().run()
+                }
+            }
+            ProofMode::Compressed => {
+                if mock {
+                    state.mock_prover.prove(&pk, stdin).compressed().run()
+                } else {
+                    state.cuda_prover.prove(&pk, stdin).compressed().run()
+                }
+            }
+            ProofMode::Plonk => {
+                if mock {
+                    state.mock_prover.prove(&pk, stdin).plonk().run()
+                } else {
+                    state.cuda_prover.prove(&pk, stdin).plonk().run()
+                }
+            }
+            ProofMode::Groth16 => {
+                if mock {
+                    state.mock_prover.prove(&pk, stdin).groth16().run()
+                } else {
+                    state.cuda_prover.prove(&pk, stdin).groth16().run()
+                }
+            }
+        };
+
+        let minutes = (start_time.elapsed().as_secs_f32() / 60.0).round() as u32;
+
+        // Turn proof struct into bytes
         let proof_bytes_res = proof_res.and_then(|proof| {
             if let ProofMode::Compressed = payload.mode {
                 // If it's a compressed proof, we need to serialize the entire struct with bincode.
@@ -218,24 +214,19 @@ async fn request_proof(
             }
         });
 
-        let minutes = start_time.elapsed().as_secs_f64() / 60.0;
+        // Create new proof status based on success or error
         let updated_proof_status = match proof_bytes_res {
             Ok(proof_bytes) => {
-                info!(
-                    "Completed proof {} in {} minutes",
-                    payload.proof_id, minutes
-                );
+                info!("Completed proof {} in {} minutes", payload, minutes);
                 ProofStatus::executed(proof_bytes)
             }
             Err(e) => {
-                error!(
-                    "Error proving {} at minute {}: {e}",
-                    payload.proof_id, minutes
-                );
+                error!("Error proving {} at minute {}: {e}", payload, minutes);
                 ProofStatus::unexecutable()
             }
         };
 
+        // record new proof status, overwriting initial status of `unexecuted`
         state
             .proof_store
             .write()
