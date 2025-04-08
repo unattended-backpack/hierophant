@@ -33,12 +33,13 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 const WORKER_REGISTER_ENDPOINT: &str = "worker";
 
-// const RANGE_ELF: &[u8] = include_bytes!("../../../../elf/range-elf");
-// const AGG_ELF: &[u8] = include_bytes!("../../../../elf/aggregation-elf");
+const RANGE_ELF_EMBEDDED: &[u8] = include_bytes!("../../elf/range-elf-embedded");
+const AGG_ELF: &[u8] = include_bytes!("../../elf/aggregation-elf");
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone)]
 pub struct WorkerState {
     config: Config,
+    cuda_prover: Arc<CudaProver>,
 }
 
 // impl Display for WorkerState {
@@ -63,9 +64,9 @@ async fn main() -> Result<()> {
     // Set up the SP1 SDK logger.
     utils::setup_logger();
 
-    //let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
-    // let (range_pk, range_vk) = prover.setup(RANGE_ELF);
-    // let (agg_pk, _agg_vk) = prover.setup(AGG_ELF);
+    let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
+    let (range_pk, range_vk) = cuda_prover.setup(RANGE_ELF);
+    let (agg_pk, _agg_vk) = cuda_prover.setup(AGG_ELF);
 
     // let proof_store = Arc::new(RwLock::new(HashMap::new()));
 
@@ -85,6 +86,7 @@ async fn main() -> Result<()> {
     // };
 
     let worker_state = WorkerState {
+        cuda_prover,
         config: config.clone(),
     };
 
