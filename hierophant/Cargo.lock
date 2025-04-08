@@ -1219,7 +1219,6 @@ dependencies = [
  "axum 0.7.9",
  "base64 0.22.1",
  "bincode",
- "dotenv",
  "log",
  "reqwest",
  "serde",
@@ -1227,6 +1226,7 @@ dependencies = [
  "serde_repr",
  "sp1-sdk",
  "tokio",
+ "toml",
  "tower-http 0.5.2",
 ]
 
@@ -1554,12 +1554,6 @@ dependencies = [
  "quote",
  "syn 2.0.100",
 ]
-
-[[package]]
-name = "dotenv"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 
 [[package]]
 name = "downcast-rs"

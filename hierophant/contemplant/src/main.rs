@@ -1,5 +1,8 @@
+mod config;
+
 // use alloy_primitives::{hex, B256};
 
+use crate::config::Config;
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
@@ -34,15 +37,15 @@ const WORKER_REGISTER_ENDPOINT: &str = "worker";
 // const AGG_ELF: &[u8] = include_bytes!("../../../../elf/aggregation-elf");
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct WorkerConfig {
-    pub name: String,
+pub struct WorkerState {
+    config: Config,
 }
 
-impl Display for WorkerConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
-    }
-}
+// impl Display for WorkerState {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         write!(f, "{}", self.name)
+//     }
+// }
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -51,27 +54,26 @@ async fn main() -> Result<()> {
         env::set_var("RUST_LOG", "info");
     }
 
+    let config = tokio::fs::read_to_string("contemplant.toml")
+        .await
+        .context("read contemplant.toml file")?;
+
+    let config: Config = toml::de::from_str(&config).context("parse config")?;
+
     // Set up the SP1 SDK logger.
     utils::setup_logger();
-    dotenv::dotenv().ok();
 
     //let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
-    let prover = Arc::new(ProverClient::from_env());
     // let (range_pk, range_vk) = prover.setup(RANGE_ELF);
     // let (agg_pk, _agg_vk) = prover.setup(AGG_ELF);
 
     // let proof_store = Arc::new(RwLock::new(HashMap::new()));
-
-    let coordinator_address =
-        env::var("COORDINATOR_ADDRESS").context("Set COORDINATOR_ADDRESS in .env")?;
 
     // Set the aggregation proof type based on environment variable. Default to groth16.
     // let agg_proof_mode = match env::var("AGG_PROOF_MODE") {
     //     Ok(proof_type) if proof_type.to_lowercase() == "plonk" => SP1ProofMode::Plonk,
     //     _ => SP1ProofMode::Groth16,
     // };
-
-    let this_worker_ip = env::var("THIS_WORKER_IP").context("Set THIS_WORKER_IP in .env")?;
 
     // let worker_config = WorkerConfig {
     //     range_vk: Arc::new(range_vk),
@@ -81,8 +83,9 @@ async fn main() -> Result<()> {
     //     proof_store,
     //     prover,
     // };
-    let worker_config = WorkerConfig {
-        name: "martin luther".into(),
+
+    let worker_state = WorkerState {
+        config: config.clone(),
     };
 
     let app = Router::new()
@@ -90,7 +93,7 @@ async fn main() -> Result<()> {
         .route("/status/:proof_id", get(get_proof_status))
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(102400 * 1024 * 1024))
-        .with_state(worker_config);
+        .with_state(worker_state);
 
     let port = env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
@@ -105,17 +108,14 @@ async fn main() -> Result<()> {
 
         // TODO: is it a vulnerability to send this info over the network
         let client = Client::new();
-        let worker_info = WorkerConfig {
-            name: "contemplant".to_string(),
-        };
 
         // Attempt to register with the coordinator
         match client
             .put(format!(
                 "{}/{WORKER_REGISTER_ENDPOINT}",
-                coordinator_address
+                config.coordinator_address
             ))
-            .json(&worker_info)
+            .json(&config)
             .send()
             .await
         {
@@ -123,12 +123,12 @@ async fn main() -> Result<()> {
                 if response.status().is_success() {
                     info!(
                         "Successfully registered with coordinator at {}",
-                        coordinator_address
+                        config.coordinator_address
                     );
                 } else {
                     error!(
                         "Failed to register with coordinator {}: HTTP {}",
-                        coordinator_address,
+                        config.coordinator_address,
                         response.status()
                     );
                 }
@@ -149,11 +149,11 @@ async fn main() -> Result<()> {
 
 // TODO:
 #[derive(Serialize, Deserialize)]
-struct ContemplantProofRequest {}
+struct ProofRequest {}
 
 async fn request_proof(
-    State(state): State<WorkerConfig>,
-    Json(payload): Json<ContemplantProofRequest>,
+    State(state): State<WorkerState>,
+    Json(payload): Json<ProofRequest>,
 ) -> axum::response::Result<StatusCode> {
     // TODO:
     Ok(StatusCode::OK)
@@ -164,7 +164,7 @@ async fn request_proof(
 struct ProofStatus {}
 
 async fn get_proof_status(
-    State(state): State<WorkerConfig>,
+    State(state): State<WorkerState>,
     Path(proof_id): Path<String>,
 ) -> axum::response::Result<(StatusCode, Json<ProofStatus>)> {
     // TODO:

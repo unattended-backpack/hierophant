@@ -22,8 +22,8 @@ reqwest.workspace = true
 # sp1
 sp1-sdk.workspace = true
 
+toml.workspace = true
 anyhow.workspace = true
-dotenv.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # server
