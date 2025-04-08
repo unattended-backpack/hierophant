@@ -1,3 +1,5 @@
+mod config;
+
 mod hierophant_state;
 mod http_handler;
 mod services;
@@ -8,7 +10,9 @@ pub mod artifact {
     tonic::include_proto!("artifact");
 }
 
+use crate::config::Config;
 use crate::hierophant_state::HierophantState;
+use anyhow::Context;
 use artifact::artifact_store_server::ArtifactStoreServer;
 use network::prover_network_server::ProverNetworkServer;
 use services::{ArtifactStoreService, ProverNetworkService};
@@ -17,8 +21,14 @@ use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = tokio::fs::read_to_string("hierophant.toml")
+        .await
+        .context("read hierophant.toml file")?;
+
+    let config: Config = toml::de::from_str(&config).context("parse config")?;
+
     // Create a structure for sharing all application state.
-    let hierophant_state = Arc::new(HierophantState::new());
+    let hierophant_state = Arc::new(HierophantState::new(config));
 
     // Define the server addresses
     // TODO: address/ports from .env
