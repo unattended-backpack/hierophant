@@ -1,8 +1,10 @@
 mod config;
+mod types;
 
-// use alloy_primitives::{hex, B256};
+use alloy_primitives::{B256, hex};
 
 use crate::config::Config;
+use crate::types::ProofStatus;
 use anyhow::{Context, Result};
 use axum::{
     Json, Router,
@@ -65,7 +67,8 @@ async fn main() -> Result<()> {
     utils::setup_logger();
 
     let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
-    let (range_pk, range_vk) = cuda_prover.setup(RANGE_ELF);
+    // TODO: might not need to initialize these here
+    let (range_pk, range_vk) = cuda_prover.setup(RANGE_ELF_EMBEDDED);
     let (agg_pk, _agg_vk) = cuda_prover.setup(AGG_ELF);
 
     // let proof_store = Arc::new(RwLock::new(HashMap::new()));
@@ -97,7 +100,7 @@ async fn main() -> Result<()> {
         .layer(RequestBodyLimitLayer::new(102400 * 1024 * 1024))
         .with_state(worker_state);
 
-    let port = env::var("PORT").unwrap_or_else(|_| "3000".to_string());
+    let port = config.port.to_string();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
         .await
         .unwrap();
@@ -108,7 +111,6 @@ async fn main() -> Result<()> {
         // Give this server a moment to fully initialize
         sleep(Duration::from_secs(1)).await;
 
-        // TODO: is it a vulnerability to send this info over the network
         let client = Client::new();
 
         // Attempt to register with the coordinator
@@ -161,17 +163,28 @@ async fn request_proof(
     Ok(StatusCode::OK)
 }
 
-// TODO:
-#[derive(Serialize, Deserialize)]
-struct ProofStatus {}
-
 async fn get_proof_status(
     State(state): State<WorkerState>,
     Path(proof_id): Path<String>,
 ) -> axum::response::Result<(StatusCode, Json<ProofStatus>)> {
-    // TODO:
-    let proof_status = ProofStatus {};
-    Ok((StatusCode::OK, Json(proof_status)))
+    let proof_id_bytes = hex::decode(&proof_id)?;
+    let proof_id = B256::from_slice(&proof_id_bytes);
+    info!("Received proof status request: {:?}", proof_id);
+
+    let proof_store = state.proof_store.read().await;
+
+    let proof_status = match proof_store.get(&proof_id) {
+        Some(status) => {
+            info!("Proof status of {proof_id}: {}", status);
+            status
+        }
+        None => {
+            error!("Proof {} not found", proof_id);
+            ProofStatus::unexecutable()
+        }
+    };
+
+    Ok((StatusCode::OK, Json(status)))
 }
 // async fn request_span_proof(
 //     State(state): State<WorkerConfig>,
