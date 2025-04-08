@@ -18,6 +18,7 @@ pub type ProofStore = RwLock<HashMap<B256, ProofStatus>>;
 pub struct ProofRequest {
     pub proof_id: B256,
     pub elf: Vec<u8>,
+    pub mock: bool,
     pub mode: ProofMode,
     pub sp1_stdin: SP1Stdin,
 }
@@ -25,9 +26,10 @@ pub struct ProofRequest {
 impl Display for ProofRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let proof_id = self.proof_id;
+        let mock = self.mock;
         let mode = self.mode.as_str_name();
 
-        write!(f, "proof_id: {proof_id}, mode: {mode}",)
+        write!(f, "proof_id: {proof_id}, mock: {mock}, mode: {mode}",)
     }
 }
 
