@@ -39,7 +39,6 @@ const WORKER_REGISTER_ENDPOINT: &str = "worker";
 pub struct WorkerState {
     config: Config,
     cuda_prover: Arc<CudaProver>,
-    mock_prover: Arc<CpuProver>,
     proof_store: Arc<ProofStore>,
 }
 
@@ -59,15 +58,12 @@ async fn main() -> Result<()> {
     // Set up the SP1 SDK logger.
     utils::setup_logger();
 
-    // TODO: test if we can have both of these initialized
     let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
-    let mock_prover = Arc::new(ProverClient::builder().mock().build());
 
     let proof_store = Arc::new(RwLock::new(HashMap::new()));
 
     let worker_state = WorkerState {
         cuda_prover,
-        mock_prover,
         config: config.clone(),
         proof_store: proof_store.clone(),
     };
@@ -153,49 +149,19 @@ async fn request_proof(
     tokio::spawn(async move {
         let start_time = Instant::now();
 
-        let mock = payload.mock;
         let stdin = &payload.sp1_stdin;
 
-        let (pk, _) = if mock {
-            state.mock_prover.setup(&payload.elf)
-        } else {
-            // the cuda prover keeps state of the last `setup()` that was called on it.
-            // You must call `setup()` then `prove` *each* time you intend to
-            // prove a certain program
-            state.cuda_prover.setup(&payload.elf)
-        };
+        // the cuda prover keeps state of the last `setup()` that was called on it.
+        // You must call `setup()` then `prove` *each* time you intend to
+        // prove a certain program
+        let (pk, _) = state.cuda_prover.setup(&payload.elf);
 
-        // construct proving function based on ProofMode and if it's a CUDA or mock proof
         let proof_res = match payload.mode {
             ProofMode::UnspecifiedProofMode => Err(anyhow!("UnspecifiedProofMode")),
-            ProofMode::Core => {
-                if mock {
-                    state.mock_prover.prove(&pk, stdin).core().run()
-                } else {
-                    state.cuda_prover.prove(&pk, stdin).core().run()
-                }
-            }
-            ProofMode::Compressed => {
-                if mock {
-                    state.mock_prover.prove(&pk, stdin).compressed().run()
-                } else {
-                    state.cuda_prover.prove(&pk, stdin).compressed().run()
-                }
-            }
-            ProofMode::Plonk => {
-                if mock {
-                    state.mock_prover.prove(&pk, stdin).plonk().run()
-                } else {
-                    state.cuda_prover.prove(&pk, stdin).plonk().run()
-                }
-            }
-            ProofMode::Groth16 => {
-                if mock {
-                    state.mock_prover.prove(&pk, stdin).groth16().run()
-                } else {
-                    state.cuda_prover.prove(&pk, stdin).groth16().run()
-                }
-            }
+            ProofMode::Core => state.cuda_prover.prove(&pk, stdin).core().run(),
+            ProofMode::Compressed => state.cuda_prover.prove(&pk, stdin).compressed().run(),
+            ProofMode::Plonk => state.cuda_prover.prove(&pk, stdin).plonk().run(),
+            ProofMode::Groth16 => state.cuda_prover.prove(&pk, stdin).groth16().run(),
         };
 
         let minutes = (start_time.elapsed().as_secs_f32() / 60.0).round() as u32;
