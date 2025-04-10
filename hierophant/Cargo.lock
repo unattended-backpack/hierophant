@@ -2185,6 +2185,7 @@ dependencies = [
  "axum 0.8.3",
  "hex",
  "hyper 0.14.32",
+ "log",
  "prost 0.12.6",
  "serde",
  "serde_json",

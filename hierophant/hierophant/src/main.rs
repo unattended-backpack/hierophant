@@ -13,10 +13,11 @@ pub mod artifact {
 use crate::config::Config;
 use crate::hierophant_state::HierophantState;
 use anyhow::Context;
-use artifact::artifact_store_server::ArtifactStoreServer;
+use artifact::create_artifact_server::CreateArtifactServer;
+use log::info;
 use network::prover_network_server::ProverNetworkServer;
-use services::{ArtifactStoreService, ProverNetworkService};
-use std::sync::Arc;
+use services::{CreateArtifactService, ProverNetworkService};
+use std::{net::SocketAddr, sync::Arc};
 use tonic::transport::Server;
 
 #[tokio::main]
@@ -28,21 +29,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config: Config = toml::de::from_str(&config).context("parse config")?;
 
     // Create a structure for sharing all application state.
-    let hierophant_state = Arc::new(HierophantState::new(config));
+    let hierophant_state = Arc::new(HierophantState::new(config.clone()));
 
     // Define the server addresses
-    // TODO: address/ports from .env
-    let grpc_addr = ([0, 0, 0, 0], 9009).into();
-    // let http_addr = ([0, 0, 0, 0], 9010).into();
+    let grpc_addr: SocketAddr = ([0, 0, 0, 0], config.grpc_port).into();
+    let http_addr: SocketAddr = ([0, 0, 0, 0], config.http_port).into();
 
     // Create the gRPC services with access to shared state.
     let prover_service = ProverNetworkService::new(hierophant_state.clone());
-    let artifact_service = ArtifactStoreService::new(hierophant_state.clone());
+    let artifact_service = CreateArtifactService::new(hierophant_state.clone());
 
     // Run the gRPC server
+    info!("gRPC server starting on {http_addr}");
     let grpc_server = Server::builder()
         .add_service(ProverNetworkServer::new(prover_service))
-        .add_service(ArtifactStoreServer::new(artifact_service))
+        .add_service(CreateArtifactServer::new(artifact_service))
         .serve(grpc_addr);
 
     // Create the axum router with all routes
@@ -50,26 +51,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Run the HTTP server in a separate task
     let http_server = tokio::spawn(async move {
-        println!("HTTP server starting on 0.0.0.0:9010");
+        info!("HTTP server starting on {http_addr}");
         axum::serve(
-            tokio::net::TcpListener::bind("0.0.0.0:9010").await.unwrap(),
+            tokio::net::TcpListener::bind(http_addr)
+                .await
+                .context("bind http server to {http_addr}")
+                .unwrap(),
             app,
         )
         .await
+        .context("Axum serve on {http_addr}")
         .unwrap();
     });
 
     println!("Starting Hierophant services:");
-    println!("  - gRPC server on http://0.0.0.0:9009");
-    println!("  - HTTP server on http://0.0.0.0:9010");
+    println!("  - gRPC server on {grpc_addr}");
+    println!("  - HTTP server on {http_addr}");
     println!("Implemented methods:");
     println!("  - network.ProverNetwork/GetProgram");
     println!("  - network.ProverNetwork/GetNonce");
     println!("  - network.ProverNetwork/CreateProgram");
     println!("  - network.ProverNetwork/RequestProof");
     println!("  - network.ProverNetwork/GetProofRequestStatus");
-    println!("  - artifact.ArtifactStore/CreateArtifact");
-    println!("  - HTTP POST/PUT to /upload/:id (for artifact uploads)");
+    println!("  - artifact.CreateArtifact/CreateArtifact");
+    println!("  - HTTP POST/PUT to /:id (for artifact uploads)");
+    println!("  - HTTP GET to /:id (for artifact downloads)");
     println!("  - HTTP PUT to /worker (for contemplant registration)");
     println!("Servers started. Press Ctrl+C to stop.");
 

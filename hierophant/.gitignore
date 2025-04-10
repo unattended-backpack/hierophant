@@ -2,3 +2,4 @@
 /target
 hierophant.toml
 contemplant.toml
+../.rust-analyzer.toml

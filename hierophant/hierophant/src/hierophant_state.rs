@@ -13,7 +13,6 @@ use std::sync::{Arc, Mutex};
 pub enum WorkerStatus {
     Available,
     Busy,
-    Offline,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

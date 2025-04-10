@@ -1,4 +1,4 @@
-use crate::artifact::artifact_store_server::ArtifactStore;
+use crate::artifact::create_artifact_server::CreateArtifact;
 use crate::artifact::{CreateArtifactRequest, CreateArtifactResponse};
 use crate::hierophant_state::{HierophantState, ProofRequestData, WorkerInfo, WorkerStatus};
 use crate::network::prover_network_server::ProverNetwork;
@@ -412,14 +412,14 @@ impl ProverNetwork for ProverNetworkService {
     }
 }
 
-// Our ArtifactStore service implementation
+// Our CreateArtifact service implementation
 #[derive(Debug)]
-pub struct ArtifactStoreService {
+pub struct CreateArtifactService {
     registry: Arc<Mutex<MethodRegistry>>,
     state: Arc<HierophantState>,
 }
 
-impl ArtifactStoreService {
+impl CreateArtifactService {
     pub fn new(state: Arc<HierophantState>) -> Self {
         Self {
             registry: Arc::new(Mutex::new(MethodRegistry::default())),
@@ -429,7 +429,7 @@ impl ArtifactStoreService {
 }
 
 #[tonic::async_trait]
-impl ArtifactStore for ArtifactStoreService {
+impl CreateArtifact for CreateArtifactService {
     async fn create_artifact(
         &self,
         request: Request<CreateArtifactRequest>,

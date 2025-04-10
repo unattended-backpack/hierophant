@@ -1,11 +1,11 @@
 use crate::hierophant_state::{HierophantState, WorkerInfo, WorkerStatus};
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{post, put},
-    Json, Router,
+    routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -24,8 +24,9 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         .route("/worker", put(register_worker))
         .route("/worker", post(register_worker))
         // Artifact upload endpoint
-        .route("/upload/:id", post(handle_artifact_upload))
-        .route("/upload/:id", put(handle_artifact_upload))
+        .route("/:id", post(handle_artifact_upload))
+        .route("/:id", put(handle_artifact_upload))
+        .route("/:id", get(handle_artifact_download))
         // Add more routes as needed
         .with_state(state)
 }
@@ -62,6 +63,15 @@ async fn register_worker(
 
     // Return success response with the worker ID
     (StatusCode::OK, Json(worker_info))
+}
+
+async fn handle_artifact_download(
+    State(state): State<Arc<HierophantState>>,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<impl IntoResponse, StatusCode> {
+    // TODO
+    todo!()
 }
 
 // Handler for artifact uploads
