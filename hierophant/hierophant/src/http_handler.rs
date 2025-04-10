@@ -13,7 +13,7 @@ use axum::{
     serve::IncomingStream,
 };
 use log::info;
-use network_lib::WorkerRegisterInfo;
+use network_lib::{REGISTER_WORKER_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::{UnixListener, UnixStream, unix::UCred};
@@ -30,7 +30,10 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
     Router::new()
         // Worker registration endpoint
         //.route("/worker", get(handle_register_worker))
-        .route("/register_worker", post(handle_register_worker))
+        .route(
+            format!("/{REGISTER_WORKER_ENDPOINT}").as_ref(),
+            post(handle_register_worker),
+        )
         /*
                 // Artifact upload endpoint
                 .route("/:id", post(handle_artifact_upload))
@@ -43,27 +46,27 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
 
     // .layer(axum::extract::connect_info::IntoConnectInfo::<SocketAddr>::layer())
 }
-#[derive(Clone, Debug)]
-struct MyConnectionInfo {
-    ip: String,
-}
-
-impl Connected<IncomingStream<'_>> for MyConnectionInfo {
-    fn connect_info(target: IncomingStream<'_>) -> Self {
-        MyConnectionInfo {
-            ip: target.remote_addr().to_string(),
-        }
-    }
-}
+// #[derive(Clone, Debug)]
+// struct MyConnectionInfo {
+//     ip: String,
+// }
+//
+// impl Connected<IncomingStream<'_>> for MyConnectionInfo {
+//     fn connect_info(target: IncomingStream<'_>) -> Self {
+//         MyConnectionInfo {
+//             ip: target.remote_addr().to_string(),
+//         }
+//     }
+// }
 
 async fn handle_register_worker(
     State(state): State<Arc<HierophantState>>,
-    ConnectInfo(addr): ConnectInfo<MyConnectionInfo>,
+    // ConnectInfo(addr): ConnectInfo<MyConnectionInfo>,
     Json(worker_register_info): Json<WorkerRegisterInfo>,
 ) -> Result<impl IntoResponse, StatusCode> {
     info!("\n=== Received Worker Registration Request ===");
 
-    println!("my connection info: {:?}", addr);
+    //println!("my connection info: {:?}", addr);
 
     println!("Worker register info: {:?}", worker_register_info);
     // TODO: store worker address.

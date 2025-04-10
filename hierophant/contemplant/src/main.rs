@@ -14,7 +14,7 @@ use axum::{
     routing::{get, post},
 };
 use log::{error, info};
-use network_lib::WorkerRegisterInfo;
+use network_lib::{REGISTER_WORKER_ENDPOINT, WorkerRegisterInfo};
 use reqwest::Client;
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
@@ -25,8 +25,6 @@ use tokio::{
     time::{Duration, sleep},
 };
 use tower_http::limit::RequestBodyLimitLayer;
-
-const WORKER_REGISTER_ENDPOINT: &str = "register_worker";
 
 #[derive(Clone)]
 pub struct WorkerState {
@@ -87,24 +85,27 @@ async fn main() -> Result<()> {
 }
 
 fn register_worker(config: Config) {
+    let worker_register_info = WorkerRegisterInfo {
+        name: config.contemplant_name.clone(),
+        port: config.port,
+    };
+    info!(
+        "Sending hierophant at {} worker_register_info {:?}",
+        config.hierophant_address, worker_register_info
+    );
     tokio::spawn(async move {
         // Give this server a moment to fully initialize
-        sleep(Duration::from_secs(1)).await;
+        // sleep(Duration::from_secs(1)).await;
 
         let client = Client::new();
-
-        let worker_registry_info = WorkerRegisterInfo {
-            name: config.contemplant_name.clone(),
-            port: config.port,
-        };
 
         // Attempt to register with the hierophant
         match client
             .post(format!(
-                "{}/{WORKER_REGISTER_ENDPOINT}",
+                "{}/{REGISTER_WORKER_ENDPOINT}",
                 config.hierophant_address
             ))
-            .json(&worker_registry_info)
+            .json(&worker_register_info)
             .send()
             .await
         {
