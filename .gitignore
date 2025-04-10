@@ -1,5 +1,4 @@
-.env
-/target
+.rust-analyzer.toml
 hierophant.toml
 contemplant.toml
-.rust-analyzer.toml
+.env
