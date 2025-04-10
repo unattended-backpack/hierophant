@@ -14,6 +14,7 @@ use axum::{
     routing::{get, post},
 };
 use log::{error, info};
+use network_lib::WorkerRegisterInfo;
 use reqwest::Client;
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
@@ -25,7 +26,7 @@ use tokio::{
 };
 use tower_http::limit::RequestBodyLimitLayer;
 
-const WORKER_REGISTER_ENDPOINT: &str = "worker";
+const WORKER_REGISTER_ENDPOINT: &str = "register_worker";
 
 #[derive(Clone)]
 pub struct WorkerState {
@@ -92,14 +93,18 @@ fn register_worker(config: Config) {
 
         let client = Client::new();
 
+        let worker_registry_info = WorkerRegisterInfo {
+            name: config.contemplant_name.clone(),
+            port: config.port,
+        };
+
         // Attempt to register with the hierophant
         match client
-            .put(format!(
+            .post(format!(
                 "{}/{WORKER_REGISTER_ENDPOINT}",
                 config.hierophant_address
             ))
-            // TODO: what should we send to the hierophant to verify this worker?
-            .json(&config)
+            .json(&worker_registry_info)
             .send()
             .await
         {

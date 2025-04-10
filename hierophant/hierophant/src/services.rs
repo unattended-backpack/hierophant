@@ -1,6 +1,6 @@
 use crate::artifact::create_artifact_server::CreateArtifact;
 use crate::artifact::{CreateArtifactRequest, CreateArtifactResponse};
-use crate::hierophant_state::{HierophantState, ProofRequestData, WorkerInfo, WorkerStatus};
+use crate::hierophant_state::{HierophantState, ProofRequestData, WorkerState, WorkerStatus};
 use crate::network::prover_network_server::ProverNetwork;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
@@ -233,10 +233,10 @@ impl ProverNetwork for ProverNetworkService {
 
         // Find an available worker
         let selected_worker = {
-            let workers = self.state.workers.lock().unwrap();
+            let workers = self.state.workers.read().await;
             workers
                 .values()
-                .find(|w| w.status == WorkerStatus::Available)
+                .find(|w| w.status == WorkerStatus::Idle)
                 .cloned()
         };
 
@@ -314,7 +314,7 @@ impl ProverNetwork for ProverNetworkService {
         self.state
             .proof_requests
             .lock()
-            .unwrap()
+            .await
             .insert(request_id.clone(), proof_request_data);
 
         // Create the response
@@ -353,7 +353,7 @@ impl ProverNetwork for ProverNetworkService {
         );
 
         // Look up the request in our database
-        let proof_requests = self.state.proof_requests.lock().unwrap();
+        let proof_requests = self.state.proof_requests.lock().await;
 
         match proof_requests.get(&req.request_id) {
             Some(proof_data) => {
@@ -451,7 +451,7 @@ impl CreateArtifact for CreateArtifactService {
         let artifact_presigned_url = format!("http://0.0.0.0:9010{}", upload_path);
 
         // Register this URL as valid
-        self.state.upload_urls.lock().unwrap().insert(upload_path);
+        self.state.upload_urls.lock().await.insert(upload_path);
 
         // Create the response
         let response = CreateArtifactResponse {

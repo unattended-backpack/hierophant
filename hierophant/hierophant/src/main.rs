@@ -9,7 +9,6 @@ pub mod network {
 pub mod artifact {
     tonic::include_proto!("artifact");
 }
-
 use crate::config::Config;
 use crate::hierophant_state::HierophantState;
 use anyhow::Context;
@@ -57,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await
                 .context("bind http server to {http_addr}")
                 .unwrap(),
-            app,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
         .context("Axum serve on {http_addr}")

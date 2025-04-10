@@ -1,9 +1,5 @@
 [workspace]
-members = [
-	"hierophant",
-	"contemplant",
-	# "network-lib",
-]
+members = ["hierophant", "contemplant", "network-lib"]
 resolver = "2"
 
 [workspace.package]
@@ -14,7 +10,7 @@ edition = "2024"
 # Dependencies forked from https://github.com/succinctlabs/op-succinct tag v2.0.0
 # Uncomment dependencies as needed
 [workspace.dependencies]
-axum = "0.8.3"
+axum = "0.7.9"
 toml = "0.8.20"
 # general
 anyhow = { version = "1.0.86", default-features = false }

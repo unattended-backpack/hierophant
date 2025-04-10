@@ -6,6 +6,14 @@ pub struct Config {
     pub grpc_port: u16,
     #[serde(default = "default_http_port")]
     pub http_port: u16,
+    // number of strikes before a worker is evicted.  Typically a worker gets a strike
+    // when it fails to respond to a request
+    #[serde(default = "default_max_worker_strikes")]
+    pub max_worker_strikes: usize,
+}
+
+fn default_max_worker_strikes() -> usize {
+    3
 }
 
 fn default_grpc_port() -> u16 {

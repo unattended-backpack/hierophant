@@ -1,0 +1,10 @@
+[package]
+name = "network-lib"
+version = "0.1.0"
+license.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
