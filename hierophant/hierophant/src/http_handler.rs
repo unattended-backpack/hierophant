@@ -1,3 +1,4 @@
+use crate::artifact_store::Artifact;
 use crate::hierophant_state::{HierophantState, WorkerState, WorkerStatus};
 use axum::{
     Json, Router,
@@ -36,11 +37,13 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
             format!("/{REGISTER_WORKER_ENDPOINT}").as_ref(),
             post(handle_register_worker),
         )
+        // for testing only
+        //        .route("/test-register-uri", post(handle_test_register_uri))
         // Artifact upload endpoint
-        .route("/upload/:id", post(handle_artifact_upload))
-        .route("/upload/:id", put(handle_artifact_upload))
+        .route("/upload/:uri", post(handle_artifact_upload))
+        .route("/upload/:uri", put(handle_artifact_upload))
         // Artifact download endpoint
-        .route("/:id", get(handle_artifact_download))
+        .route("/:uri", get(handle_artifact_download))
         // Add more routes as needed
         .with_state(state)
 
@@ -97,25 +100,41 @@ async fn handle_register_worker(
     Ok(StatusCode::OK)
 }
 
-// Client requests to download an artifact
+// Client requests to download an artifact (client only ever downloads proofs)
 async fn handle_artifact_download(
     State(state): State<Arc<HierophantState>>,
-    Path(id): Path<String>,
-    body: Bytes,
+    Path(uri): Path<String>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    // TODO
+    info!("\n=== Received Download Request ===");
+    info!("Uri {uri}");
 
-    let artifact = "todo";
-    Ok(Json(artifact))
+    let uri: Uuid = match Uuid::parse_str(&uri) {
+        Ok(u) => u,
+        Err(e) => {
+            error!("Error parsing uri {uri} as Uuid: {e}");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    match state.artifact_store.store.lock().await.get(&uri) {
+        Some(artifact) => {
+            let bytes = artifact.bytes.to_vec();
+            Ok(bytes)
+        }
+        None => {
+            error!("Artifact {uri} not found");
+            Err(StatusCode::NOT_FOUND)
+        }
+    }
 }
 
 // Handler for artifact uploads
 async fn handle_artifact_upload(
     State(state): State<Arc<HierophantState>>,
-    Path(id): Path<String>,
+    Path(uri): Path<String>,
     body: Bytes,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let path = format!("/upload/{}", id);
+    let path = format!("/upload/{}", uri);
 
     info!("\n=== Received Upload Request ===");
     info!("Path: {}", path);
@@ -131,10 +150,24 @@ async fn handle_artifact_upload(
         );
     }
 
-    if let Err(e) = state.artifact_store.upload(path, body).await {
-        error!("{e}");
-        return Err(StatusCode::NOT_FOUND);
+    // TODO: should we remove this from the list of valid urls after its been uploaded?
+    //
+    // check if this is a valid upload url and get the expected artifact type and uri
+    let (artifact_type, uri) = match state.artifact_store.upload_urls.lock().await.get(&path) {
+        Some(i) => i.clone(),
+        None => {
+            error!("Invalid path {path}. Artifact not found");
+            return Err(StatusCode::NOT_FOUND);
+        }
     };
+
+    let artifact = Artifact::new(artifact_type, body);
+    state
+        .artifact_store
+        .store
+        .lock()
+        .await
+        .insert(uri, artifact);
 
     // Return success
     Ok("Upload successful")
