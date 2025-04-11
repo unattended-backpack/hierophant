@@ -1,9 +1,10 @@
+mod artifact_store;
 mod config;
 
-mod artifact_store;
+mod create_artifact_service;
 mod hierophant_state;
 mod http_handler;
-mod services;
+mod prover_network_service;
 pub mod network {
     tonic::include_proto!("network");
 }
@@ -14,9 +15,10 @@ use crate::config::Config;
 use crate::hierophant_state::HierophantState;
 use anyhow::Context;
 use artifact::create_artifact_server::CreateArtifactServer;
+use create_artifact_service::CreateArtifactService;
 use log::info;
 use network::prover_network_server::ProverNetworkServer;
-use services::{CreateArtifactService, ProverNetworkService};
+use prover_network_service::ProverNetworkService;
 use std::{net::SocketAddr, sync::Arc};
 use tonic::transport::Server;
 
@@ -76,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - artifact.CreateArtifact/CreateArtifact");
     println!("  - HTTP POST/PUT to /:id (for artifact uploads)");
     println!("  - HTTP GET to /:id (for artifact downloads)");
-    println!("  - HTTP PUT to /worker (for contemplant registration)");
+    println!("  - HTTP PUT to /register_worker (for contemplant registration)");
     println!("Servers started. Press Ctrl+C to stop.");
 
     // Wait for both servers to complete (or error)

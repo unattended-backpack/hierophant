@@ -2074,6 +2074,7 @@ dependencies = [
  "alloy-primitives",
  "anyhow",
  "axum",
+ "bincode",
  "hex",
  "hyper 0.14.32",
  "log",

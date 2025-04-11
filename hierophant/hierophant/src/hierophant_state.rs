@@ -1,5 +1,6 @@
-use crate::artifact_store::ArtifactStoreClient;
+use crate::artifact_store::ArtifactStore;
 use crate::config::Config;
+use crate::create_artifact_service::CreateArtifactService;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
     FulfillmentStatus, GetNonceRequest, GetNonceResponse, GetProgramRequest, GetProgramResponse,
@@ -9,6 +10,7 @@ use crate::network::{
 use alloy_primitives::B256;
 use log::debug;
 use serde::{Deserialize, Serialize};
+use sp1_sdk::network::proto::artifact::ArtifactType;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
@@ -111,22 +113,18 @@ pub struct HierophantState {
     pub config: Config,
     // Registered workers
     pub workers: Arc<RwLock<HashMap<String, WorkerState>>>,
-    // Valid upload URLs
-    pub upload_urls: Arc<Mutex<HashSet<String>>>,
     // Requested proofs
     pub proof_requests: Arc<Mutex<HashMap<Vec<u8>, ProofRequestData>>>,
-    // all artifacts
-    pub artifact_store_client: ArtifactStoreClient,
+    pub artifact_store: ArtifactStore,
 }
 
 impl HierophantState {
     pub fn new(config: Config) -> Self {
         Self {
             config,
-            upload_urls: Arc::new(Mutex::new(HashSet::new())),
             workers: Arc::new(RwLock::new(HashMap::new())),
             proof_requests: Arc::new(Mutex::new(HashMap::new())),
-            artifact_store_client: ArtifactStoreClient::new(),
+            artifact_store: ArtifactStore::new(),
         }
     }
 }

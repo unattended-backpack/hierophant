@@ -100,6 +100,7 @@ tower-http = { version = "0.5.2", features = ["limit"] }
 # Keccak with the SHA3 patch is more efficient than the default Keccak.
 alloy-primitives = { version = "0.8.21", default-features = false, features = [
 	"sha3-keccak",
+	"getrandom",
 ] }
 # alloy-sol-types = { version = "0.8.21", default-features = false }
 # alloy-sol-macro = { version = "0.8.21", default-features = false }

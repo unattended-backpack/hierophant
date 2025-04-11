@@ -1,5 +1,3 @@
-use crate::artifact::create_artifact_server::CreateArtifact;
-use crate::artifact::{CreateArtifactRequest, CreateArtifactResponse};
 use crate::hierophant_state::{HierophantState, ProofRequestData, WorkerState, WorkerStatus};
 use crate::network::prover_network_server::ProverNetwork;
 use crate::network::{
@@ -9,39 +7,10 @@ use crate::network::{
     RequestProofResponse, RequestProofResponseBody,
 };
 use log::info;
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
-
-// Helper to log method calls
-pub fn log_method_call(method_name: &str, request: &impl prost::Message) {
-    println!("\n=== Method Call: {} ===", method_name);
-
-    // Try to get bytes for debug
-    let bytes = request.encode_to_vec();
-    println!("Request size: {} bytes", bytes.len());
-
-    // Print as hex dump for easier analysis
-    if !bytes.is_empty() {
-        println!("Request Hex dump:");
-        for (i, chunk) in bytes.chunks(16).enumerate() {
-            let hex_line = hex::encode(chunk);
-            let mut ascii_line = String::new();
-
-            for &byte in chunk {
-                if byte >= 32 && byte <= 126 {
-                    ascii_line.push(byte as char);
-                } else {
-                    ascii_line.push('.');
-                }
-            }
-
-            println!("{:08x}: {:48} | {}", i * 16, hex_line, ascii_line);
-        }
-    }
-}
 
 // Our ProverNetwork service implementation
 #[derive(Debug)]
@@ -61,10 +30,8 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<GetProgramRequest>,
     ) -> Result<Response<GetProgramResponse>, Status> {
+        info!("get_program called");
         let req = request.into_inner();
-
-        // Log method call
-        log_method_call("GetProgram", &req);
 
         // Log vk_hash
         println!("Requested vk_hash: 0x{}", hex::encode(&req.vk_hash));
@@ -109,10 +76,8 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<GetNonceRequest>,
     ) -> Result<Response<GetNonceResponse>, Status> {
+        info!("get_nonce called");
         let req = request.into_inner();
-
-        // Log method call
-        log_method_call("GetNonce", &req);
 
         // Log address
         println!(
@@ -141,10 +106,8 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<CreateProgramRequest>,
     ) -> Result<Response<CreateProgramResponse>, Status> {
+        info!("create_program called");
         let req = request.into_inner();
-
-        // Log method call
-        log_method_call("CreateProgram", &req);
 
         // Extract and log the body contents if present
         if let Some(body) = &req.body {
@@ -182,10 +145,8 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<RequestProofRequest>,
     ) -> Result<Response<RequestProofResponse>, Status> {
+        info!("request_proof called");
         let req = request.into_inner();
-
-        // Log method call
-        log_method_call("RequestProof", &req);
 
         // Extract and log the body contents if present
 
@@ -317,10 +278,8 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<GetProofRequestStatusRequest>,
     ) -> Result<Response<GetProofRequestStatusResponse>, Status> {
+        info!("get_proof_request_status called");
         let req = request.into_inner();
-
-        // Log method call
-        log_method_call("GetProofRequestStatus", &req);
 
         // Log request ID
         println!(
@@ -385,55 +344,5 @@ impl ProverNetwork for ProverNetworkService {
                 Err(Status::not_found("Request ID not found"))
             }
         }
-    }
-}
-
-// Our CreateArtifact service implementation
-#[derive(Debug)]
-pub struct CreateArtifactService {
-    state: Arc<HierophantState>,
-}
-
-impl CreateArtifactService {
-    pub fn new(state: Arc<HierophantState>) -> Self {
-        Self { state }
-    }
-}
-
-#[tonic::async_trait]
-impl CreateArtifact for CreateArtifactService {
-    async fn create_artifact(
-        &self,
-        request: Request<CreateArtifactRequest>,
-    ) -> Result<Response<CreateArtifactResponse>, Status> {
-        let req = request.into_inner();
-
-        // Log method call
-        log_method_call("CreateArtifact", &req);
-
-        // Log the artifact type
-        println!("Requested artifact type: {}", req.artifact_type);
-
-        // Create mock response data
-        let artifact_id = Uuid::new_v4().to_string();
-        let artifact_uri = format!("hierophant://artifacts/{}", artifact_id);
-
-        // Use a local URL for uploads
-        let upload_path = format!("/upload/{}", artifact_id);
-        let artifact_presigned_url = format!("http://0.0.0.0:9010{}", upload_path);
-
-        // Register this URL as valid
-        self.state.upload_urls.lock().await.insert(upload_path);
-
-        // Create the response
-        let response = CreateArtifactResponse {
-            artifact_uri,
-            artifact_presigned_url,
-        };
-
-        info!("Responding with artifact URI: {}", response.artifact_uri);
-        info!("Presigned URL: {}", response.artifact_presigned_url);
-
-        Ok(Response::new(response))
     }
 }

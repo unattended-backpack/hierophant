@@ -2,7 +2,6 @@ use crate::hierophant_state::{HierophantState, WorkerState, WorkerStatus};
 use axum::{
     Json, Router,
     body::Bytes,
-    debug_handler,
     extract::{
         Path, State,
         connect_info::{self, ConnectInfo, Connected},
@@ -12,7 +11,7 @@ use axum::{
     routing::{get, post, put},
     serve::IncomingStream,
 };
-use log::info;
+use log::{error, info};
 use network_lib::{REGISTER_WORKER_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
@@ -38,8 +37,8 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
             post(handle_register_worker),
         )
         // Artifact upload endpoint
-        .route("/:id", post(handle_artifact_upload))
-        .route("/:id", put(handle_artifact_upload))
+        .route("/upload/:id", post(handle_artifact_upload))
+        .route("/upload/:id", put(handle_artifact_upload))
         // Artifact download endpoint
         .route("/:id", get(handle_artifact_download))
         // Add more routes as needed
@@ -121,16 +120,7 @@ async fn handle_artifact_upload(
     info!("\n=== Received Upload Request ===");
     info!("Path: {}", path);
 
-    // Check if this is a valid upload URL
-    let is_valid = state.upload_urls.lock().await.contains(&path);
-
-    if !is_valid {
-        println!("Invalid upload URL: {}", path);
-        return Err(StatusCode::NOT_FOUND);
-    }
-
     println!("Received upload data: {} bytes", body.len());
-
     // Print a preview of the data
     if !body.is_empty() {
         let preview_size = std::cmp::min(100, body.len());
@@ -140,6 +130,11 @@ async fn handle_artifact_upload(
             hex::encode(&body[..preview_size])
         );
     }
+
+    if let Err(e) = state.artifact_store.upload(path, body).await {
+        error!("{e}");
+        return Err(StatusCode::NOT_FOUND);
+    };
 
     // Return success
     Ok("Upload successful")
