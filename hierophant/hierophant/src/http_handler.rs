@@ -29,18 +29,19 @@ pub struct WorkerRegistration {
 pub fn create_router(state: Arc<HierophantState>) -> Router {
     Router::new()
         // Worker registration endpoint
-        //.route("/worker", get(handle_register_worker))
+        .route(
+            format!("/{REGISTER_WORKER_ENDPOINT}").as_ref(),
+            put(handle_register_worker),
+        )
         .route(
             format!("/{REGISTER_WORKER_ENDPOINT}").as_ref(),
             post(handle_register_worker),
         )
-        /*
-                // Artifact upload endpoint
-                .route("/:id", post(handle_artifact_upload))
-                .route("/:id", put(handle_artifact_upload))
-                // Artifact download endpoint
-                .route("/:id", get(handle_artifact_download))
-        */
+        // Artifact upload endpoint
+        .route("/:id", post(handle_artifact_upload))
+        .route("/:id", put(handle_artifact_upload))
+        // Artifact download endpoint
+        .route("/:id", get(handle_artifact_download))
         // Add more routes as needed
         .with_state(state)
 
@@ -97,6 +98,7 @@ async fn handle_register_worker(
     Ok(StatusCode::OK)
 }
 
+// Client requests to download an artifact
 async fn handle_artifact_download(
     State(state): State<Arc<HierophantState>>,
     Path(id): Path<String>,
@@ -116,8 +118,8 @@ async fn handle_artifact_upload(
 ) -> Result<impl IntoResponse, StatusCode> {
     let path = format!("/upload/{}", id);
 
-    println!("\n=== Received Upload Request ===");
-    println!("Path: {}", path);
+    info!("\n=== Received Upload Request ===");
+    info!("Path: {}", path);
 
     // Check if this is a valid upload URL
     let is_valid = state.upload_urls.lock().await.contains(&path);

@@ -2081,6 +2081,7 @@ dependencies = [
  "prost 0.13.5",
  "serde",
  "serde_json",
+ "sp1-sdk",
  "tokio",
  "toml",
  "tonic",

@@ -1,3 +1,4 @@
+use crate::artifact_store::ArtifactStoreClient;
 use crate::config::Config;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
@@ -106,9 +107,6 @@ pub struct ProofRequestData {
 }
 
 #[derive(Debug, Clone)]
-pub struct Artifact {}
-
-#[derive(Debug, Clone)]
 pub struct HierophantState {
     pub config: Config,
     // Registered workers
@@ -118,7 +116,7 @@ pub struct HierophantState {
     // Requested proofs
     pub proof_requests: Arc<Mutex<HashMap<Vec<u8>, ProofRequestData>>>,
     // all artifacts
-    pub artifact_store: Arc<RwLock<HashMap<B256, Artifact>>>,
+    pub artifact_store_client: ArtifactStoreClient,
 }
 
 impl HierophantState {
@@ -128,7 +126,7 @@ impl HierophantState {
             upload_urls: Arc::new(Mutex::new(HashSet::new())),
             workers: Arc::new(RwLock::new(HashMap::new())),
             proof_requests: Arc::new(Mutex::new(HashMap::new())),
-            artifact_store: Arc::new(RwLock::new(HashMap::new())),
+            artifact_store_client: ArtifactStoreClient::new(),
         }
     }
 }

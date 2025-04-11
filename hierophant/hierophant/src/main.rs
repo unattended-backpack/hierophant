@@ -1,5 +1,6 @@
 mod config;
 
+mod artifact_store;
 mod hierophant_state;
 mod http_handler;
 mod services;

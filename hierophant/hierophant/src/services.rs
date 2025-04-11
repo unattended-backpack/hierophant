@@ -8,32 +8,16 @@ use crate::network::{
     GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
     RequestProofResponse, RequestProofResponseBody,
 };
+use log::info;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
-// TODO: delete all method registry mentions.
-// Structure to track method names
-#[derive(Debug, Default)]
-pub struct MethodRegistry {
-    pub methods: HashSet<String>,
-}
-
 // Helper to log method calls
-pub fn log_method_call(
-    method_name: &str,
-    request: &impl prost::Message,
-    registry: &mut MethodRegistry,
-) {
+pub fn log_method_call(method_name: &str, request: &impl prost::Message) {
     println!("\n=== Method Call: {} ===", method_name);
-
-    // Register this method
-    registry.methods.insert(method_name.to_string());
-
-    // Log all methods seen so far
-    println!("Methods seen so far: {:?}", registry.methods);
 
     // Try to get bytes for debug
     let bytes = request.encode_to_vec();
@@ -62,16 +46,12 @@ pub fn log_method_call(
 // Our ProverNetwork service implementation
 #[derive(Debug)]
 pub struct ProverNetworkService {
-    registry: Arc<Mutex<MethodRegistry>>,
     state: Arc<HierophantState>,
 }
 
 impl ProverNetworkService {
     pub fn new(state: Arc<HierophantState>) -> Self {
-        Self {
-            registry: Arc::new(Mutex::new(MethodRegistry::default())),
-            state,
-        }
+        Self { state }
     }
 }
 
@@ -84,7 +64,7 @@ impl ProverNetwork for ProverNetworkService {
         let req = request.into_inner();
 
         // Log method call
-        log_method_call("GetProgram", &req, &mut self.registry.lock().unwrap());
+        log_method_call("GetProgram", &req);
 
         // Log vk_hash
         println!("Requested vk_hash: 0x{}", hex::encode(&req.vk_hash));
@@ -132,7 +112,7 @@ impl ProverNetwork for ProverNetworkService {
         let req = request.into_inner();
 
         // Log method call
-        log_method_call("GetNonce", &req, &mut self.registry.lock().unwrap());
+        log_method_call("GetNonce", &req);
 
         // Log address
         println!(
@@ -164,7 +144,7 @@ impl ProverNetwork for ProverNetworkService {
         let req = request.into_inner();
 
         // Log method call
-        log_method_call("CreateProgram", &req, &mut self.registry.lock().unwrap());
+        log_method_call("CreateProgram", &req);
 
         // Extract and log the body contents if present
         if let Some(body) = &req.body {
@@ -205,7 +185,7 @@ impl ProverNetwork for ProverNetworkService {
         let req = request.into_inner();
 
         // Log method call
-        log_method_call("RequestProof", &req, &mut self.registry.lock().unwrap());
+        log_method_call("RequestProof", &req);
 
         // Extract and log the body contents if present
 
@@ -340,11 +320,7 @@ impl ProverNetwork for ProverNetworkService {
         let req = request.into_inner();
 
         // Log method call
-        log_method_call(
-            "GetProofRequestStatus",
-            &req,
-            &mut self.registry.lock().unwrap(),
-        );
+        log_method_call("GetProofRequestStatus", &req);
 
         // Log request ID
         println!(
@@ -415,16 +391,12 @@ impl ProverNetwork for ProverNetworkService {
 // Our CreateArtifact service implementation
 #[derive(Debug)]
 pub struct CreateArtifactService {
-    registry: Arc<Mutex<MethodRegistry>>,
     state: Arc<HierophantState>,
 }
 
 impl CreateArtifactService {
     pub fn new(state: Arc<HierophantState>) -> Self {
-        Self {
-            registry: Arc::new(Mutex::new(MethodRegistry::default())),
-            state,
-        }
+        Self { state }
     }
 }
 
@@ -437,7 +409,7 @@ impl CreateArtifact for CreateArtifactService {
         let req = request.into_inner();
 
         // Log method call
-        log_method_call("CreateArtifact", &req, &mut self.registry.lock().unwrap());
+        log_method_call("CreateArtifact", &req);
 
         // Log the artifact type
         println!("Requested artifact type: {}", req.artifact_type);
@@ -459,8 +431,8 @@ impl CreateArtifact for CreateArtifactService {
             artifact_presigned_url,
         };
 
-        println!("Responding with artifact URI: {}", response.artifact_uri);
-        println!("Presigned URL: {}", response.artifact_presigned_url);
+        info!("Responding with artifact URI: {}", response.artifact_uri);
+        info!("Presigned URL: {}", response.artifact_presigned_url);
 
         Ok(Response::new(response))
     }
