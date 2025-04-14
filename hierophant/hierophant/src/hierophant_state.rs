@@ -116,7 +116,9 @@ pub struct HierophantState {
     pub workers: Arc<RwLock<HashMap<String, WorkerState>>>,
     // Requested proofs
     pub proof_requests: Arc<Mutex<HashMap<Vec<u8>, ProofRequestData>>>,
-    pub program_store: Arc<Mutex<HashMap<Uuid, Program>>>,
+    // mapping vk_hash -> Program
+    // programs are requested by vk_hash in ProverNetworkService.get_program reqs
+    pub program_store: Arc<Mutex<HashMap<Vec<u8>, Program>>>,
     pub nonces: Arc<Mutex<HashMap<Address, u64>>>,
     // mapping of artifact upload path to (expected type, uri)
     pub upload_urls: Arc<Mutex<HashMap<String, (ArtifactType, Uuid)>>>,

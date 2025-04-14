@@ -35,42 +35,33 @@ impl ProverNetwork for ProverNetworkService {
         let req = request.into_inner();
 
         // Log vk_hash
-        println!("Requested vk_hash: 0x{}", hex::encode(&req.vk_hash));
+        let vk_hash_hex = hex::encode(&req.vk_hash);
+        info!("Requested program with vk_hash: 0x{vk_hash_hex}",);
 
-        // Create a Program object that matches the expected structure
-        let program = Program {
-            // The vk_hash is what they're looking up by
-            vk_hash: req.vk_hash.clone(),
+        // get program
+        let maybe_program = self
+            .state
+            .program_store
+            .lock()
+            .await
+            .get(&req.vk_hash)
+            .cloned();
 
-            // Create a mock verification key (typically would be much larger)
-            vk: vec![0xAA; 256], // 256 bytes of dummy VK data
-
-            // A mock program URI
-            program_uri: "hierophant://mock/program/1".to_string(),
-
-            // Optional name
-            name: Some("Mock Program".to_string()),
-
-            // Mock owner (20 bytes, like an Ethereum address)
-            owner: vec![0xBB; 20],
-
-            // Current timestamp
-            created_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        };
+        match maybe_program {
+            Some(_) => {
+                info!("Program with vk_hash 0x{vk_hash_hex} found");
+            }
+            None => {
+                info!("Program with vk_hash 0x{vk_hash_hex} not found");
+            }
+        }
 
         // Create the response with the program
         let response = GetProgramResponse {
-            program: Some(program),
+            program: maybe_program,
         };
 
-        println!("Responding with structured program data");
-
-        // TODO: check if the program is here before replying with it.
-        Err(Status::not_found("no program"))
-        // Ok(Response::new(response))
+        Ok(Response::new(response))
     }
 
     async fn get_nonce(
@@ -79,8 +70,6 @@ impl ProverNetwork for ProverNetworkService {
     ) -> Result<Response<GetNonceResponse>, Status> {
         info!("get_nonce called");
         let req = request.into_inner();
-
-        // Log address
 
         let address: Address = match req.address.as_slice().try_into() {
             Ok(address) => address,
@@ -124,53 +113,69 @@ impl ProverNetwork for ProverNetworkService {
 
         let req = request.into_inner();
 
-        // Extract and log the body contents if present
-        let tx_hash = if let Some(body) = req.body {
-            println!("CreateProgram request details:");
-            println!("  Nonce: {}", body.nonce);
-            println!("  VK Hash: 0x{}", hex::encode(&body.vk_hash));
-            println!("  VK size: {} bytes", body.vk.len());
-            println!("  Program URI: {}", body.program_uri);
-
-            let owner = self.state.config.pub_key;
-            let mut store = self.state.program_store.lock().await;
-            // TODO: seconds since UNIX_EPOCH, is this the best format for `created_at` time?
-            let created_at = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            // TODO: who's the owner supposed to be?  Who looks at this?
-            let uuid = Uuid::new_v4();
-            // TODO: newtype ProofName that is just a prefix of "proof:<uuid>" for easier logging
-            // include nice methods for going to/from uuid
-            // Can also extend this for all artifact types
-            let name = Some(uuid.to_string());
-
-            let program = Program {
-                vk_hash: body.vk_hash,
-                vk: body.vk,
-                program_uri: body.program_uri,
-                owner: (*owner).to_vec(),
-                created_at,
-                name,
-            };
-
-            store.insert(uuid, program);
-
-            // Generate a mock transaction hash (in a real implementation, this would be from the blockchain)
-            (*B256::random()).to_vec()
-        } else {
-            // TODO: what situation is this??
-            todo!()
+        let body = match req.body {
+            Some(body) => body,
+            None => {
+                // The client only ever supplies Some(program) [as of sp1-sdk v4.1.3].
+                // It's not clear why it would ever be None.
+                let error_msg = format!(
+                    "No program supplied in body of CreateProgramRequest with signature {}",
+                    hex::encode(&req.signature)
+                );
+                error!("{error_msg}");
+                return Err(Status::invalid_argument(error_msg));
+            }
         };
+
+        // Extract and log the body contents if present
+        println!("CreateProgram request details:");
+        println!("  Nonce: {}", body.nonce);
+        println!("  VK Hash: 0x{}", hex::encode(&body.vk_hash));
+        println!("  VK size: {} bytes", body.vk.len());
+        println!("  Program URI: {}", body.program_uri);
+
+        // TODO: should owner be the requesting client or the Heirophant's pub key?
+        let owner = self.state.config.pub_key;
+        let created_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // TODO: newtype ProofName that is just a prefix of "proof:<vk_hash>" for easier logging.
+        // include nice methods for going to/from uuid
+        // Can also extend this for all artifact types
+        let name = None;
+
+        let program = Program {
+            vk_hash: body.vk_hash.clone(),
+            vk: body.vk,
+            program_uri: body.program_uri,
+            owner: (*owner).to_vec(),
+            created_at,
+            name,
+        };
+        info!(
+            "created program with vk_hash 0x{}",
+            hex::encode(&body.vk_hash)
+        );
+
+        self.state
+            .program_store
+            .lock()
+            .await
+            .insert(body.vk_hash, program);
+
+        // Generate a mock transaction hash (in a real implementation, this would be from the blockchain)
+        let tx_hash = (*B256::random()).to_vec();
 
         // TODO: verify VK?
 
         // TODO: who is signing this? Verify signature
-        // Log the signature
-        println!("Signature: 0x{}", hex::encode(&req.signature));
 
         // TODO: increment nonce?
+
+        // Log the signature
+        println!("Signature: 0x{}", hex::encode(&req.signature));
 
         // Create the response
         let response = CreateProgramResponse {
