@@ -49,9 +49,14 @@ impl CreateArtifact for CreateArtifactService {
 
         // Register this URL as valid
         self.state
-            .artifact_store
-            .register_upload_url(upload_path, artifact_type, artifact_uri)
-            .await;
+            .upload_urls
+            .lock()
+            .await
+            .insert(upload_path.clone(), (artifact_type, artifact_uri));
+        info!(
+            "Registered upload url {upload_path} for artifact {artifact_uri} expecting a {}",
+            artifact_type.as_str_name()
+        );
 
         // Create the response
         let response = CreateArtifactResponse {

@@ -1,5 +1,4 @@
-use crate::artifact_store::Artifact;
-use crate::hierophant_state::{HierophantState, WorkerState, WorkerStatus};
+use crate::hierophant_state::{Artifact, HierophantState, WorkerStatus};
 use axum::{
     Json, Router,
     body::Bytes,
@@ -116,7 +115,7 @@ async fn handle_artifact_download(
         }
     };
 
-    match state.artifact_store.store.lock().await.get(&uri) {
+    match state.artifact_store.lock().await.get(&uri) {
         Some(artifact) => {
             let bytes = artifact.bytes.to_vec();
             Ok(bytes)
@@ -153,7 +152,7 @@ async fn handle_artifact_upload(
     // TODO: should we remove this from the list of valid urls after its been uploaded?
     //
     // check if this is a valid upload url and get the expected artifact type and uri
-    let (artifact_type, uri) = match state.artifact_store.upload_urls.lock().await.get(&path) {
+    let (artifact_type, uri) = match state.upload_urls.lock().await.get(&path) {
         Some(i) => i.clone(),
         None => {
             error!("Invalid path {path}. Artifact not found");
@@ -162,12 +161,7 @@ async fn handle_artifact_upload(
     };
 
     let artifact = Artifact::new(artifact_type, body);
-    state
-        .artifact_store
-        .store
-        .lock()
-        .await
-        .insert(uri, artifact);
+    state.artifact_store.lock().await.insert(uri, artifact);
 
     // Return success
     Ok("Upload successful")

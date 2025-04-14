@@ -1,6 +1,4 @@
-mod artifact_store;
 mod config;
-mod program_store;
 
 mod create_artifact_service;
 mod hierophant_state;

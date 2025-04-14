@@ -133,7 +133,7 @@ impl ProverNetwork for ProverNetworkService {
             println!("  Program URI: {}", body.program_uri);
 
             let owner = self.state.config.pub_key;
-            let mut store = self.state.program_store.store.lock().await;
+            let mut store = self.state.program_store.lock().await;
             // TODO: seconds since UNIX_EPOCH, is this the best format for `created_at` time?
             let created_at = SystemTime::now()
                 .duration_since(UNIX_EPOCH)

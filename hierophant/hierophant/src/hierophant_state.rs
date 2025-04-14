@@ -1,4 +1,3 @@
-use crate::artifact_store::ArtifactStore;
 use crate::config::Config;
 use crate::create_artifact_service::CreateArtifactService;
 use crate::network::{
@@ -7,8 +6,8 @@ use crate::network::{
     GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
     RequestProofResponse, RequestProofResponseBody,
 };
-use crate::program_store::ProgramStore;
 use alloy_primitives::{Address, B256};
+use axum::body::Bytes;
 use log::debug;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::network::proto::artifact::ArtifactType;
@@ -19,6 +18,7 @@ use std::{
     sync::Arc,
 };
 use tokio::sync::{Mutex, RwLock};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkerStatus {
@@ -116,9 +116,12 @@ pub struct HierophantState {
     pub workers: Arc<RwLock<HashMap<String, WorkerState>>>,
     // Requested proofs
     pub proof_requests: Arc<Mutex<HashMap<Vec<u8>, ProofRequestData>>>,
-    pub artifact_store: ArtifactStore,
-    pub program_store: ProgramStore,
+    pub program_store: Arc<Mutex<HashMap<Uuid, Program>>>,
     pub nonces: Arc<Mutex<HashMap<Address, u64>>>,
+    // mapping of artifact upload path to (expected type, uri)
+    pub upload_urls: Arc<Mutex<HashMap<String, (ArtifactType, Uuid)>>>,
+    // mapping of uri, artifact data
+    pub artifact_store: Arc<Mutex<HashMap<Uuid, Artifact>>>,
 }
 
 impl HierophantState {
@@ -127,9 +130,26 @@ impl HierophantState {
             config,
             workers: Arc::new(RwLock::new(HashMap::new())),
             proof_requests: Arc::new(Mutex::new(HashMap::new())),
-            artifact_store: ArtifactStore::new(),
-            program_store: ProgramStore::new(),
+            program_store: Arc::new(Mutex::new(HashMap::new())),
             nonces: Arc::new(Mutex::new(HashMap::new())),
+            upload_urls: Arc::new(Mutex::new(HashMap::new())),
+            artifact_store: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Artifact {
+    pub artifact_type: ArtifactType,
+    // serialized representation of the artifact
+    pub bytes: Bytes,
+}
+
+impl Artifact {
+    pub fn new(artifact_type: ArtifactType, bytes: Bytes) -> Self {
+        Self {
+            artifact_type,
+            bytes,
         }
     }
 }
