@@ -6,7 +6,8 @@ use crate::network::{
     GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
     RequestProofResponse, RequestProofResponseBody,
 };
-use log::info;
+use alloy_primitives::{Address, B256};
+use log::{error, info};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::{Request, Response, Status};
@@ -80,22 +81,26 @@ impl ProverNetwork for ProverNetworkService {
         let req = request.into_inner();
 
         // Log address
-        println!(
-            "Requested nonce for address: 0x{}",
-            hex::encode(&req.address)
-        );
 
-        // Generate a mock nonce (in a real implementation, this would come from a database)
-        // Using a simple deterministic value based on the address for consistency
-        // TODO: make this a real nonce.
-        let mock_nonce = req
-            .address
-            .iter()
-            .fold(0u64, |acc, &byte| acc.wrapping_add(byte as u64))
-            % 1000;
+        let address: Address = match req.address.as_slice().try_into() {
+            Ok(address) => address,
+            Err(e) => {
+                let error_msg =
+                    format!("Can't parse {} as Address: {e}", hex::encode(&req.address));
+                error!("{error_msg}");
+                return Err(Status::invalid_argument(error_msg));
+            }
+        };
+
+        let nonce = match self.state.nonces.lock().await.get(&address) {
+            Some(nonce) => *nonce,
+            None => 0,
+        };
+
+        info!("Nonce of address {address} is {nonce}");
 
         // Create the response
-        let response = GetNonceResponse { nonce: mock_nonce };
+        let response = GetNonceResponse { nonce };
 
         println!("Responding with nonce: {}", response.nonce);
 
@@ -107,25 +112,65 @@ impl ProverNetwork for ProverNetworkService {
         request: Request<CreateProgramRequest>,
     ) -> Result<Response<CreateProgramResponse>, Status> {
         info!("create_program called");
+        // TODO: might have to handle differently based on request.format
+        // or does tonic handle this for us?
+        /*
+        pub enum MessageFormat {
+            UnspecifiedFormat = 0,
+            Json = 1,
+            Binary = 2,
+        }
+        */
+
         let req = request.into_inner();
 
         // Extract and log the body contents if present
-        if let Some(body) = &req.body {
+        let tx_hash = if let Some(body) = req.body {
             println!("CreateProgram request details:");
             println!("  Nonce: {}", body.nonce);
             println!("  VK Hash: 0x{}", hex::encode(&body.vk_hash));
             println!("  VK size: {} bytes", body.vk.len());
             println!("  Program URI: {}", body.program_uri);
-        }
 
+            let owner = self.state.config.pub_key;
+            let mut store = self.state.program_store.store.lock().await;
+            // TODO: seconds since UNIX_EPOCH, is this the best format for `created_at` time?
+            let created_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            // TODO: who's the owner supposed to be?  Who looks at this?
+            let uuid = Uuid::new_v4();
+            // TODO: newtype ProofName that is just a prefix of "proof:<uuid>" for easier logging
+            // include nice methods for going to/from uuid
+            // Can also extend this for all artifact types
+            let name = Some(uuid.to_string());
+
+            let program = Program {
+                vk_hash: body.vk_hash,
+                vk: body.vk,
+                program_uri: body.program_uri,
+                owner: (*owner).to_vec(),
+                created_at,
+                name,
+            };
+
+            store.insert(uuid, program);
+
+            // Generate a mock transaction hash (in a real implementation, this would be from the blockchain)
+            (*B256::random()).to_vec()
+        } else {
+            // TODO: what situation is this??
+            todo!()
+        };
+
+        // TODO: verify VK?
+
+        // TODO: who is signing this? Verify signature
         // Log the signature
         println!("Signature: 0x{}", hex::encode(&req.signature));
 
-        // Generate a mock transaction hash (in a real implementation, this would be from the blockchain)
-        let mut tx_hash = vec![0u8; 32]; // 32-byte transaction hash
-        for (i, &byte) in req.signature.iter().take(32).enumerate() {
-            tx_hash[i] = byte;
-        }
+        // TODO: increment nonce?
 
         // Create the response
         let response = CreateProgramResponse {

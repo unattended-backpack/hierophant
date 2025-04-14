@@ -7,7 +7,8 @@ use crate::network::{
     GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
     RequestProofResponse, RequestProofResponseBody,
 };
-use alloy_primitives::B256;
+use crate::program_store::ProgramStore;
+use alloy_primitives::{Address, B256};
 use log::debug;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::network::proto::artifact::ArtifactType;
@@ -116,6 +117,8 @@ pub struct HierophantState {
     // Requested proofs
     pub proof_requests: Arc<Mutex<HashMap<Vec<u8>, ProofRequestData>>>,
     pub artifact_store: ArtifactStore,
+    pub program_store: ProgramStore,
+    pub nonces: Arc<Mutex<HashMap<Address, u64>>>,
 }
 
 impl HierophantState {
@@ -125,6 +128,8 @@ impl HierophantState {
             workers: Arc::new(RwLock::new(HashMap::new())),
             proof_requests: Arc::new(Mutex::new(HashMap::new())),
             artifact_store: ArtifactStore::new(),
+            program_store: ProgramStore::new(),
+            nonces: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
