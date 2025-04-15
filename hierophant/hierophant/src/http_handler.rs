@@ -1,4 +1,5 @@
-use crate::hierophant_state::{Artifact, HierophantState, WorkerStatus};
+use crate::hierophant_state::{Artifact, HierophantState};
+use crate::proof_router::worker_state::WorkerState;
 use axum::{
     Json, Router,
     body::Bytes,
@@ -15,7 +16,6 @@ use log::{error, info};
 use network_lib::{REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
-use tokio::net::{UnixListener, UnixStream, unix::UCred};
 use uuid::Uuid;
 
 // Structure to receive worker registration.

@@ -135,7 +135,6 @@ impl WorkerRegistryClient {
 
 pub struct WorkerRegistry {
     pub cfg_max_worker_strikes: usize,
-    pub cfg_prover_network_retries: usize,
     // Using a HashMap is a fine complexity tradeoff because we'll never have >20 workers, so
     // iterating isn't horrible in reality.
     pub workers: HashMap<String, WorkerState>,

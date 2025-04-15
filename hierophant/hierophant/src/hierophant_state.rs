@@ -1,12 +1,11 @@
 use crate::config::Config;
-use crate::create_artifact_service::CreateArtifactService;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
     FulfillmentStatus, GetNonceRequest, GetNonceResponse, GetProgramRequest, GetProgramResponse,
     GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
     RequestProofResponse, RequestProofResponseBody,
 };
-use crate::proof_router::ProofRouter;
+use crate::proof_router::{ProofRouter, worker_state::WorkerState};
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::debug;
@@ -15,88 +14,10 @@ use sp1_sdk::network::proto::artifact::ArtifactType;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
-    net::SocketAddr,
     sync::Arc,
 };
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum WorkerStatus {
-    Idle,
-    Busy { proof_id: B256 },
-}
-
-impl Display for WorkerStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Idle => write!(f, "Idle"),
-            Self::Busy { proof_id } => write!(f, "Busy with proof {proof_id}"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkerState {
-    pub name: String,
-    pub id: B256,
-    pub status: WorkerStatus,
-    // publicly callable address
-    pub address: SocketAddr,
-    pub strikes: usize,
-}
-
-impl WorkerState {
-    pub fn new(name: String, address: SocketAddr) -> WorkerState {
-        let id = B256::random();
-        WorkerState {
-            name,
-            id,
-            address,
-            status: WorkerStatus::Idle,
-            strikes: 0,
-        }
-    }
-
-    fn is_busy(&self) -> bool {
-        self.status != WorkerStatus::Idle
-    }
-
-    fn add_strike(&mut self) {
-        self.strikes += 1;
-        debug!(
-            "Strike added to worker {}:{}.  New strikes: {}",
-            self.name, self.id, self.strikes
-        );
-    }
-
-    fn add_strikes(&mut self, strikes: usize) {
-        self.strikes += strikes;
-        debug!(
-            "{} strikes added to worker.  New strikes: {}",
-            strikes, self.strikes
-        );
-    }
-
-    // Makes the worker busy with a proof id
-    fn assign_proof(&mut self, proof_id: B256) {
-        self.status = WorkerStatus::Busy { proof_id };
-        // This worker has been good.  Reset their strikes
-        self.strikes = 0;
-    }
-
-    fn should_drop(&self, cfg_max_worker_strikes: usize) -> bool {
-        self.strikes >= cfg_max_worker_strikes
-    }
-
-    // returns the proof the worker is currently working on, if any
-    fn current_proof_id(&self) -> Option<B256> {
-        match self.status {
-            WorkerStatus::Idle => None,
-            WorkerStatus::Busy { proof_id } => Some(proof_id),
-        }
-    }
-}
 
 // Structure to store proof request data for status checks
 #[derive(Debug, Clone)]
@@ -162,7 +83,7 @@ impl Artifact {
 }
 
 // newtype wrapper for keeping vk_hash bytes distinct from other Vec<u8>
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Serialize, Eq, PartialEq, Hash)]
 pub struct VkHash(Vec<u8>);
 
 impl VkHash {

@@ -1,6 +1,7 @@
 use crate::artifact::create_artifact_server::CreateArtifact;
 use crate::artifact::{CreateArtifactRequest, CreateArtifactResponse};
-use crate::hierophant_state::{HierophantState, ProofRequestData, WorkerState, WorkerStatus};
+use crate::hierophant_state::{HierophantState, ProofRequestData};
+use crate::proof_router::worker_state::WorkerState;
 use anyhow::anyhow;
 use log::info;
 use sp1_sdk::network::proto::artifact::ArtifactType;
