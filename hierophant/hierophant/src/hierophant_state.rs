@@ -167,7 +167,13 @@ pub struct VkHash(Vec<u8>);
 
 impl VkHash {
     pub fn to_hex_string(&self) -> String {
-        hex::encode(self.clone().0)
+        format!("0x{}", hex::encode(self.clone().0))
+    }
+}
+
+impl Default for VkHash {
+    fn default() -> Self {
+        VkHash(vec![])
     }
 }
 
