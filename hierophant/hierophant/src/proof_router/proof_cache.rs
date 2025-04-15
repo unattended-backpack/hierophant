@@ -1,4 +1,4 @@
-use crate::{GenericProofRequest, ProofRequestCacheClient, SpanProofRequest};
+use crate::VkHash;
 use alloy_primitives::B256;
 use anyhow::{Context, Result, anyhow};
 use log::{error, info};
@@ -23,7 +23,7 @@ pub struct ProofCache {
     // when we get a new proof, replace the proof at current_index and also look it up in
     // proof_requests and evict the address that we just replaced
     // (proof_id, proof_file_path_name)
-    cache_list: Vec<(B256, String)>,
+    cache_list: Vec<(VkHash, String)>,
 }
 
 impl ProofCache {
@@ -31,10 +31,10 @@ impl ProofCache {
         // Create `proofs/` directory if it doesn't already exist
         let path = Path::new(proof_cache_directory);
         if !path.exists() {
-            info!("`proofs/` directory doesn't exist.  Creating it.");
-            fs::create_dir(path).context("Create proofs/ directory")?;
+            info!("{proof_cache_directory} directory doesn't exist.  Creating it for caching completed proofs.");
+            fs::create_dir(path).context("Create {proof_cache_directory} directory")?;
         } else {
-            info!("Found `proofs/` directory.");
+            info!("Found {proof_cache_directory} directory.");
         }
 
         let mut cache_list = Vec::with_capacity(cache_size);

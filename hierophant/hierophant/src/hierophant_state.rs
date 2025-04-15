@@ -115,11 +115,12 @@ pub struct HierophantState {
     pub config: Config,
     // Registered workers
     pub workers: Arc<RwLock<HashMap<String, WorkerState>>>,
+    // mapping vk_hash -> ProofRequestData
     // Requested proofs
-    pub proof_requests: Arc<Mutex<HashMap<Vec<u8>, ProofRequestData>>>,
+    pub proof_requests: Arc<Mutex<HashMap<VkHash, ProofRequestData>>>,
     // mapping vk_hash -> Program
     // programs are requested by vk_hash in ProverNetworkService.get_program reqs
-    pub program_store: Arc<Mutex<HashMap<Vec<u8>, Program>>>,
+    pub program_store: Arc<Mutex<HashMap<VkHash, Program>>>,
     pub nonces: Arc<Mutex<HashMap<Address, u64>>>,
     // mapping of artifact upload path to (expected type, uri)
     pub upload_urls: Arc<Mutex<HashMap<String, (ArtifactType, Uuid)>>>,
@@ -157,5 +158,29 @@ impl Artifact {
             artifact_type,
             bytes,
         }
+    }
+}
+
+// newtype wrapper for keeping vk_hash bytes distinct from other Vec<u8>
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct VkHash(Vec<u8>);
+
+impl VkHash {
+    pub fn to_hex_string(&self) -> String {
+        hex::encode(self.clone().0)
+    }
+}
+
+// so we can convert from Vec<u8> to VkHash
+impl From<Vec<u8>> for VkHash {
+    fn from(bytes: Vec<u8>) -> Self {
+        VkHash(bytes)
+    }
+}
+
+// so we can convert VkHash into Vec<u8>
+impl From<VkHash> for Vec<u8> {
+    fn from(hash: VkHash) -> Self {
+        hash.0
     }
 }

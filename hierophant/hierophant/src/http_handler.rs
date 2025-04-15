@@ -1,5 +1,4 @@
 use crate::hierophant_state::{Artifact, HierophantState, WorkerStatus};
-use crate::proof_router::WorkerState;
 use axum::{
     Json, Router,
     body::Bytes,
@@ -13,7 +12,7 @@ use axum::{
     serve::IncomingStream,
 };
 use log::{error, info};
-use network_lib::{REGISTER_WORKER_ENDPOINT, WorkerRegisterInfo};
+use network_lib::{REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, sync::Arc};
 use tokio::net::{UnixListener, UnixStream, unix::UCred};
@@ -30,11 +29,11 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
     Router::new()
         // Worker registration endpoint
         .route(
-            format!("/{REGISTER_WORKER_ENDPOINT}").as_ref(),
+            format!("/{REGISTER_CONTEMPLANT_ENDPOINT}").as_ref(),
             put(handle_register_worker),
         )
         .route(
-            format!("/{REGISTER_WORKER_ENDPOINT}").as_ref(),
+            format!("/{REGISTER_CONTEMPLANT_ENDPOINT}").as_ref(),
             post(handle_register_worker),
         )
         // for testing only

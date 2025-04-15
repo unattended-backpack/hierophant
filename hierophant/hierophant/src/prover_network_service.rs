@@ -1,4 +1,6 @@
-use crate::hierophant_state::{HierophantState, ProofRequestData, WorkerState, WorkerStatus};
+use crate::hierophant_state::{
+    HierophantState, ProofRequestData, VkHash, WorkerState, WorkerStatus,
+};
 use crate::network::prover_network_server::ProverNetwork;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
@@ -34,18 +36,14 @@ impl ProverNetwork for ProverNetworkService {
         info!("get_program called");
         let req = request.into_inner();
 
+        let vk_hash: VkHash = req.vk_hash.into();
+        let vk_hash_hex = vk_hash.to_hex_string();
+
         // Log vk_hash
-        let vk_hash_hex = hex::encode(&req.vk_hash);
         info!("Requested program with vk_hash: 0x{vk_hash_hex}",);
 
         // get program
-        let maybe_program = self
-            .state
-            .program_store
-            .lock()
-            .await
-            .get(&req.vk_hash)
-            .cloned();
+        let maybe_program = self.state.program_store.lock().await.get(&vk_hash).cloned();
 
         match maybe_program {
             Some(_) => {
@@ -127,10 +125,13 @@ impl ProverNetwork for ProverNetworkService {
             }
         };
 
+        let vk_hash: VkHash = body.vk_hash.into();
+        let vk_hash_hex = vk_hash.to_hex_string();
+
         // Extract and log the body contents if present
         println!("CreateProgram request details:");
         println!("  Nonce: {}", body.nonce);
-        println!("  VK Hash: 0x{}", hex::encode(&body.vk_hash));
+        println!("  VK Hash: 0x{}", vk_hash_hex);
         println!("  VK size: {} bytes", body.vk.len());
         println!("  Program URI: {}", body.program_uri);
 
@@ -147,23 +148,20 @@ impl ProverNetwork for ProverNetworkService {
         let name = None;
 
         let program = Program {
-            vk_hash: body.vk_hash.clone(),
+            vk_hash: vk_hash.clone().into(),
             vk: body.vk,
             program_uri: body.program_uri,
             owner: (*owner).to_vec(),
             created_at,
             name,
         };
-        info!(
-            "created program with vk_hash 0x{}",
-            hex::encode(&body.vk_hash)
-        );
+        info!("created program with vk_hash 0x{vk_hash_hex}");
 
         self.state
             .program_store
             .lock()
             .await
-            .insert(body.vk_hash, program);
+            .insert(vk_hash, program);
 
         // Generate a mock transaction hash (in a real implementation, this would be from the blockchain)
         let tx_hash = (*B256::random()).to_vec();
@@ -199,11 +197,12 @@ impl ProverNetwork for ProverNetworkService {
         let req = request.into_inner();
 
         // Extract and log the body contents if present
-
         if let Some(body) = &req.body {
+            let vk_hash: VkHash = body.vk_hash.into();
+            let vk_hash_hex = vk_hash.to_hex_string();
             println!("RequestProof request details:");
             println!("  Nonce: {}", body.nonce);
-            println!("  VK Hash: 0x{}", hex::encode(&body.vk_hash));
+            println!("  VK Hash: 0x{}", vk_hash_hex);
             println!("  Version: {}", body.version);
             println!("  Mode: {}", body.mode);
             println!("  Strategy: {}", body.strategy);
