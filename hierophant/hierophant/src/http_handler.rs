@@ -1,4 +1,5 @@
 use crate::hierophant_state::{Artifact, HierophantState, WorkerStatus};
+use crate::proof_router::WorkerState;
 use axum::{
     Json, Router,
     body::Bytes,

@@ -24,15 +24,10 @@ pub struct ProofCache {
     // proof_requests and evict the address that we just replaced
     // (proof_id, proof_file_path_name)
     cache_list: Vec<(B256, String)>,
-    proof_request_cache_client: ProofRequestCacheClient,
 }
 
 impl ProofCache {
-    pub fn new(
-        cache_size: usize,
-        proof_cache_directory: &str,
-        proof_request_cache_client: ProofRequestCacheClient,
-    ) -> Result<Self> {
+    pub fn new(cache_size: usize, proof_cache_directory: &str) -> Result<Self> {
         // Create `proofs/` directory if it doesn't already exist
         let path = Path::new(proof_cache_directory);
         if !path.exists() {
@@ -52,7 +47,6 @@ impl ProofCache {
             proof_cache_directory: format!("{proof_cache_directory}"),
             current_cache_index: 0,
             cache_list,
-            proof_request_cache_client,
         })
     }
 
@@ -84,11 +78,10 @@ impl ProofCache {
             return Ok(None);
         }
 
-        let maybe_proof = self
-            .proof_request_cache_client
-            .lookup_proof_request(proof_id)
-            .await?;
+        // TODO: get proof
+        todo!()
 
+        // TODO: this changes as well.  Proof naming will have to change in the cache
         match maybe_proof {
             Some(GenericProofRequest::Span(proof_request)) => {
                 let proof_path_name =

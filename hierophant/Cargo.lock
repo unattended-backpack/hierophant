@@ -2080,6 +2080,7 @@ dependencies = [
  "log",
  "network-lib",
  "prost 0.13.5",
+ "reqwest",
  "serde",
  "serde_json",
  "sp1-sdk",

@@ -1,7 +1,3 @@
-use crate::{
-    GenericProofRequest, ProofStatus, Serialize, WorkerAggProofRequest, WorkerSpanProofRequest,
-    request_with_retries,
-};
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
@@ -22,12 +18,12 @@ pub struct WorkerRegistryClient {
 
 impl Default for WorkerRegistryClient {
     fn default() -> Self {
-        Self::new(3, 3)
+        Self::new(3)
     }
 }
 
 impl WorkerRegistryClient {
-    pub fn new(cfg_max_worker_strikes: usize, cfg_prover_network_retries: usize) -> Self {
+    pub fn new(cfg_max_worker_strikes: usize) -> Self {
         let workers = HashMap::new();
         let reqwest_client = Client::new();
 
@@ -35,7 +31,6 @@ impl WorkerRegistryClient {
 
         let worker_registry = WorkerRegistry {
             cfg_max_worker_strikes,
-            cfg_prover_network_retries,
             workers,
             reqwest_client,
             receiver,
@@ -414,17 +409,13 @@ impl WorkerRegistry {
                 .send()
         };
 
-        let response = match request_with_retries(
-            self.cfg_prover_network_retries,
-            worker_proof_status_request,
-        )
-        .await
-        {
+        let retries = 3;
+        let response = match request_with_retries(retries, worker_proof_status_request).await {
             Ok(worker_response) => worker_response,
             Err(err) => {
                 // TODO: could make a StrikeWorker command then make handling
                 // reqwest responses more async by moving them to a tokio task
-                worker_state.add_strikes(self.cfg_prover_network_retries);
+                worker_state.add_strikes(retries);
                 error!(
                     "Failed to send request {}/status/{}. Error: {}",
                     worker_addr, target_proof_id, err
