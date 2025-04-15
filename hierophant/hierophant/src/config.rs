@@ -17,6 +17,37 @@ pub struct Config {
     // key pair used for signing messages to the client and retreiving nonces
     pub pub_key: Address,
     pub priv_key: B256,
+    // how many retries on prover network requests until we fall back to local proof.
+    #[serde(default = "default_prover_network_retries")]
+    pub prover_network_retries: usize,
+    // If true, only makes requests locally and never to succinct's prover network
+    pub local_proving_only: bool,
+    // Make mock proofs instead of real proofs.  Witnessgen still happens.
+    #[serde(default = "default_mock_mode")]
+    pub mock_mode: bool,
+    // The amount of proofs to cache on-disk for persistence.
+    // Keeps most recently completed proofs.
+    #[serde(default = "default_proof_cache_size")]
+    pub proof_cache_size: usize,
+    // Where to store cached proofs on-disk
+    #[serde(default = "default_proof_cache_directory")]
+    pub proof_cache_directory: String,
+}
+
+fn default_proof_cache_directory() -> String {
+    "proofs".into()
+}
+
+fn default_proof_cache_size() -> usize {
+    10
+}
+
+fn default_mock_mode() -> bool {
+    false
+}
+
+fn default_prover_network_retries() -> usize {
+    3
 }
 
 fn default_max_worker_strikes() -> usize {

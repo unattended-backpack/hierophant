@@ -6,6 +6,7 @@ use crate::network::{
     GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
     RequestProofResponse, RequestProofResponseBody,
 };
+use crate::proof_router::ProofRouter;
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::debug;
@@ -124,10 +125,12 @@ pub struct HierophantState {
     pub upload_urls: Arc<Mutex<HashMap<String, (ArtifactType, Uuid)>>>,
     // mapping of uri, artifact data
     pub artifact_store: Arc<Mutex<HashMap<Uuid, Artifact>>>,
+    pub proof_router: ProofRouter,
 }
 
 impl HierophantState {
     pub fn new(config: Config) -> Self {
+        let proof_router = ProofRouter::new(&config);
         Self {
             config,
             workers: Arc::new(RwLock::new(HashMap::new())),
@@ -136,6 +139,7 @@ impl HierophantState {
             nonces: Arc::new(Mutex::new(HashMap::new())),
             upload_urls: Arc::new(Mutex::new(HashMap::new())),
             artifact_store: Arc::new(Mutex::new(HashMap::new())),
+            proof_router,
         }
     }
 }

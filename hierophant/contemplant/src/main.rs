@@ -14,7 +14,7 @@ use axum::{
     routing::{get, post},
 };
 use log::{error, info};
-use network_lib::{REGISTER_WORKER_ENDPOINT, WorkerRegisterInfo};
+use network_lib::{REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use reqwest::Client;
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,

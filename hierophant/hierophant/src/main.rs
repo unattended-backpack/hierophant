@@ -1,4 +1,5 @@
 mod config;
+mod proof_router;
 
 mod create_artifact_service;
 mod hierophant_state;

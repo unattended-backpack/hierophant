@@ -43,7 +43,8 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         .route("/upload/:uri", put(handle_artifact_upload))
         // Artifact download endpoint
         .route("/:uri", get(handle_artifact_download))
-        // Add more routes as needed
+        // Get all healthy contemplants
+        .route("/contemplants", get(contemplants))
         .with_state(state)
 
     // .layer(axum::extract::connect_info::IntoConnectInfo::<SocketAddr>::layer())
@@ -97,6 +98,20 @@ async fn handle_register_worker(
 
     // Return success response with the worker ID
     Ok(StatusCode::OK)
+}
+
+// TODO:
+async fn contemplants(
+    State(state): State<Arc<HierophantState>>,
+) -> Result<Json<Vec<(String, WorkerState)>>, StatusCode> {
+    todo!()
+    // let workers = state
+    //     .worker_registry_client
+    //     .workers()
+    //     .await
+    //     .map_err(|e| AppError(e))?;
+    //
+    // Ok((StatusCode::OK, Json(workers)))
 }
 
 // Client requests to download an artifact (client only ever downloads proofs)
