@@ -1,3 +1,4 @@
+mod artifact_store;
 mod config;
 mod proof_router;
 

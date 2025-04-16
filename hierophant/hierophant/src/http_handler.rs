@@ -1,3 +1,4 @@
+use crate::artifact_store::ArtifactUri;
 use crate::hierophant_state::{Artifact, HierophantState};
 use crate::proof_router::worker_state::WorkerState;
 use axum::{
@@ -117,7 +118,7 @@ async fn contemplants(
 // Client requests to download an artifact (client only ever downloads proofs)
 async fn handle_artifact_download(
     State(state): State<Arc<HierophantState>>,
-    Path(uri): Path<String>,
+    Path(uri): Path<ArtifactUri>,
 ) -> Result<impl IntoResponse, StatusCode> {
     info!("\n=== Received Download Request ===");
     info!("Uri {uri}");
@@ -145,7 +146,7 @@ async fn handle_artifact_download(
 // Handler for artifact uploads
 async fn handle_artifact_upload(
     State(state): State<Arc<HierophantState>>,
-    Path(uri): Path<String>,
+    Path(uri): Path<ArtifactUri>,
     body: Bytes,
 ) -> Result<impl IntoResponse, StatusCode> {
     let path = format!("/upload/{}", uri);

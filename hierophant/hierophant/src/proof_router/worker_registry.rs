@@ -182,7 +182,7 @@ impl WorkerRegistry {
             };
 
             info!(
-                "Took {} seconds to process command {:?}",
+                "Took {} seconds to process worker_registry command {:?}",
                 start.elapsed().as_secs_f64(),
                 command_string
             );
