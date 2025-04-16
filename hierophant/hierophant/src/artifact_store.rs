@@ -1,14 +1,18 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
+use axum::body::Bytes;
 use log::{debug, error, info, trace, warn};
 use reqwest::Client;
 use serde::{
-    Deserializer, Serialize,
+    Deserialize, Deserializer, Serialize,
     de::{self, Visitor},
 };
 use sp1_sdk::network::proto::artifact::ArtifactType;
 use std::{
-    collections::HashMap,
+    collections::HashSet,
     fmt::{self, Display},
+    fs,
+    path::Path,
+    str::FromStr,
 };
 use tokio::{
     sync::{mpsc, oneshot},
@@ -42,6 +46,7 @@ impl ArtifactStoreClient {
 
         self.command_sender
             .send(command)
+            .await
             .context("Send CreateArtifact command")?;
 
         receiver.await.map_err(|e| anyhow!(e))
@@ -61,9 +66,10 @@ impl ArtifactStoreClient {
 
         self.command_sender
             .send(command)
+            .await
             .context("Send SaveArtifact command")?;
 
-        receiver.await
+        receiver.await?
     }
 
     pub async fn get_artifact_bytes(&self, artifact_uri: ArtifactUri) -> Result<Vec<u8>> {
@@ -75,27 +81,30 @@ impl ArtifactStoreClient {
 
         self.command_sender
             .send(command)
+            .await
             .context("Send GetArtifactBytes command")?;
 
-        receiver.await
+        receiver.await?
     }
 }
 
 struct ArtifactStore {
-    receiver: mpsc::Receiver<WorkerRegistryCommand>,
+    receiver: mpsc::Receiver<ArtifactStoreCommand>,
     artifact_directory: String,
     upload_uris: HashSet<ArtifactUri>,
 }
 
 impl ArtifactStore {
-    fn new(receiver: mpsc::Receiver<WorkerRegistryCommand>, artifact_directory: String) -> Self {
+    fn new(receiver: mpsc::Receiver<ArtifactStoreCommand>, artifact_directory: String) -> Self {
         // Create `artifact_directory` if it doesn't already exist
-        let path = Path::new(artifact_directory);
+        let path = Path::new(&artifact_directory);
         if !path.exists() {
             info!(
                 "{artifact_directory} directory doesn't exist.  Creating it for saving artifacts."
             );
-            fs::create_dir(path).context("Create {artifact_directory} directory")?;
+            fs::create_dir(path)
+                .context("Create {artifact_directory} directory")
+                .unwrap();
         } else {
             info!("Found {artifact_directory} directory.");
         }
@@ -131,7 +140,7 @@ impl ArtifactStore {
                     artifact_uri,
                     artifact_sender,
                 } => {
-                    let res = self.handle_get_artifact(artifact_uri);
+                    let res = self.handle_get_artifact_bytes(artifact_uri);
                     artifact_sender.send(res);
                 }
             };
@@ -148,14 +157,14 @@ impl ArtifactStore {
         // create uri
         let artifact_uri = ArtifactUri::new(artifact_type);
         // mark this uri as valid for upload
-        self.upload_uris.insert(artifact_uri);
+        self.upload_uris.insert(artifact_uri.clone());
         info!("Artifact uri {artifact_uri} listed as valid for upload.");
         artifact_uri
     }
 
     fn handle_save_artifact(&mut self, artifact_uri: ArtifactUri, bytes: Bytes) -> Result<()> {
         // make sure the uri is listed as a valid upload
-        if let None = self.upload_uris.get(artifact_uri) {
+        if let None = self.upload_uris.get(&artifact_uri) {
             let error_msg = format!("artifact uri {artifact_uri} is not a registered upload uri");
             error!("{error_msg}");
             return Err(anyhow!("{error_msg}"));
@@ -166,37 +175,40 @@ impl ArtifactStore {
             artifact_uri,
             bytes.len()
         );
-        let write_path = artifact_uri.file_path(self.artifact_directory);
+        let artifact_path = artifact_uri.file_path(&self.artifact_directory);
+        let path = Path::new(&artifact_path);
 
         // error if the artifact at this uri already exists
-        if write_path.exists() {
-            let error_msg = format!("Artifact {write_path} already exists");
+        if path.exists() {
+            let error_msg = format!("Artifact {artifact_path} already exists");
             error!("{error_msg}");
             return Err(anyhow!("{error_msg}"));
         }
 
         // write artifact to disk
-        fs::write(write_path, bytes).context(format!("Write artifact to file {write_path}"))?;
+        fs::write(path, bytes).context(format!("Write artifact to file {artifact_path}"))?;
 
-        info!("Artifact written to {write_path}");
+        info!("Artifact written to {artifact_path}");
 
         Ok(())
     }
 
     fn handle_get_artifact_bytes(&mut self, artifact_uri: ArtifactUri) -> Result<Vec<u8>> {
-        let path = artifact_uri.file_path(self.artifact_directory);
+        let artifact_path = artifact_uri.file_path(&self.artifact_directory);
+        let path = Path::new(&artifact_path);
         if path.exists() {
-            info!("Loading artifact bytes from file {path}");
-            fs::read(path).context(format!("Loading artifact from file {path}"))
+            info!("Loading artifact bytes from file {artifact_path}");
+            fs::read(path).context(format!("Loading artifact from file {artifact_path}"))
         } else {
             let error_msg =
-                format!("Artifact {artifact_uri} not found on disk.  No file at {path}");
+                format!("Artifact {artifact_uri} not found on disk.  No file at {artifact_path}");
             error!("{error_msg}");
             Err(anyhow!(error_msg))
         }
     }
 }
 
+#[derive(Debug)]
 enum ArtifactStoreCommand {
     CreateArtifact {
         artifact_type: ArtifactType,
@@ -214,7 +226,7 @@ enum ArtifactStoreCommand {
 }
 
 // artifact_uri is {artifact_type}-{artifact_uuid}
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ArtifactUri {
     id: Uuid,
     artifact_type: ArtifactType,
@@ -228,11 +240,12 @@ impl ArtifactUri {
     }
 
     // artifact will be written to {artifact_directory}/{artifact_uri}
-    fn file_path(&self, artifact_directory: String) -> Path {
-        Path::new(format!("{}/{}", self.artifact_directory, artifact_uri))
+    fn file_path(&self, artifact_directory: &str) -> String {
+        format!("{}/{}", artifact_directory, self)
     }
 }
 
+// {artifact_type}-{artifact_uuid}
 impl fmt::Display for ArtifactUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}-{}", self.artifact_type.as_str_name(), self.id)

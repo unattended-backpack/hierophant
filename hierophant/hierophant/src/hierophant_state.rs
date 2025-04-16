@@ -1,4 +1,4 @@
-use crate::artifact_store::ArtifactStoreClient;
+use crate::artifact_store::{ArtifactStoreClient, ArtifactUri};
 use crate::config::Config;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
@@ -39,13 +39,12 @@ pub struct HierophantState {
     // Requested proofs
     pub proof_requests: Arc<Mutex<HashMap<VkHash, ProofRequestData>>>,
     pub nonces: Arc<Mutex<HashMap<Address, u64>>>,
-    // mapping vk_hash -> Program
+    // mapping vk_hash -> ArtifactUri of the program
     // programs are requested by vk_hash in ProverNetworkService.get_program reqs
-    pub program_store: Arc<Mutex<HashMap<VkHash, Program>>>,
+    pub program_store: Arc<Mutex<HashMap<VkHash, ArtifactUri>>>,
     // mapping of artifact upload path to (expected type, uri)
     pub upload_urls: Arc<Mutex<HashMap<String, (ArtifactType, Uuid)>>>,
-    // mapping of uri, artifact data
-    pub artifact_store: Arc<Mutex<HashMap<Uuid, Artifact>>>,
+    pub artifact_store_client: ArtifactStoreClient,
     // handles delegating proof requests to contemplants and monitoring their progress
     pub proof_router: ProofRouter,
 }
@@ -60,7 +59,7 @@ impl HierophantState {
             program_store: Arc::new(Mutex::new(HashMap::new())),
             nonces: Arc::new(Mutex::new(HashMap::new())),
             upload_urls: Arc::new(Mutex::new(HashMap::new())),
-            artifact_store: Arc::new(Mutex::new(HashMap::new())),
+            artifact_store_client,
             proof_router,
         }
     }

@@ -121,24 +121,13 @@ async fn handle_artifact_download(
     Path(uri): Path<ArtifactUri>,
 ) -> Result<impl IntoResponse, StatusCode> {
     info!("\n=== Received Download Request ===");
-    info!("Uri {uri}");
+    info!("Artifact uri {uri}");
 
-    let uri: Uuid = match Uuid::parse_str(&uri) {
-        Ok(u) => u,
+    match state.artifact_store_client.get_artifact_bytes(uri).await {
+        Ok(bytes) => Ok(bytes),
         Err(e) => {
-            error!("Error parsing uri {uri} as Uuid: {e}");
-            return Err(StatusCode::BAD_REQUEST);
-        }
-    };
-
-    match state.artifact_store.lock().await.get(&uri) {
-        Some(artifact) => {
-            let bytes = artifact.bytes.to_vec();
-            Ok(bytes)
-        }
-        None => {
-            error!("Artifact {uri} not found");
-            Err(StatusCode::NOT_FOUND)
+            error!("{e}");
+            Err(StatusCode::BAD_REQUEST)
         }
     }
 }
@@ -149,36 +138,16 @@ async fn handle_artifact_upload(
     Path(uri): Path<ArtifactUri>,
     body: Bytes,
 ) -> Result<impl IntoResponse, StatusCode> {
-    let path = format!("/upload/{}", uri);
-
     info!("\n=== Received Upload Request ===");
-    info!("Path: {}", path);
+    info!("Artifact uri {uri}");
 
-    println!("Received upload data: {} bytes", body.len());
-    // Print a preview of the data
-    if !body.is_empty() {
-        let preview_size = std::cmp::min(100, body.len());
-        println!(
-            "Data preview (first {} bytes): {}",
-            preview_size,
-            hex::encode(&body[..preview_size])
-        );
-    }
+    info!("Received artifact data: {} bytes", body.len());
 
-    // TODO: should we remove this from the list of valid urls after its been uploaded?
-    //
-    // check if this is a valid upload url and get the expected artifact type and uri
-    let (artifact_type, uri) = match state.upload_urls.lock().await.get(&path) {
-        Some(i) => i.clone(),
-        None => {
-            error!("Invalid path {path}. Artifact not found");
-            return Err(StatusCode::NOT_FOUND);
+    match state.artifact_store_client.save_artifact(uri, body).await {
+        Ok(_) => Ok("Upload successful"),
+        Err(e) => {
+            error!("{e}");
+            Err(StatusCode::BAD_REQUEST)
         }
-    };
-
-    let artifact = Artifact::new(artifact_type, body);
-    state.artifact_store.lock().await.insert(uri, artifact);
-
-    // Return success
-    Ok("Upload successful")
+    }
 }
