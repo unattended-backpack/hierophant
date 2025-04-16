@@ -4,7 +4,7 @@ use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
     FulfillmentStatus, GetNonceRequest, GetNonceResponse, GetProgramRequest, GetProgramResponse,
     GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
-    RequestProofResponse, RequestProofResponseBody,
+    RequestProofRequestBody, RequestProofResponse, RequestProofResponseBody,
 };
 use crate::proof_router::{ProofRouter, worker_state::WorkerState};
 use alloy_primitives::{Address, B256};
@@ -13,7 +13,6 @@ use axum::body::Bytes;
 use log::debug;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::network::proto::artifact::ArtifactType;
-use sp1_sdk::network::proto::network::RequestProofRequestBody;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
@@ -26,7 +25,8 @@ use uuid::Uuid;
 pub struct HierophantState {
     pub config: Config,
     // mapping Uuid -> ProofRequestBody
-    pub proof_requests: Arc<Mutex<HashMap<Uuid, RequestProofRequestBody>>>,
+    // TODO: If we only use this in the proof router, move it to ProofRouter state
+    pub proof_requests: Arc<Mutex<HashMap<Uuid, (ArtifactUri, RequestProofRequestBody)>>>,
     // mapping vk_hash -> Program (contains program_uri)
     // programs are requested by vk_hash in ProverNetworkService.get_program reqs
     pub program_store: Arc<Mutex<HashMap<VkHash, Program>>>,

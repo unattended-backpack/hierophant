@@ -37,8 +37,6 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
             format!("/{REGISTER_CONTEMPLANT_ENDPOINT}").as_ref(),
             post(handle_register_worker),
         )
-        // for testing only
-        //        .route("/test-register-uri", post(handle_test_register_uri))
         // Artifact upload endpoint
         .route("/upload/:uri", post(handle_artifact_upload))
         .route("/upload/:uri", put(handle_artifact_upload))
@@ -123,11 +121,20 @@ async fn handle_artifact_download(
     info!("\n=== Received Download Request ===");
     info!("Artifact uri {uri}");
 
-    match state.artifact_store_client.get_artifact_bytes(uri).await {
-        Ok(bytes) => Ok(bytes),
+    match state
+        .artifact_store_client
+        .get_artifact_bytes(uri.clone())
+        .await
+    {
+        Ok(Some(bytes)) => Ok(bytes),
+        Ok(None) => {
+            let error_msg = format!("Artifact {uri} not found");
+            error!("{error_msg}");
+            Err(StatusCode::BAD_REQUEST)
+        }
         Err(e) => {
             error!("{e}");
-            Err(StatusCode::BAD_REQUEST)
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }

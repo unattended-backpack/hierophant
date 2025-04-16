@@ -2,7 +2,8 @@ mod proof_cache;
 mod worker_registry;
 pub mod worker_state;
 
-use anyhow::Context;
+use crate::hierophant_state::ProofStatus;
+use anyhow::{Context, Result};
 use proof_cache::ProofCache;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -44,7 +45,9 @@ impl ProofRouter {
         todo!()
     }
 
-    pub fn get_proof_status(&self, proof_request_id: Vec<u8>) -> GetProofRequestStatusResponse {
+    pub async fn get_proof_status(&self, proof_request_id: &Uuid) -> Result<ProofStatus> {
+        // fulfillment_status wil be tracked in ProofRouter
+        // The contemplant will only ever return execution_status and the proof (if it's done)
         todo!()
     }
 }

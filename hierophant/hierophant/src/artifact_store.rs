@@ -72,7 +72,7 @@ impl ArtifactStoreClient {
         receiver.await?
     }
 
-    pub async fn get_artifact_bytes(&self, artifact_uri: ArtifactUri) -> Result<Vec<u8>> {
+    pub async fn get_artifact_bytes(&self, artifact_uri: ArtifactUri) -> Result<Option<Vec<u8>>> {
         let (sender, receiver) = oneshot::channel();
         let command = ArtifactStoreCommand::GetArtifactBytes {
             artifact_uri,
@@ -90,8 +90,12 @@ impl ArtifactStoreClient {
 
 struct ArtifactStore {
     receiver: mpsc::Receiver<ArtifactStoreCommand>,
+    // folder where artifacts are saved
     artifact_directory: String,
+    // uris that can be uploaded
     upload_uris: HashSet<ArtifactUri>,
+    // set of uris that we have on-disk already
+    on_disk_uris: HashSet<ArtifactUri>,
 }
 
 impl ArtifactStore {
@@ -113,6 +117,7 @@ impl ArtifactStore {
             receiver,
             artifact_directory: artifact_directory.to_string(),
             upload_uris: HashSet::new(),
+            on_disk_uris: HashSet::new(),
         }
     }
 
@@ -163,6 +168,12 @@ impl ArtifactStore {
     }
 
     fn handle_save_artifact(&mut self, artifact_uri: ArtifactUri, bytes: Bytes) -> Result<()> {
+        // skip if artifact already exists
+        if self.on_disk_uris.contains(&artifact_uri) {
+            info!("Artifact {artifact_uri} requested to be saved but it already exists on-disk");
+            return Ok(());
+        }
+
         // make sure the uri is listed as a valid upload
         if let None = self.upload_uris.get(&artifact_uri) {
             let error_msg = format!("artifact uri {artifact_uri} is not a registered upload uri");
@@ -188,22 +199,24 @@ impl ArtifactStore {
         // write artifact to disk
         fs::write(path, bytes).context(format!("Write artifact to file {artifact_path}"))?;
 
+        self.on_disk_uris.insert(artifact_uri);
+
         info!("Artifact written to {artifact_path}");
 
         Ok(())
     }
 
-    fn handle_get_artifact_bytes(&mut self, artifact_uri: ArtifactUri) -> Result<Vec<u8>> {
+    fn handle_get_artifact_bytes(&mut self, artifact_uri: ArtifactUri) -> Result<Option<Vec<u8>>> {
         let artifact_path = artifact_uri.file_path(&self.artifact_directory);
         let path = Path::new(&artifact_path);
         if path.exists() {
             info!("Loading artifact bytes from file {artifact_path}");
-            fs::read(path).context(format!("Loading artifact from file {artifact_path}"))
+            fs::read(path)
+                .context(format!("Loading artifact from file {artifact_path}"))
+                .map(|b| Some(b))
         } else {
-            let error_msg =
-                format!("Artifact {artifact_uri} not found on disk.  No file at {artifact_path}");
-            error!("{error_msg}");
-            Err(anyhow!(error_msg))
+            warn!("Artifact {artifact_uri} not found on disk.  No file at {artifact_path}");
+            Ok(None)
         }
     }
 }
@@ -221,7 +234,7 @@ enum ArtifactStoreCommand {
     },
     GetArtifactBytes {
         artifact_uri: ArtifactUri,
-        artifact_sender: oneshot::Sender<Result<Vec<u8>>>,
+        artifact_sender: oneshot::Sender<Result<Option<Vec<u8>>>>,
     },
 }
 
