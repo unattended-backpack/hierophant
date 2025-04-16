@@ -102,7 +102,7 @@ fn register_worker(config: Config) {
         // Attempt to register with the hierophant
         match client
             .post(format!(
-                "{}/{REGISTER_WORKER_ENDPOINT}",
+                "{}/{REGISTER_CONTEMPLANT_ENDPOINT}",
                 config.hierophant_address
             ))
             .json(&worker_register_info)

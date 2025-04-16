@@ -1,4 +1,3 @@
-use crate::VkHash;
 use log::debug;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -11,17 +10,17 @@ use uuid::Uuid;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum WorkerStatus {
     Idle,
-    Busy { proof_vk_hash: VkHash },
+    Busy { request_id: RequestId },
 }
 
 impl Display for WorkerStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Idle => write!(f, "Idle"),
-            Self::Busy { proof_vk_hash } => write!(
+            Self::Busy { request_id } => write!(
                 f,
                 "Busy with proof with vk_hash {}",
-                proof_vk_hash.to_hex_string()
+                request_id.to_hex_string()
             ),
         }
     }
@@ -70,8 +69,8 @@ impl WorkerState {
     }
 
     // Makes the worker busy with a proof id
-    fn assign_proof(&mut self, proof_vk_hash: VkHash) {
-        self.status = WorkerStatus::Busy { proof_vk_hash };
+    fn assign_proof(&mut self, request_id: RequestId) {
+        self.status = WorkerStatus::Busy { request_id };
         // This worker has been good.  Reset their strikes
         self.strikes = 0;
     }
@@ -81,10 +80,10 @@ impl WorkerState {
     }
 
     // returns the proof the worker is currently working on, if any
-    fn current_proof_id(&self) -> Option<VkHash> {
+    fn current_proof_id(&self) -> Option<RequestId> {
         match &self.status {
             WorkerStatus::Idle => None,
-            WorkerStatus::Busy { proof_vk_hash } => Some(proof_vk_hash.clone()),
+            WorkerStatus::Busy { request_id } => Some(request_id.clone()),
         }
     }
 }

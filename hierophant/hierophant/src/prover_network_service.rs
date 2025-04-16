@@ -226,8 +226,14 @@ impl ProverNetwork for ProverNetworkService {
         // Log the signature
         println!("Signature: 0x{}", hex::encode(&req.signature));
 
+        // Generate a mock request ID (this would typically be a unique identifier for the proof request) TODO: is the proof itself unique on vk_hash?? (we're currently assuming it is in the proof_cache) an in heirophant_state
+        let mut request_id = vec![0u8; 32];
+        let uuid = Uuid::new_v4();
+        let uuid_bytes = uuid.as_bytes();
+        request_id[0..16].copy_from_slice(uuid_bytes);
+
         // route the proof!!
-        let request_id = self.state.proof_router.route_proof();
+        self.state.proof_router.route_proof();
 
         // Generate a mock transaction hash
         let mut tx_hash = vec![0u8; 32]; // 32-byte transaction hash

@@ -40,13 +40,8 @@ impl ProofRouter {
     // looks on-disk for the proof, checks for contemplants currently working on the proof,
     // or routes the proof request to an idle contemplant.
     // returns a proof request id
-    pub fn route_proof(&self) -> Vec<u8> {
-        // Generate a mock request ID (this would typically be a unique identifier for the proof request) TODO: is the proof itself unique on vk_hash?? (we're currently assuming it is in the proof_cache) an in heirophant_state
-        let mut request_id = vec![0u8; 32];
-        let uuid = Uuid::new_v4();
-        let uuid_bytes = uuid.as_bytes();
-        request_id[0..16].copy_from_slice(uuid_bytes);
-        request_id
+    pub fn route_proof(&self) -> todo!() {
+        todo!()
     }
 
     pub fn get_proof_status(&self, proof_request_id: Vec<u8>) -> GetProofRequestStatusResponse {

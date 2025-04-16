@@ -2,6 +2,7 @@ use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
 use reqwest::Client;
+use serde::Serialize;
 use std::{
     collections::HashMap,
     fmt::{self, Display},
