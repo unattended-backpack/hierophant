@@ -27,10 +27,17 @@ pub struct Config {
     // Where to store cached proofs on-disk
     #[serde(default = "default_proof_cache_directory")]
     pub proof_cache_directory: String,
+    // Where artifacts are stored on-disk
+    #[serde(default = "default_artifact_store_directory")]
+    pub artifact_store_directory: String,
 }
 
 fn default_proof_cache_directory() -> String {
     "proofs".into()
+}
+
+fn default_artifact_store_directory() -> String {
+    "artifacts".into()
 }
 
 fn default_proof_cache_size() -> usize {

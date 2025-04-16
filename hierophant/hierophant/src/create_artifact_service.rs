@@ -1,9 +1,9 @@
 use crate::artifact::create_artifact_server::CreateArtifact;
 use crate::artifact::{CreateArtifactRequest, CreateArtifactResponse};
-use crate::hierophant_state::{HierophantState, ProofRequestData};
+use crate::hierophant_state::HierophantState;
 use crate::proof_router::worker_state::WorkerState;
 use anyhow::anyhow;
-use log::info;
+use log::{error, info};
 use sp1_sdk::network::proto::artifact::ArtifactType;
 use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
@@ -41,23 +41,26 @@ impl CreateArtifact for CreateArtifactService {
         // Log the artifact type
         info!("Requested artifact type: {}", artifact_type.as_str_name());
 
-        let artifact_uri = Uuid::new_v4();
+        let artifact_uri = match self
+            .state
+            .artifact_store_client
+            .create_artifact(artifact_type)
+            .await
+        {
+            Ok(a) => a,
+            Err(e) => {
+                let error_msg = format!("Error while creating artifact: {e}");
+                error!("{error_msg}");
+                return Err(Status::unavailable(error_msg));
+            }
+        };
+
         let upload_path = format!("/upload/{}", artifact_uri);
+
         let this_hierophant_ip = self.state.config.this_hierophant_ip.clone();
         let http_port = self.state.config.http_port;
         let artifact_presigned_url =
             format!("http://{this_hierophant_ip}:{http_port}{upload_path}");
-
-        // Register this URL as valid
-        self.state
-            .upload_urls
-            .lock()
-            .await
-            .insert(upload_path.clone(), (artifact_type, artifact_uri));
-        info!(
-            "Registered upload url {upload_path} for artifact {artifact_uri} expecting a {}",
-            artifact_type.as_str_name()
-        );
 
         // Create the response
         let response = CreateArtifactResponse {

@@ -26,7 +26,7 @@ pub struct ArtifactStoreClient {
 }
 
 impl ArtifactStoreClient {
-    pub fn new(artifact_directory: String) -> Self {
+    pub fn new(artifact_directory: &str) -> Self {
         let (command_sender, receiver) = mpsc::channel(100);
 
         let artifact_store = ArtifactStore::new(receiver, artifact_directory);
@@ -95,7 +95,7 @@ struct ArtifactStore {
 }
 
 impl ArtifactStore {
-    fn new(receiver: mpsc::Receiver<ArtifactStoreCommand>, artifact_directory: String) -> Self {
+    fn new(receiver: mpsc::Receiver<ArtifactStoreCommand>, artifact_directory: &str) -> Self {
         // Create `artifact_directory` if it doesn't already exist
         let path = Path::new(&artifact_directory);
         if !path.exists() {
@@ -111,7 +111,7 @@ impl ArtifactStore {
 
         Self {
             receiver,
-            artifact_directory,
+            artifact_directory: artifact_directory.to_string(),
             upload_uris: HashSet::new(),
         }
     }
@@ -278,7 +278,7 @@ impl FromStr for ArtifactUri {
 
         // Parse the artifact type
         let artifact_type =
-            ArtifactType::from_str_name(parts[0]).ok_or_else(|_| ParseArtifactUriError)?;
+            ArtifactType::from_str_name(parts[0]).ok_or_else(|| ParseArtifactUriError)?;
 
         // Parse the UUID
         let id = Uuid::parse_str(parts[1]).map_err(|_| ParseArtifactUriError)?;

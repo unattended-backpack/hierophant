@@ -8,10 +8,12 @@ use crate::network::{
 };
 use crate::proof_router::{ProofRouter, worker_state::WorkerState};
 use alloy_primitives::{Address, B256};
+use anyhow::Context;
 use axum::body::Bytes;
 use log::debug;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::network::proto::artifact::ArtifactType;
+use sp1_sdk::network::proto::network::RequestProofRequestBody;
 use std::{
     collections::{HashMap, HashSet},
     fmt::{self, Display},
@@ -20,45 +22,30 @@ use std::{
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
-// Structure to store proof request data for status checks
-#[derive(Debug, Clone)]
-pub struct ProofRequestData {
-    pub tx_hash: Vec<u8>,
-    pub deadline: u64,
-    pub fulfillment_status: FulfillmentStatus,
-    pub execution_status: ExecutionStatus,
-    pub proof_uri: Option<String>,
-    pub fulfill_tx_hash: Option<Vec<u8>>,
-    pub public_values_hash: Option<Vec<u8>>,
-}
-
 #[derive(Debug, Clone)]
 pub struct HierophantState {
     pub config: Config,
-    // mapping vk_hash -> ProofRequestData
-    // Requested proofs
-    pub proof_requests: Arc<Mutex<HashMap<VkHash, ProofRequestData>>>,
-    pub nonces: Arc<Mutex<HashMap<Address, u64>>>,
-    // mapping vk_hash -> ArtifactUri of the program
+    // mapping Uuid -> ProofRequestBody
+    pub proof_requests: Arc<Mutex<HashMap<Uuid, RequestProofRequestBody>>>,
+    // mapping vk_hash -> Program (contains program_uri)
     // programs are requested by vk_hash in ProverNetworkService.get_program reqs
-    pub program_store: Arc<Mutex<HashMap<VkHash, ArtifactUri>>>,
+    pub program_store: Arc<Mutex<HashMap<VkHash, Program>>>,
     // mapping of artifact upload path to (expected type, uri)
-    pub upload_urls: Arc<Mutex<HashMap<String, (ArtifactType, Uuid)>>>,
     pub artifact_store_client: ArtifactStoreClient,
     // handles delegating proof requests to contemplants and monitoring their progress
     pub proof_router: ProofRouter,
+    pub nonces: Arc<Mutex<HashMap<Address, u64>>>,
 }
 
 impl HierophantState {
     pub fn new(config: Config) -> Self {
         let proof_router = ProofRouter::new(&config);
-        let artifact_store_client = ArtifactStoreClient::new(&config.artifact_directory);
+        let artifact_store_client = ArtifactStoreClient::new(&config.artifact_store_directory);
         Self {
             config,
             proof_requests: Arc::new(Mutex::new(HashMap::new())),
             program_store: Arc::new(Mutex::new(HashMap::new())),
             nonces: Arc::new(Mutex::new(HashMap::new())),
-            upload_urls: Arc::new(Mutex::new(HashMap::new())),
             artifact_store_client,
             proof_router,
         }
@@ -156,29 +143,21 @@ impl ProofStatus {
     }
 
     pub fn is_lost(&self) -> bool {
-        self.fulfillment_status == FulfillmentStatus::Unfulfillable as i32
+        self.fulfillment_status == FulfillmentStatus::UnspecifiedFulfillmentStatus as i32
             && self.execution_status == ExecutionStatus::UnspecifiedExecutionStatus as i32
     }
 }
 
 impl Display for ProofStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let fulfillment_status = match self.fulfillment_status {
-            0 => "UnspecifiedFulfillmentStatus",
-            1 => "Requested",
-            2 => "Assigned",
-            3 => "Fulfilled",
-            4 => "Unfulfillable",
-            _ => "Error: Unknown fulfillment status",
-        };
+        let fulfillment_status = FulfillmentStatus::try_from(self.fulfillment_status)
+            .unwrap_or(FulfillmentStatus::UnspecifiedFulfillmentStatus)
+            .as_str_name();
 
-        let execution_status = match self.execution_status {
-            0 => "UnspecifiedExecutionStatus",
-            1 => "Unexecuted",
-            2 => "Executed",
-            3 => "Unexecutable",
-            _ => "Error: Unknown execution execution status",
-        };
+        let execution_status = ExecutionStatus::try_from(self.execution_status)
+            .unwrap_or(ExecutionStatus::UnspecifiedExecutionStatus)
+            .as_str_name();
+
         let proof_display = if self.proof.is_empty() {
             "Empty"
         } else {
