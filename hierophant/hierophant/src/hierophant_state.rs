@@ -1,28 +1,14 @@
 use crate::artifact_store::{ArtifactStoreClient, ArtifactUri};
 use crate::config::Config;
-use crate::network::{
-    CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
-    FulfillmentStatus, GetNonceRequest, GetNonceResponse, GetProgramRequest, GetProgramResponse,
-    GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
-    RequestProofRequestBody, RequestProofResponse, RequestProofResponseBody,
-};
-use crate::proof_router::{ProofRouter, worker_state::WorkerState};
-use alloy_primitives::{Address, B256};
-use anyhow::Context;
+use crate::network::{ExecutionStatus, FulfillmentStatus, Program, RequestProofRequestBody};
+use crate::proof_router::ProofRouter;
+use alloy_primitives::Address;
 use axum::body::Bytes;
-use log::debug;
 use network_lib::ProofRequestId;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::network::proto::artifact::ArtifactType;
-use std::io::Read;
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::{self, Display},
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
-use tokio::sync::{Mutex, RwLock};
-use uuid::Uuid;
+use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
+use tokio::sync::Mutex;
 
 #[derive(Debug, Clone)]
 pub struct HierophantState {

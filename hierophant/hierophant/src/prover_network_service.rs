@@ -1,22 +1,19 @@
 use crate::hierophant_state::{HierophantState, VkHash};
 use crate::network::prover_network_server::ProverNetwork;
 use crate::network::{
-    CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
-    FulfillmentStatus, GetNonceRequest, GetNonceResponse, GetProgramRequest, GetProgramResponse,
-    GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
-    RequestProofResponse, RequestProofResponseBody,
+    CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, GetNonceRequest,
+    GetNonceResponse, GetProgramRequest, GetProgramResponse, GetProofRequestStatusRequest,
+    GetProofRequestStatusResponse, Program, RequestProofRequest, RequestProofResponse,
+    RequestProofResponseBody,
 };
-use crate::proof_router::worker_state::WorkerState;
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::{error, info};
 use network_lib::ProofRequestId;
 use sp1_sdk::network::proto::artifact::ArtifactType;
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tonic::{Request, Response, Status};
-use uuid::Uuid;
 
 // Our ProverNetwork service implementation
 #[derive(Debug)]

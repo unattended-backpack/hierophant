@@ -502,6 +502,7 @@ impl fmt::Debug for WorkerRegistryCommand {
 
 #[derive(Eq, PartialEq, Clone, Debug, Serialize)]
 pub struct WorkerState {
+    name: String,
     status: WorkerStatus,
     strikes: usize,
 }
@@ -509,6 +510,7 @@ pub struct WorkerState {
 impl Default for WorkerState {
     fn default() -> Self {
         Self {
+            name: "Default".into(),
             status: WorkerStatus::Idle,
             strikes: 0,
         }
@@ -556,8 +558,8 @@ impl Display for WorkerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Worker status: {}, Worker strikes: {}",
-            self.status, self.strikes
+            "Worker {} status: {}, strikes: {}",
+            self.name, self.status, self.strikes
         )
     }
 }

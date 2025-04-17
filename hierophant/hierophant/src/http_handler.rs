@@ -1,23 +1,18 @@
 use crate::artifact_store::ArtifactUri;
-use crate::hierophant_state::{Artifact, HierophantState};
-use crate::proof_router::worker_state::WorkerState;
+use crate::hierophant_state::HierophantState;
+use crate::proof_router::WorkerState;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{
-        Path, State,
-        connect_info::{self, ConnectInfo, Connected},
-    },
+    extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post, put},
-    serve::IncomingStream,
 };
 use log::{error, info};
 use network_lib::{REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, sync::Arc};
-use uuid::Uuid;
+use std::sync::Arc;
 
 // Structure to receive worker registration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

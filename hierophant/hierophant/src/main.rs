@@ -13,7 +13,7 @@ pub mod artifact {
     tonic::include_proto!("artifact");
 }
 use crate::config::Config;
-use crate::hierophant_state::{HierophantState, VkHash};
+use crate::hierophant_state::HierophantState;
 use anyhow::Context;
 use artifact::create_artifact_server::CreateArtifactServer;
 use create_artifact_service::CreateArtifactService;

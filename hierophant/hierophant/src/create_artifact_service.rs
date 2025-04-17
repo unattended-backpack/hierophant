@@ -1,13 +1,10 @@
 use crate::artifact::create_artifact_server::CreateArtifact;
 use crate::artifact::{CreateArtifactRequest, CreateArtifactResponse};
 use crate::hierophant_state::HierophantState;
-use crate::proof_router::worker_state::WorkerState;
-use anyhow::anyhow;
 use log::{error, info};
 use sp1_sdk::network::proto::artifact::ArtifactType;
 use std::sync::{Arc, Mutex};
 use tonic::{Request, Response, Status};
-use uuid::Uuid;
 
 // Our CreateArtifact service implementation
 #[derive(Debug)]

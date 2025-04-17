@@ -1,6 +1,5 @@
 mod proof_cache;
 mod worker_registry;
-pub mod worker_state;
 
 use crate::hierophant_state::ProofStatus;
 use anyhow::{Context, Result, anyhow};
@@ -11,6 +10,7 @@ use sp1_sdk::network::proto::network::{ExecutionStatus, FulfillmentStatus};
 use std::{fmt::Display, sync::Arc};
 use tokio::sync::Mutex;
 use worker_registry::WorkerRegistryClient;
+pub use worker_registry::WorkerState;
 
 use crate::config::Config;
 
