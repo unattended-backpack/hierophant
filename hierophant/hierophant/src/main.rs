@@ -25,6 +25,8 @@ use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
     let config = tokio::fs::read_to_string("hierophant.toml")
         .await
         .context("read hierophant.toml file")?;
