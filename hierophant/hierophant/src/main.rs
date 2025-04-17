@@ -17,11 +17,24 @@ use crate::hierophant_state::HierophantState;
 use anyhow::Context;
 use artifact::create_artifact_server::CreateArtifactServer;
 use create_artifact_service::CreateArtifactService;
-use log::info;
+use log::{error, info};
 use network::prover_network_server::ProverNetworkServer;
 use prover_network_service::ProverNetworkService;
 use std::{net::SocketAddr, sync::Arc};
-use tonic::transport::Server;
+use tonic::service::Interceptor;
+use tonic::{Request, Response, Status, transport::Server};
+
+// Create a custom interceptor
+#[derive(Clone)]
+struct LoggingInterceptor;
+
+impl Interceptor for LoggingInterceptor {
+    fn call(&mut self, request: Request<()>) -> Result<Request<()>, Status> {
+        // Log the full request path which includes service and method name
+        info!("Incoming gRPC request: {:?}", request);
+        Ok(request)
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,11 +58,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let artifact_service = CreateArtifactService::new(hierophant_state.clone());
 
     // Run the gRPC server
-    info!("gRPC server starting on {http_addr}");
+    // Then modify your server setup
+    let interceptor = LoggingInterceptor;
+
+    info!("gRPC server starting on {grpc_addr}");
     let grpc_server = Server::builder()
-        .add_service(ProverNetworkServer::new(prover_service))
-        .add_service(CreateArtifactServer::new(artifact_service))
+        .add_service(ProverNetworkServer::with_interceptor(
+            prover_service,
+            interceptor.clone(),
+        ))
+        .add_service(CreateArtifactServer::with_interceptor(
+            artifact_service,
+            interceptor,
+        ))
         .serve(grpc_addr);
+
+    // info!("gRPC server starting on {grpc_addr}");
+    // let grpc_server = Server::builder()
+    //     .add_service(ProverNetworkServer::new(prover_service))
+    //     .add_service(CreateArtifactServer::new(artifact_service))
+    //     .serve(grpc_addr);
 
     // Create the axum router with all routes
     let app = http_handler::create_router(hierophant_state.clone());

@@ -9,7 +9,7 @@ authors.workspace = true
 
 [dependencies]
 network-lib = { path = "../network-lib" }
-tonic = { version = "0.12.3", features = ["transport"] }
+tonic = { version = "0.12.0", features = ["transport"] }
 prost = "0.13.4"
 hyper = { version = "0.14", features = ["full"] }
 tower = "0.4"
