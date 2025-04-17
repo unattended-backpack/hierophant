@@ -2,7 +2,7 @@ mod proof_cache;
 mod worker_registry;
 pub mod worker_state;
 
-use crate::hierophant_state::ProofStatus;
+use crate::hierophant_state::{ProofRequestId, ProofStatus};
 use anyhow::{Context, Result};
 use proof_cache::ProofCache;
 use std::sync::Arc;
@@ -14,7 +14,6 @@ use crate::config::Config;
 
 #[derive(Debug, Clone)]
 pub struct ProofRouter {
-    // how many retries on prover network requests until we fall back to local proof.
     pub proof_cache: Arc<RwLock<ProofCache>>,
     pub worker_registry_client: WorkerRegistryClient,
     pub mock_mode: bool,
@@ -41,11 +40,11 @@ impl ProofRouter {
     // looks on-disk for the proof, checks for contemplants currently working on the proof,
     // or routes the proof request to an idle contemplant.
     // returns a proof request id
-    pub fn route_proof(&self) -> todo!() {
+    pub fn route_proof(&self, proof_request: ProofRequestId) -> todo!() {
         todo!()
     }
 
-    pub async fn get_proof_status(&self, proof_request_id: &Uuid) -> Result<ProofStatus> {
+    pub async fn get_proof_status(&self, proof_request_id: ProofRequestId) -> Result<ProofStatus> {
         // fulfillment_status wil be tracked in ProofRouter
         // The contemplant will only ever return execution_status and the proof (if it's done)
         todo!()

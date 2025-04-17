@@ -1,4 +1,4 @@
-use crate::hierophant_state::{HierophantState, VkHash};
+use crate::hierophant_state::{HierophantState, ProofRequestId, VkHash};
 use crate::network::prover_network_server::ProverNetwork;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
@@ -226,7 +226,8 @@ impl ProverNetwork for ProverNetworkService {
         // Log the signature
         info!("Signature: 0x{}", hex::encode(&req.signature));
 
-        let request_id = Uuid::new_v4();
+        let request_id = ProofRequestId::new(&body);
+
         info!("Assigned proof request id {request_id}");
 
         // route the proof to a worker to be completed
@@ -290,7 +291,7 @@ impl ProverNetwork for ProverNetworkService {
             Ok(id) => id,
             Err(e) => {
                 let error_msg = format!(
-                    "Error parsing request_id 0x{} as Uuid: {e}",
+                    "Error parsing request_id 0x{} as ProofRequestId (u64): {e}",
                     hex::encode(&req.request_id)
                 );
                 error!("{error_msg}");
@@ -322,7 +323,7 @@ impl ProverNetwork for ProverNetworkService {
         // TODO: try to get the proof from artifact_store first
 
         // Have the proof router find the proof
-        let proof_status = match self.state.proof_router.get_proof_status(&request_id).await {
+        let proof_status = match self.state.proof_router.get_proof_status(request_id).await {
             Ok(status) => status,
             Err(e) => {
                 let error_msg = format!("Error getting proof status {e}");

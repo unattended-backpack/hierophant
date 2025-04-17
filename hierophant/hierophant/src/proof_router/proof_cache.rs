@@ -1,7 +1,7 @@
-use crate::VkHash;
 use anyhow::{Context, Result};
 use log::{error, info};
 use std::{fs, path::Path};
+use uuid::Uuid;
 
 // If the proving server goes offline and it has completed some proofs, when it comes back up
 // it will have to re-run those exact same proofs.  Proofs can take hours so we want some degree of
@@ -21,8 +21,8 @@ pub struct ProofCache {
     current_cache_index: usize,
     // when we get a new proof, replace the proof at current_index and also look it up in
     // proof_requests and evict the address that we just replaced
-    // (proof_id, proof_file_path_name)
-    cache_list: Vec<(VkHash, String)>,
+    // (proof_request_id, proof_file_path_name)
+    cache_list: Vec<(Uuid, String)>,
 }
 
 impl ProofCache {
@@ -41,7 +41,7 @@ impl ProofCache {
         let mut cache_list = Vec::with_capacity(cache_size);
         // fill with default values so we never have to check if current_cache_index is out of
         // bounds
-        cache_list.resize_with(cache_size, || (VkHash::default(), "empty".into()));
+        cache_list.resize_with(cache_size, || (Uuid::default(), "empty".into()));
 
         Ok(Self {
             cache_size,
@@ -54,19 +54,19 @@ impl ProofCache {
     // Retreive a proof that we previously computed.  This can save us hours of proving time.
     // Safe to call even if we're not sure we have a proof.
     // called in get_proof_status()
-    pub async fn read_proof(&self, vk_hash: &VkHash) -> Option<Vec<u8>> {
+    pub async fn read_proof(&self, proof_request_id: &Uuid) -> Option<Vec<u8>> {
         // if cache is disabled
         if self.cache_size == 0 {
             return None;
         }
 
-        let proof_path_name = vk_hash_to_file_path(&self.proof_cache_directory, &vk_hash);
+        let proof_path_name =
+            proof_request_id_to_file_path(&self.proof_cache_directory, &proof_request_id);
         let proof_path = Path::new(&proof_path_name);
         if proof_path.exists() {
             info!(
-                "Found proof with vk_hash {} on disk!  Loading from file {} ",
-                vk_hash.to_hex_string(),
-                proof_path_name
+                "Found proof with proof_request_id {} on disk!  Loading from file {} ",
+                proof_request_id, proof_path_name
             );
 
             // load proof from file and return
@@ -87,7 +87,11 @@ impl ProofCache {
     // writes the completed proof to file, deleting the Least Recently Completed proof that the
     // cache is aware of.
     // Takes a mutable reference, so only use this if you're sure the proof isn't already on disk
-    pub async fn write_proof(&mut self, proof_bytes: Vec<u8>, vk_hash: &VkHash) -> Result<()> {
+    pub async fn write_proof(
+        &mut self,
+        proof_bytes: Vec<u8>,
+        proof_request_id: &Uuid,
+    ) -> Result<()> {
         // if cache is disabled
         if self.cache_size == 0 {
             return Ok(());
@@ -95,7 +99,7 @@ impl ProofCache {
 
         info!(
             "Writing proof 0x{} to disk.  Num bytes: {}",
-            vk_hash.to_hex_string(),
+            proof_request_id,
             proof_bytes.len()
         );
 
@@ -116,18 +120,18 @@ impl ProofCache {
         }
 
         // get proof file name so we can write
-        let proof_path_name = vk_hash_to_file_path(&self.proof_cache_directory, vk_hash);
+        let proof_path_name =
+            proof_request_id_to_file_path(&self.proof_cache_directory, proof_request_id);
         let path = Path::new(&proof_path_name);
 
         // write completed proof to file
         fs::write(path, proof_bytes).context(format!(
             "Write proof id {} to file {}",
-            vk_hash.to_hex_string(),
-            proof_path_name
+            proof_request_id, proof_path_name
         ))?;
 
         // overwrite the current_cache_index in the cache_list vector with our newly written proof
-        let new_elem = (vk_hash.clone(), proof_path_name);
+        let new_elem = (proof_request_id.clone(), proof_path_name);
         *elem = new_elem;
 
         self.increment_current_cache_index();
@@ -143,6 +147,6 @@ impl ProofCache {
     }
 }
 
-fn vk_hash_to_file_path(proof_cache_directory: &str, vk_hash: &VkHash) -> String {
-    format!("{}/{}", proof_cache_directory, vk_hash.to_hex_string())
+fn proof_request_id_to_file_path(proof_cache_directory: &str, proof_request_id: &Uuid) -> String {
+    format!("{}/{}", proof_cache_directory, proof_request_id)
 }
