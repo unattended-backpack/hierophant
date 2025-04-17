@@ -37,7 +37,6 @@ impl WorkerRegistryClient {
             workers,
             reqwest_client,
             receiver,
-            self_command_sender: sender.clone(),
         };
 
         tokio::task::spawn(async move { worker_registry.background_event_loop().await });
@@ -141,9 +140,6 @@ pub struct WorkerRegistry {
     pub workers: HashMap<String, WorkerState>,
     pub reqwest_client: Client,
     pub receiver: mpsc::Receiver<WorkerRegistryCommand>,
-    // for sending the task to the back of the channel queue to allow for other events to
-    // process
-    pub self_command_sender: mpsc::Sender<WorkerRegistryCommand>,
 }
 
 impl WorkerRegistry {
@@ -345,9 +341,20 @@ impl WorkerRegistry {
             .iter_mut()
             .find(|(_, worker_state)| worker_state.current_request_id() == Some(request_id))
         {
-            // move worker from "busy" to "idle"
-            debug!("Worker {} completed a proof and is now Idle.", worker_addr);
-            worker_state.status = WorkerStatus::Idle;
+            if let WorkerStatus::Busy {
+                request_id: busy_request_id,
+            } = worker_state.status
+            {
+                // if they're marked as busy with the proof we just saw completed
+                if busy_request_id == request_id {
+                    // We know the worker is done with this proof because it just
+                    // returned us an executed proof.
+
+                    // move worker from "busy" to "idle"
+                    debug!("Worker {} completed a proof and is now Idle.", worker_addr);
+                    worker_state.status = WorkerStatus::Idle;
+                }
+            }
         } else {
             error!("Worker registry couldn't find worker who was assigned proof {request_id}");
         }
@@ -373,7 +380,7 @@ impl WorkerRegistry {
                 None => {
                     // This proof wasn't assigned to any worker, return none
                     info!("No worker is assigned to proof {}", target_request_id);
-                    resp_sender.send(None);
+                    resp_sender.send(None).unwrap();
                     return;
                 }
             };
@@ -398,7 +405,7 @@ impl WorkerRegistry {
                 );
                 // there's a worker assigned but we can't communicate with it.  Assume
                 // it's dead & tell coordinator we lost the proof
-                resp_sender.send(Some(Ok(ProofStatus::lost())));
+                resp_sender.send(Some(Ok(ProofStatus::lost()))).unwrap();
 
                 return;
             }
@@ -415,7 +422,7 @@ impl WorkerRegistry {
                     );
 
                     // can't deserialize request
-                    resp_sender.send(Some(Err(worker_addr.clone())));
+                    resp_sender.send(Some(Err(worker_addr.clone()))).unwrap();
 
                     return;
                 }
@@ -425,7 +432,7 @@ impl WorkerRegistry {
                 target_request_id, worker_addr, proof_status
             );
 
-            resp_sender.send(Some(Ok(proof_status)));
+            resp_sender.send(Some(Ok(proof_status))).unwrap();
         } else {
             // TODO: could make a StrikeWorker command then make handling
             // reqwest responses more async by moving them to a tokio task
@@ -439,7 +446,7 @@ impl WorkerRegistry {
             );
 
             // response status not-ok
-            resp_sender.send(Some(Err(worker_addr.clone())));
+            resp_sender.send(Some(Err(worker_addr.clone()))).unwrap();
         }
     }
 
@@ -449,7 +456,7 @@ impl WorkerRegistry {
             .iter()
             .map(|(x, y)| (x.clone(), y.clone()))
             .collect();
-        resp_sender.send(workers);
+        resp_sender.send(workers).unwrap();
     }
 }
 

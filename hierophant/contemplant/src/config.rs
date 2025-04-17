@@ -6,6 +6,7 @@ pub struct Config {
     pub contemplant_name: String,
     #[serde(default = "default_port")]
     pub port: usize,
+    pub ip: String,
 }
 
 fn default_port() -> usize {

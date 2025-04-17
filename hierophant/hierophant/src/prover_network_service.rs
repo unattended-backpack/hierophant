@@ -396,8 +396,21 @@ impl ProverNetwork for ProverNetworkService {
             }
         };
 
-        // if proof is complete, save it to disk as an artifact
+        // if proof is complete, save it to disk as an artifact and mark the worker
+        // as idle
         if !proof_status.proof.is_empty() {
+            // mark that worker who returned a completed proof as idle
+            if let Err(e) = self
+                .state
+                .proof_router
+                .worker_registry_client
+                .proof_complete(request_id)
+                .await
+            {
+                error!("{e}");
+                return Err(Status::internal(e.to_string()));
+            }
+
             // save artifact to disk
             if let Err(e) = self
                 .state
@@ -412,15 +425,20 @@ impl ProverNetwork for ProverNetworkService {
             info!("Saved proof from request_id {request_id} to disk with uri {proof_uri}");
         }
 
+        // TODO: do these values matter?
+        let request_tx_hash = vec![];
+        let fulfill_tx_hash = None;
+        // TODO: is this a hash of stdin?  Does that mean I have to load stdin_uri?
+        let public_values_hash = None;
+
         let response = GetProofRequestStatusResponse {
             fulfillment_status: proof_status.fulfillment_status,
             execution_status: proof_status.execution_status,
-            request_tx_hash: todo!(),
+            request_tx_hash,
             deadline: request_proof_request_body.deadline,
-            fulfill_tx_hash: todo!(),
+            fulfill_tx_hash,
             proof_uri: Some(proof_uri.to_string()),
-            // TODO: is this a hash of stdin?  Does that mean I have to load stdin_uri?
-            public_values_hash: todo!(),
+            public_values_hash,
         };
 
         Ok(Response::new(response))

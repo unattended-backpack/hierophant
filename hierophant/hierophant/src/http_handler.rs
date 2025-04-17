@@ -91,18 +91,17 @@ async fn handle_register_worker(
     }
 }
 
-// TODO:
 async fn contemplants(
     State(state): State<Arc<HierophantState>>,
 ) -> Result<Json<Vec<(String, WorkerState)>>, StatusCode> {
-    todo!()
-    // let workers = state
-    //     .worker_registry_client
-    //     .workers()
-    //     .await
-    //     .map_err(|e| AppError(e))?;
-    //
-    // Ok((StatusCode::OK, Json(workers)))
+    match state.proof_router.worker_registry_client.workers().await {
+        Ok(workers) => Ok(Json(workers)),
+        Err(e) => {
+            let error_msg = format!("Error sending workers command: {e}");
+            error!("{error_msg}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 // Client requests to download an artifact (client only ever downloads proofs)

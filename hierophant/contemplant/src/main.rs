@@ -89,6 +89,7 @@ async fn main() -> Result<()> {
 
 fn register_worker(config: Config) {
     let worker_register_info = WorkerRegisterInfo {
+        ip: config.ip,
         name: config.contemplant_name.clone(),
         port: config.port,
     };

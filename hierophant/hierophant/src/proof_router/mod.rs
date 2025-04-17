@@ -7,7 +7,7 @@ use crate::{
     network::RequestProofRequestBody,
 };
 use anyhow::{Context, Result, anyhow};
-use log::{error, info};
+use log::{error, warn};
 use network_lib::{ContemplantProofRequest, ProofRequestId};
 use proof_cache::ProofCache;
 use sp1_sdk::{
@@ -107,6 +107,7 @@ impl ProofRouter {
         res
     }
 
+    // TODO: what if we get this request before the proof can be assigned to a worker?
     pub async fn get_proof_status(&self, proof_request_id: ProofRequestId) -> Result<ProofStatus> {
         // first check to see if we have it in the proof cache
         if let Some(proof_bytes) = self.proof_cache.lock().await.read_proof(&proof_request_id) {
@@ -119,9 +120,26 @@ impl ProofRouter {
             return Ok(status);
         };
 
-        // fulfillment_status wil be tracked in ProofRouter
-        // The contemplant will only ever return execution_status and the proof (if it's done)
-        todo!()
+        // then check the prover network
+        match self
+            .worker_registry_client
+            .proof_status(proof_request_id)
+            .await
+        {
+            Ok(Some(status)) => Ok(status),
+            Ok(None) => {
+                warn!("Can't find proof request {proof_request_id}");
+                Ok(ProofStatus::lost())
+            }
+            Err(e) => {
+                // There's a worker assigned to this proof but we can't contact them
+                // The worker likely went offline before they finished the proof
+                warn!("Can't get proof status of request {proof_request_id} from worker: {e}");
+                // TODO: is this the proper fulfil/exec status?  How does the client respond to
+                // this
+                Ok(ProofStatus::lost())
+            }
+        }
     }
 }
 
