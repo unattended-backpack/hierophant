@@ -49,20 +49,19 @@ impl ProverNetwork for ProverNetworkService {
         let maybe_program = self.state.program_store.lock().await.get(&vk_hash).cloned();
 
         match maybe_program {
-            Some(_) => {
+            Some(program) => {
                 info!("Program with vk_hash {vk_hash_hex} found");
+                // Create the response with the program
+                let response = GetProgramResponse {
+                    program: Some(program),
+                };
+                Ok(Response::new(response))
             }
             None => {
                 info!("Program with vk_hash {vk_hash_hex} not found");
+                Err(Status::not_found("program not found"))
             }
         }
-
-        // Create the response with the program
-        let response = GetProgramResponse {
-            program: maybe_program,
-        };
-
-        Ok(Response::new(response))
     }
 
     async fn get_nonce(
