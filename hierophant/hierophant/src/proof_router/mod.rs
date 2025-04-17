@@ -1,14 +1,21 @@
 mod proof_cache;
 mod worker_registry;
 
-use crate::hierophant_state::ProofStatus;
+use crate::{
+    artifact_store::{self, ArtifactStoreClient, ArtifactUri},
+    hierophant_state::ProofStatus,
+    network::RequestProofRequestBody,
+};
 use anyhow::{Context, Result, anyhow};
 use log::{error, info};
-use network_lib::ProofRequestId;
+use network_lib::{ContemplantProofRequest, ProofRequestId};
 use proof_cache::ProofCache;
-use sp1_sdk::network::proto::network::{ExecutionStatus, FulfillmentStatus};
+use sp1_sdk::{
+    SP1Stdin,
+    network::proto::network::{ExecutionStatus, FulfillmentStatus, ProofMode},
+};
 use std::{fmt::Display, sync::Arc};
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, time::Instant};
 use worker_registry::WorkerRegistryClient;
 pub use worker_registry::WorkerState;
 
@@ -42,15 +49,62 @@ impl ProofRouter {
     // looks on-disk for the proof, checks for contemplants currently working on the proof,
     // or routes the proof request to an idle contemplant.
     // returns a proof request id
-    pub async fn route_proof(&self, proof_request_id: ProofRequestId) -> Result<()> {
-        if let Some(_) = self.proof_cache.lock().await.read_proof(&proof_request_id) {
+    pub async fn route_proof(
+        &self,
+        request_id: ProofRequestId,
+        // uri of the ELF previously stored
+        program_uri: ArtifactUri,
+        // uri of the stdin previously stored
+        stdin_uri: ArtifactUri,
+        // Type of proof being requested
+        mode: ProofMode,
+        // Need to get Program and Stdin artifacts to request the proof, so we have to use the
+        // artifact_store
+        artifact_store_client: ArtifactStoreClient,
+    ) -> Result<()> {
+        // check if we have this proof on-disk cache, otherwise parse artifacts and send it to
+        // the prover network
+        if let Some(_) = self.proof_cache.lock().await.read_proof(&request_id) {
             // Don't route it.  We already have this proof on-disk in the proof cache.  It will be
             // retreived on get_proof_status
             return Ok(());
         };
 
-        // otherwise send it to our prover network
-        todo!()
+        let stdin_artifact_bytes = match artifact_store_client
+            .get_artifact_bytes(stdin_uri.clone())
+            .await
+        {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => return Err(anyhow!("Stdin artifact with uri {stdin_uri} not found")),
+            Err(e) => return Err(anyhow!("Error getting stdin artifact {stdin_uri}: {e}")),
+        };
+
+        // TODO: where does witnessgen happen????
+        let sp1_stdin: SP1Stdin = bincode::deserialize(&stdin_artifact_bytes)?;
+
+        // get the elf
+        let program_artifact_bytes = match artifact_store_client
+            .get_artifact_bytes(program_uri.clone())
+            .await
+        {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => return Err(anyhow!("Program artifact with uri {program_uri} not found")),
+            Err(e) => return Err(anyhow!("Error getting program artifact {program_uri}: {e}")),
+        };
+
+        let proof_request = ContemplantProofRequest {
+            request_id,
+            mock: self.mock_mode,
+            mode,
+            sp1_stdin,
+            elf: program_artifact_bytes,
+        };
+
+        let res = self
+            .worker_registry_client
+            .assign_proof_request(request_id, proof_request)
+            .await;
+        res
     }
 
     pub async fn get_proof_status(&self, proof_request_id: ProofRequestId) -> Result<ProofStatus> {

@@ -1,3 +1,4 @@
+use crate::artifact_store::ArtifactUri;
 use crate::hierophant_state::{HierophantState, VkHash};
 use crate::network::prover_network_server::ProverNetwork;
 use crate::network::{
@@ -10,9 +11,10 @@ use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::{error, info};
 use network_lib::ProofRequestId;
-use sp1_sdk::network::proto::artifact::ArtifactType;
-use std::sync::Arc;
+use sp1_sdk::network::proto::{artifact::ArtifactType, network::ProofMode};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{str::FromStr, sync::Arc};
+use tokio::time::Instant;
 use tonic::{Request, Response, Status};
 
 // Our ProverNetwork service implementation
@@ -228,12 +230,71 @@ impl ProverNetwork for ProverNetworkService {
             body.vk_hash.clone(),
             body.version.clone(),
             body.stdin_uri.clone(),
+            body.mode,
         );
 
         info!("Assigned proof request id {request_id}");
 
+        let stdin_uri = match ArtifactUri::from_str(&body.stdin_uri) {
+            Ok(uri) => uri,
+            Err(e) => {
+                let error_msg = format!("Error parsing stdin_uri from proof request {request_id}");
+                error!("{error_msg}");
+                return Err(Status::invalid_argument(error_msg));
+            }
+        };
+
+        // get program with this vk_hash
+        let program_uri = match self.state.program_store.lock().await.get(&vk_hash) {
+            Some(prog) => prog.program_uri.clone(),
+            None => {
+                let error_msg = format!("Program with vk_hash {vk_hash_hex} not found in db");
+                error!("{error_msg}");
+                return Err(Status::invalid_argument(error_msg));
+            }
+        };
+
+        // parse program_uri as ArtifactUri
+        let program_uri = match ArtifactUri::from_str(&program_uri) {
+            Ok(uri) => uri,
+            Err(e) => {
+                let error_msg = format!("Error parsing program_uri {program_uri} as ArtifactUri");
+                error!("{error_msg}");
+                return Err(Status::invalid_argument(error_msg));
+            }
+        };
+
+        let mode = match ProofMode::try_from(body.mode) {
+            Ok(m) => m,
+            Err(e) => {
+                let error_msg = format!("Error parsing {} as ProofMode: {e}", body.mode);
+                error!("{error_msg}");
+                return Err(Status::invalid_argument(error_msg));
+            }
+        };
+
+        let start = Instant::now();
         // route the proof to a worker to be completed
-        self.state.proof_router.route_proof(request_id);
+        if let Err(e) = self
+            .state
+            .proof_router
+            .route_proof(
+                request_id,
+                program_uri,
+                stdin_uri,
+                mode,
+                self.state.artifact_store_client.clone(),
+            )
+            .await
+        {
+            let error_msg = format!("Internal error routing proof request {request_id}: {e}");
+            error!("{error_msg}");
+            return Err(Status::internal(error_msg));
+        }
+        info!(
+            "Took {} seconds to route proof",
+            start.elapsed().as_secs_f32()
+        );
 
         // Generate a mock transaction hash
         let mut tx_hash = vec![0u8; 32]; // 32-byte transaction hash

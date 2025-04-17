@@ -265,14 +265,14 @@ impl fmt::Display for ArtifactUri {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ParseArtifactUriError;
-
 impl fmt::Display for ParseArtifactUriError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "failed to parse ArtifactUri")
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct ParseArtifactUriError;
 
 impl std::error::Error for ParseArtifactUriError {}
 

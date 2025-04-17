@@ -3,7 +3,7 @@ use crate::artifact::{CreateArtifactRequest, CreateArtifactResponse};
 use crate::hierophant_state::HierophantState;
 use log::{error, info};
 use sp1_sdk::network::proto::artifact::ArtifactType;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 // Our CreateArtifact service implementation

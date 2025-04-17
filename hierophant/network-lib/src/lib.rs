@@ -16,13 +16,13 @@ pub struct WorkerRegisterInfo {
 }
 
 // Is deterministic on a RequestProofRequestBody using the fields
-// vk_hash, version, mode, strategy, and stdin_uri.  This way we can
+// vk_hash, version, mode, and stdin_uri.  This way we can
 // skip execution for proofs we already have saved
 #[derive(Default, Debug, Clone, Copy, Serialize, Eq, PartialEq, Hash, Deserialize)]
 pub struct ProofRequestId(B256);
 
 impl ProofRequestId {
-    pub fn new(vk_hash: Vec<u8>, version: String, stdin_uri: String) -> Self {
+    pub fn new(vk_hash: Vec<u8>, version: String, stdin_uri: String, mode: i32) -> Self {
         let mut hasher = Sha256::new();
 
         // Hash the minimum fields that make proof execution distinct
@@ -30,6 +30,7 @@ impl ProofRequestId {
         hasher.update(vk_hash.clone());
         hasher.update(version.clone());
         hasher.update(stdin_uri.clone());
+        hasher.update(mode.to_le_bytes());
 
         // turn it into B256 (how sp1_sdk represents proof_id)
         let hash = hasher.finalize().to_vec();
