@@ -239,7 +239,8 @@ impl ProverNetwork for ProverNetworkService {
         let stdin_uri = match ArtifactUri::from_str(&body.stdin_uri) {
             Ok(uri) => uri,
             Err(e) => {
-                let error_msg = format!("Error parsing stdin_uri from proof request {request_id}");
+                let error_msg =
+                    format!("Error parsing stdin_uri from proof request {request_id}: {e}");
                 error!("{error_msg}");
                 return Err(Status::invalid_argument(error_msg));
             }

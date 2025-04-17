@@ -26,7 +26,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 
 #[derive(Clone)]
 pub struct WorkerState {
-    config: Config,
+    // config: Config,
     cuda_prover: Arc<CudaProver>,
     mock_prover: Arc<CpuProver>,
     proof_store: Arc<ProofStore>,
@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
     let worker_state = WorkerState {
         cuda_prover,
         mock_prover,
-        config: config.clone(),
+        // config: config.clone(),
         proof_store: proof_store.clone(),
     };
 

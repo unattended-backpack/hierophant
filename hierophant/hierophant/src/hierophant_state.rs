@@ -3,10 +3,8 @@ use crate::config::Config;
 use crate::network::{ExecutionStatus, FulfillmentStatus, Program, RequestProofRequestBody};
 use crate::proof_router::ProofRouter;
 use alloy_primitives::Address;
-use axum::body::Bytes;
 use network_lib::ProofRequestId;
 use serde::{Deserialize, Serialize};
-use sp1_sdk::network::proto::artifact::ArtifactType;
 use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
 use tokio::sync::Mutex;
 
@@ -23,6 +21,7 @@ pub struct HierophantState {
     pub artifact_store_client: ArtifactStoreClient,
     // handles delegating proof requests to contemplants and monitoring their progress
     pub proof_router: ProofRouter,
+    // TODO: use (lol)
     pub nonces: Arc<Mutex<HashMap<Address, u64>>>,
 }
 

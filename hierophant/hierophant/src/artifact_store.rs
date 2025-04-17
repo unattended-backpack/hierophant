@@ -21,7 +21,7 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct ArtifactStoreClient {
-    pub command_sender: mpsc::Sender<ArtifactStoreCommand>,
+    command_sender: mpsc::Sender<ArtifactStoreCommand>,
 }
 
 impl ArtifactStoreClient {

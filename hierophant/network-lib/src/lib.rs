@@ -1,10 +1,7 @@
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sp1_sdk::{
-    SP1Stdin,
-    network::proto::network::{ExecutionStatus, ProofMode},
-};
+use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use std::fmt::Display;
 
 pub const REGISTER_CONTEMPLANT_ENDPOINT: &str = "register_contemplant";
@@ -19,6 +16,8 @@ pub struct WorkerRegisterInfo {
 // Is deterministic on a RequestProofRequestBody using the fields
 // vk_hash, version, mode, and stdin_uri.  This way we can
 // skip execution for proofs we already have saved
+// TODO: I think this isn't being used properly rn because we removed proof_cache and proofs aren't
+// stored by their ProofRequestId in
 #[derive(Default, Debug, Clone, Copy, Serialize, Eq, PartialEq, Hash, Deserialize)]
 pub struct ProofRequestId(B256);
 
