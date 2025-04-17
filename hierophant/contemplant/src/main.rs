@@ -1,11 +1,11 @@
 mod config;
 mod types;
 
-use alloy_primitives::{B256, hex};
+use alloy_primitives::B256;
 use tokio::time::Instant;
 
 use crate::config::Config;
-use crate::types::{AppError, ProofRequest, ProofStatus, ProofStore};
+use crate::types::{AppError, ProofStatus, ProofStore};
 use anyhow::{Context, Result, anyhow};
 use axum::{
     Json, Router,
@@ -14,22 +14,19 @@ use axum::{
     routing::{get, post},
 };
 use log::{error, info};
+use network_lib::{ContemplantProofRequest, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use reqwest::Client;
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
 };
+use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
-use tokio::{
-    sync::RwLock,
-    time::{Duration, sleep},
-};
+use tokio::sync::RwLock;
 use tower_http::limit::RequestBodyLimitLayer;
-
-const WORKER_REGISTER_ENDPOINT: &str = "worker";
 
 #[derive(Clone)]
 pub struct WorkerState {
-    config: Config,
+    // config: Config,
     cuda_prover: Arc<CudaProver>,
     mock_prover: Arc<CpuProver>,
     proof_store: Arc<ProofStore>,
@@ -60,13 +57,13 @@ async fn main() -> Result<()> {
     let worker_state = WorkerState {
         cuda_prover,
         mock_prover,
-        config: config.clone(),
+        // config: config.clone(),
         proof_store: proof_store.clone(),
     };
 
     let app = Router::new()
         .route("/request_proof", post(request_proof))
-        .route("/status/:proof_id", get(get_proof_status))
+        .route("/status/:request_id", get(get_proof_request_status))
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(102400 * 1024 * 1024))
         .with_state(worker_state);
@@ -86,20 +83,28 @@ async fn main() -> Result<()> {
 }
 
 fn register_worker(config: Config) {
+    let worker_register_info = WorkerRegisterInfo {
+        ip: config.ip,
+        name: config.contemplant_name.clone(),
+        port: config.port,
+    };
+    info!(
+        "Sending hierophant at {} worker_register_info {:?}",
+        config.hierophant_address, worker_register_info
+    );
     tokio::spawn(async move {
         // Give this server a moment to fully initialize
-        sleep(Duration::from_secs(1)).await;
+        // sleep(Duration::from_secs(1)).await;
 
         let client = Client::new();
 
         // Attempt to register with the hierophant
         match client
-            .put(format!(
-                "{}/{WORKER_REGISTER_ENDPOINT}",
+            .post(format!(
+                "{}/{REGISTER_CONTEMPLANT_ENDPOINT}",
                 config.hierophant_address
             ))
-            // TODO: what should we send to the hierophant to verify this worker?
-            .json(&config)
+            .json(&worker_register_info)
             .send()
             .await
         {
@@ -128,7 +133,7 @@ fn register_worker(config: Config) {
 // provided by the Hierophant
 async fn request_proof(
     State(state): State<WorkerState>,
-    Json(payload): Json<ProofRequest>,
+    Json(payload): Json<ContemplantProofRequest>,
 ) -> Result<StatusCode, AppError> {
     info!("Received proof request {payload}");
 
@@ -140,7 +145,7 @@ async fn request_proof(
         .proof_store
         .write()
         .await
-        .insert(payload.proof_id, initial_status);
+        .insert(payload.request_id, initial_status);
 
     tokio::spawn(async move {
         let start_time = Instant::now();
@@ -223,29 +228,38 @@ async fn request_proof(
             .proof_store
             .write()
             .await
-            .insert(payload.proof_id, updated_proof_status);
+            .insert(payload.request_id, updated_proof_status);
     });
 
     Ok(StatusCode::OK)
 }
 
-async fn get_proof_status(
+async fn get_proof_request_status(
     State(state): State<WorkerState>,
-    Path(proof_id): Path<String>,
+    Path(request_id): Path<String>,
 ) -> Result<(StatusCode, Json<ProofStatus>), AppError> {
-    let proof_id_bytes = hex::decode(&proof_id)?;
-    let proof_id = B256::from_slice(&proof_id_bytes);
-    info!("Received proof status request: {:?}", proof_id);
+    let request_id = match B256::from_str(&request_id) {
+        Ok(r) => r.into(),
+        Err(e) => {
+            let error_msg = format!(
+                "Couldn't parse request_id {request_id} as B256 in get_proof_request_status. Error {e}"
+            );
+            error!("{error_msg}");
+            return Err(anyhow!("{error_msg}").into());
+        }
+    };
+
+    info!("Received proof status request: {:?}", request_id);
 
     let proof_store = state.proof_store.read().await;
 
-    let proof_status: ProofStatus = match proof_store.get(&proof_id) {
+    let proof_status: ProofStatus = match proof_store.get(&request_id) {
         Some(status) => {
-            info!("Proof status of {proof_id}: {}", status);
+            info!("Proof status of {request_id}: {}", status);
             status.clone()
         }
         None => {
-            error!("Proof {} not found", proof_id);
+            error!("Proof {} not found", request_id);
             ProofStatus::unexecutable()
         }
     };

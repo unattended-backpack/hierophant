@@ -6,7 +6,7 @@ service ProverNetwork {
   // Get a program by verification key hash
   rpc GetProgram (GetProgramRequest) returns (GetProgramResponse);
   
-  // Get the nonce for an account
+  // Get the nonce for an account by address
   rpc GetNonce (GetNonceRequest) returns (GetNonceResponse);
   
   // Create a new program
@@ -15,7 +15,7 @@ service ProverNetwork {
   // Request a proof generation
   rpc RequestProof (RequestProofRequest) returns (RequestProofResponse);
   
-  // Get status of a proof request
+  // Get status of a proof request by request id
   rpc GetProofRequestStatus (GetProofRequestStatusRequest) returns (GetProofRequestStatusResponse);
 }
 

@@ -1,9 +1,5 @@
 [workspace]
-members = [
-	"hierophant",
-	"contemplant",
-	# "network-lib",
-]
+members = ["hierophant", "contemplant", "network-lib"]
 resolver = "2"
 
 [workspace.package]
@@ -14,7 +10,8 @@ edition = "2024"
 # Dependencies forked from https://github.com/succinctlabs/op-succinct tag v2.0.0
 # Uncomment dependencies as needed
 [workspace.dependencies]
-axum = "0.8.3"
+sha2 = "0.10.8"
+axum = "0.7.9"
 toml = "0.8.20"
 # general
 anyhow = { version = "1.0.86", default-features = false }
@@ -104,6 +101,7 @@ tower-http = { version = "0.5.2", features = ["limit"] }
 # Keccak with the SHA3 patch is more efficient than the default Keccak.
 alloy-primitives = { version = "0.8.21", default-features = false, features = [
 	"sha3-keccak",
+	"getrandom",
 ] }
 # alloy-sol-types = { version = "0.8.21", default-features = false }
 # alloy-sol-macro = { version = "0.8.21", default-features = false }

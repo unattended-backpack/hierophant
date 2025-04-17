@@ -21,6 +21,7 @@ reqwest.workspace = true
 
 # sp1
 sp1-sdk.workspace = true
+network-lib = { path = "../network-lib" }
 
 toml.workspace = true
 anyhow.workspace = true
