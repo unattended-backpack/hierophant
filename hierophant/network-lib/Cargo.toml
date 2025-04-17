@@ -12,3 +12,4 @@ hex.workspace = true
 alloy-primitives.workspace = true
 sp1-sdk.workspace = true
 sha2.workspace = true
+anyhow.workspace = true

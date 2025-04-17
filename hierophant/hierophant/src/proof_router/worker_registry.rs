@@ -1,5 +1,5 @@
 use crate::hierophant_state::ProofStatus;
-use alloy_primitives::B256;
+use crate::proof_router::request_with_retries;
 use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
 use network_lib::{ContemplantProofRequest, ProofRequestId};
@@ -54,15 +54,13 @@ impl WorkerRegistryClient {
 
     pub async fn assign_proof_request(
         &self,
-        proof_id: B256,
-        proof_request: GenericProofRequest,
-        mock_mode: bool,
+        request_id: ProofRequestId,
+        proof_request: ContemplantProofRequest,
     ) -> Result<()> {
         self.sender
             .send(WorkerRegistryCommand::AssignProofRequest {
-                proof_id,
+                request_id,
                 proof_request,
-                mock_mode,
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send command AssignProofRequest: {}", e))
@@ -70,13 +68,13 @@ impl WorkerRegistryClient {
 
     // run until we get None (no worker has this proof) or Some(Ok(ProofStatus)).
     // Each run it potentially trims naughty workers
-    pub async fn proof_status(&self, proof_id: B256) -> Result<Option<ProofStatus>> {
+    pub async fn proof_status(&self, request_id: ProofRequestId) -> Result<Option<ProofStatus>> {
         let mut a_worker_is_assigned = false;
         loop {
             let (resp_sender, receiver) = oneshot::channel();
             self.sender
                 .send(WorkerRegistryCommand::ProofStatus {
-                    target_proof_id: proof_id,
+                    target_request_id: request_id,
                     resp_sender,
                 })
                 .await
@@ -87,7 +85,7 @@ impl WorkerRegistryClient {
                 None => {
                     if a_worker_is_assigned {
                         error!(
-                            "Worker assigned to proof {proof_id} was kicked from the worker registry."
+                            "Worker assigned to proof {request_id} was kicked from the worker registry."
                         );
                         // we know from a previous response that there was a worker assigned to
                         // this proof, but now worker_registry is returning None, meaning the
@@ -96,7 +94,7 @@ impl WorkerRegistryClient {
                         return Ok(Some(ProofStatus::lost()));
                     } else {
                         // no worker is assigned to this proof
-                        debug!("proof {proof_id} was not assigned to a worker");
+                        debug!("proof {request_id} was not assigned to a worker");
                         // otherwise, the registry doesn't have any worker assigned to this proof
                         return Ok(None);
                     }
@@ -108,7 +106,7 @@ impl WorkerRegistryClient {
                 // Worker assigned to this proof didn't return proof status
                 Some(Err(worker_addr)) => {
                     error!(
-                        "Worker {worker_addr} assigned to proof {proof_id} didn't return proof status"
+                        "Worker {worker_addr} assigned to proof {request_id} didn't return proof status"
                     );
                     // we know a worker was working on this proof, but we didn't get a response
                     // from them
@@ -119,9 +117,9 @@ impl WorkerRegistryClient {
     }
 
     // signal that the proposer got the proof and the worker is ready to receive a new proof
-    pub async fn proof_complete(&self, proof_id: B256) -> Result<()> {
+    pub async fn proof_complete(&self, request_id: ProofRequestId) -> Result<()> {
         self.sender
-            .send(WorkerRegistryCommand::ProofComplete { proof_id })
+            .send(WorkerRegistryCommand::ProofComplete { request_id })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send command ProofComplete: {}", e))
     }
@@ -159,24 +157,23 @@ impl WorkerRegistry {
             );
             match command {
                 WorkerRegistryCommand::AssignProofRequest {
-                    proof_id,
+                    request_id,
                     ref proof_request,
-                    mock_mode,
                 } => {
-                    self.handle_assign_proof(mock_mode, proof_id, proof_request)
-                        .await;
+                    self.handle_assign_proof(request_id, proof_request).await;
                 }
                 WorkerRegistryCommand::WorkerReady { worker_addr } => {
                     self.handle_worker_ready(worker_addr).await;
                 }
-                WorkerRegistryCommand::ProofComplete { proof_id } => {
-                    self.handle_proof_complete(proof_id).await;
+                WorkerRegistryCommand::ProofComplete { request_id } => {
+                    self.handle_proof_complete(request_id).await;
                 }
                 WorkerRegistryCommand::ProofStatus {
-                    target_proof_id,
+                    target_request_id,
                     resp_sender,
                 } => {
-                    self.handle_proof_status(target_proof_id, resp_sender).await;
+                    self.handle_proof_status(target_request_id, resp_sender)
+                        .await;
                 }
                 WorkerRegistryCommand::Workers { resp_sender } => {
                     self.handle_workers(resp_sender);
@@ -209,7 +206,7 @@ impl WorkerRegistry {
             // remove them from the mapping
             if let Some(dead_worker_state) = self.workers.remove(&dead_worker_addr) {
                 info!("Removing worker {dead_worker_addr} from worker registry");
-                if let Some(dangling_proof) = dead_worker_state.current_proof_id() {
+                if let Some(dangling_proof) = dead_worker_state.current_request_id() {
                     // The dangling proof will eventually be requested for by the proposer via
                     // `proof_status` and the registry will return None, which will cause the
                     // coordinator to return `ProofStatus::lost()`, which will cause the proposer
@@ -225,9 +222,8 @@ impl WorkerRegistry {
 
     async fn handle_assign_proof(
         &mut self,
-        mock_mode: bool,
-        proof_id: B256,
-        proof_request: &GenericProofRequest,
+        request_id: ProofRequestId,
+        proof_request: &ContemplantProofRequest,
     ) {
         // remove any dead workers
         self.trim_workers();
@@ -235,17 +231,17 @@ impl WorkerRegistry {
         // first check if there's already a worker working on this proof
         if let Some((worker_addr, _)) = self.workers.iter().find(|(_, worker_state)| {
             if let WorkerStatus::Busy {
-                proof_id: workers_proof_id,
+                request_id: workers_request_id,
             } = worker_state.status
             {
-                workers_proof_id == proof_id
+                workers_request_id == request_id
             } else {
                 false
             }
         }) {
             info!(
                 "Received proof request for proof {} but worker {} is already busy with it",
-                proof_id, worker_addr
+                request_id, worker_addr
             );
             // there's already a worker proving this.  We can return
             // early
@@ -261,37 +257,15 @@ impl WorkerRegistry {
                 continue;
             }
 
-            info!("Attemping to assign proof {proof_id} to worker {worker_addr}");
+            info!("Attemping to assign proof request {request_id} to worker {worker_addr}");
+
             // TODO: this blocks up things for AWHILE (entire time witnessgen is going on)
-            let worker_response = match &proof_request {
-                GenericProofRequest::Agg(agg_proof_request) => {
-                    let worker_agg_proof_request = WorkerAggProofRequest {
-                        mock_mode,
-                        proof_id,
-                        // TODO: this is an expensive clone
-                        subproofs: agg_proof_request.subproofs.clone(),
-                        head: agg_proof_request.head.clone(),
-                    };
-                    self.reqwest_client
-                        .post(format!("{}/request_agg_proof", worker_addr))
-                        .json(&worker_agg_proof_request)
-                        .send()
-                        .await
-                }
-                GenericProofRequest::Span(span_proof_request) => {
-                    let worker_span_proof_request = WorkerSpanProofRequest {
-                        mock_mode,
-                        proof_id,
-                        start: span_proof_request.start,
-                        end: span_proof_request.end,
-                    };
-                    self.reqwest_client
-                        .post(format!("{}/request_span_proof", worker_addr))
-                        .json(&worker_span_proof_request)
-                        .send()
-                        .await
-                }
-            };
+            let worker_response = self
+                .reqwest_client
+                .post(format!("{}/request_proof", worker_addr))
+                .json(&proof_request)
+                .send()
+                .await;
 
             let response = match worker_response {
                 Ok(response) => response,
@@ -301,7 +275,7 @@ impl WorkerRegistry {
                     worker_state.add_strike();
                     error!(
                         "Failed to send request for proof {} to worker {}. Error: {}",
-                        proof_id, worker_addr, err
+                        request_id, worker_addr, err
                     );
                     // go to next loop iteration
                     continue;
@@ -311,11 +285,11 @@ impl WorkerRegistry {
             if response.status().is_success() {
                 info!(
                     "Successfully assigned proof {} to worker {}",
-                    proof_id, worker_addr
+                    request_id, worker_addr
                 );
 
                 // successfully assigned proof, can exit
-                worker_state.assigned_proof(proof_id);
+                worker_state.assigned_proof(request_id);
                 return;
             } else {
                 // TODO: could make a StrikeWorker command then make handling
@@ -323,7 +297,7 @@ impl WorkerRegistry {
                 worker_state.add_strike();
                 error!(
                     "Failed to assign proof {} to worker {}. Status code {}: {:?}",
-                    proof_id,
+                    request_id,
                     worker_addr,
                     response.status().as_u16(),
                     response.status().canonical_reason()
@@ -333,10 +307,10 @@ impl WorkerRegistry {
         // We iterated through all the workers and couldn't find an idle one who could
         // receive the request.
         //
-        // This doesn't result in deadlock because the proposer will call `/status/proof_id`
+        // This doesn't result in deadlock because the proposer will call `/status/request_id`
         // which will trigger another AssignProof request here
 
-        warn!("No workers available for proof {proof_id}");
+        warn!("No workers available for proof {request_id}");
     }
 
     async fn handle_worker_ready(&mut self, worker_addr: String) {
@@ -365,23 +339,23 @@ impl WorkerRegistry {
         }
     }
 
-    async fn handle_proof_complete(&mut self, proof_id: B256) {
+    async fn handle_proof_complete(&mut self, request_id: ProofRequestId) {
         if let Some((worker_addr, worker_state)) = self
             .workers
             .iter_mut()
-            .find(|(_, worker_state)| worker_state.current_proof_id() == Some(proof_id))
+            .find(|(_, worker_state)| worker_state.current_request_id() == Some(request_id))
         {
             // move worker from "busy" to "idle"
             debug!("Worker {} completed a proof and is now Idle.", worker_addr);
             worker_state.status = WorkerStatus::Idle;
         } else {
-            error!("Worker registry couldn't find worker who was assigned proof {proof_id}");
+            error!("Worker registry couldn't find worker who was assigned proof {request_id}");
         }
     }
 
     async fn handle_proof_status(
         &mut self,
-        target_proof_id: B256,
+        target_request_id: ProofRequestId,
         resp_sender: oneshot::Sender<Option<std::result::Result<ProofStatus, String>>>,
     ) {
         // remove any dead workers
@@ -393,12 +367,12 @@ impl WorkerRegistry {
                 .iter_mut()
                 .find(|(_, worker_state)| match worker_state.status {
                     WorkerStatus::Idle => false,
-                    WorkerStatus::Busy { proof_id } => proof_id == target_proof_id,
+                    WorkerStatus::Busy { request_id } => request_id == target_request_id,
                 }) {
                 Some(worker_assigned) => worker_assigned,
                 None => {
                     // This proof wasn't assigned to any worker, return none
-                    info!("No worker is assigned to proof {}", target_proof_id);
+                    info!("No worker is assigned to proof {}", target_request_id);
                     resp_sender.send(None);
                     return;
                 }
@@ -407,7 +381,7 @@ impl WorkerRegistry {
         // forward proof_status request to worker
         let worker_proof_status_request = || {
             self.reqwest_client
-                .get(format!("{}/status/{}", worker_addr, target_proof_id))
+                .get(format!("{}/status/{}", worker_addr, target_request_id))
                 .send()
         };
 
@@ -420,7 +394,7 @@ impl WorkerRegistry {
                 worker_state.add_strikes(retries);
                 error!(
                     "Failed to send request {}/status/{}. Error: {}",
-                    worker_addr, target_proof_id, err
+                    worker_addr, target_request_id, err
                 );
                 // there's a worker assigned but we can't communicate with it.  Assume
                 // it's dead & tell coordinator we lost the proof
@@ -437,7 +411,7 @@ impl WorkerRegistry {
                     worker_state.add_strike();
                     error!(
                         "Error deserializing response from {}/status{}.Error: {}",
-                        worker_addr, target_proof_id, err
+                        worker_addr, target_request_id, err
                     );
 
                     // can't deserialize request
@@ -448,7 +422,7 @@ impl WorkerRegistry {
             };
             debug!(
                 "ProofStatus of {} from worker {}: {}",
-                target_proof_id, worker_addr, proof_status
+                target_request_id, worker_addr, proof_status
             );
 
             resp_sender.send(Some(Ok(proof_status)));
@@ -459,7 +433,7 @@ impl WorkerRegistry {
             error!(
                 "Failed to get response from {}/status/{}. Status code {}: {:?}",
                 worker_addr,
-                target_proof_id,
+                target_request_id,
                 response.status().as_u16(),
                 response.status().canonical_reason()
             );
@@ -483,7 +457,6 @@ pub enum WorkerRegistryCommand {
     AssignProofRequest {
         request_id: ProofRequestId,
         proof_request: ContemplantProofRequest,
-        mock_mode: bool,
     },
     WorkerReady {
         worker_addr: String,
@@ -560,8 +533,8 @@ impl WorkerState {
         );
     }
 
-    fn assigned_proof(&mut self, proof_id: B256) {
-        self.status = WorkerStatus::Busy { proof_id };
+    fn assigned_proof(&mut self, request_id: ProofRequestId) {
+        self.status = WorkerStatus::Busy { request_id };
         // This worker has been good.  Reset their strikes
         self.strikes = 0;
     }
@@ -571,10 +544,10 @@ impl WorkerState {
     }
 
     // returns the proof it's currently working on, if any
-    fn current_proof_id(&self) -> Option<B256> {
+    fn current_request_id(&self) -> Option<ProofRequestId> {
         match self.status {
             WorkerStatus::Idle => None,
-            WorkerStatus::Busy { proof_id } => Some(proof_id),
+            WorkerStatus::Busy { request_id } => Some(request_id),
         }
     }
 }
@@ -599,7 +572,7 @@ impl Display for WorkerStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Idle => write!(f, "Idle"),
-            Self::Busy { proof_id } => write!(f, "Busy with proof {proof_id}"),
+            Self::Busy { request_id } => write!(f, "Busy with proof {request_id}"),
         }
     }
 }

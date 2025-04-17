@@ -69,3 +69,40 @@ impl ProofRouter {
         todo!()
     }
 }
+
+// helper function to send requests to workers multiple times
+pub async fn request_with_retries<F, Fut, T, E>(
+    max_retries: usize,
+    mut request_fn: F,
+) -> Result<T, anyhow::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    E: Display,
+{
+    let mut retry_num = 0;
+    let mut last_error = None;
+
+    while retry_num < max_retries {
+        let request = request_fn();
+        match request.await {
+            Ok(res) => return Ok(res),
+            Err(err) => {
+                let error_msg = format!(
+                    "Prover network request retry {}/{} failed: {}",
+                    retry_num, max_retries, err
+                );
+                error!("{}", error_msg);
+
+                last_error = Some(anyhow!("{}", err));
+            }
+        }
+        retry_num += 1;
+    }
+
+    Err(anyhow!(
+        "All {} requests to the prover network failed. Last error: {}",
+        max_retries,
+        last_error.unwrap_or_else(|| anyhow!("Unknown error"))
+    ))
+}

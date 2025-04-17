@@ -5,7 +5,7 @@ use alloy_primitives::{B256, hex};
 use tokio::time::Instant;
 
 use crate::config::Config;
-use crate::types::{AppError, ProofRequest, ProofStatus, ProofStore};
+use crate::types::{AppError, ProofStatus, ProofStore};
 use anyhow::{Context, Result, anyhow};
 use axum::{
     Json, Router,
@@ -14,7 +14,9 @@ use axum::{
     routing::{get, post},
 };
 use log::{error, info};
-use network_lib::{ProofRequestId, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
+use network_lib::{
+    ContemplantProofRequest, ProofRequestId, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo,
+};
 use reqwest::Client;
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
@@ -135,7 +137,7 @@ fn register_worker(config: Config) {
 // provided by the Hierophant
 async fn request_proof(
     State(state): State<WorkerState>,
-    Json(payload): Json<ProofRequest>,
+    Json(payload): Json<ContemplantProofRequest>,
 ) -> Result<StatusCode, AppError> {
     info!("Received proof request {payload}");
 
