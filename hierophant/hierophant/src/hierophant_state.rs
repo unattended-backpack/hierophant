@@ -41,22 +41,6 @@ impl HierophantState {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Artifact {
-    pub artifact_type: ArtifactType,
-    // serialized representation of the artifact
-    pub bytes: Bytes,
-}
-
-impl Artifact {
-    pub fn new(artifact_type: ArtifactType, bytes: Bytes) -> Self {
-        Self {
-            artifact_type,
-            bytes,
-        }
-    }
-}
-
 // newtype wrapper for keeping vk_hash bytes distinct from other Vec<u8>
 #[derive(Debug, Clone, Serialize, Eq, PartialEq, Hash)]
 pub struct VkHash(Vec<u8>);
@@ -129,11 +113,6 @@ impl ProofStatus {
             execution_status: ExecutionStatus::UnspecifiedExecutionStatus.into(),
             proof: vec![],
         }
-    }
-
-    pub fn is_lost(&self) -> bool {
-        self.fulfillment_status == FulfillmentStatus::UnspecifiedFulfillmentStatus as i32
-            && self.execution_status == ExecutionStatus::UnspecifiedExecutionStatus as i32
     }
 }
 

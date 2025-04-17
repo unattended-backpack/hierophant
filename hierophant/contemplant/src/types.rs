@@ -1,30 +1,14 @@
-use alloy_primitives::B256;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use network_lib::ProofRequestId;
 use serde::{Deserialize, Serialize};
-use sp1_sdk::{
-    SP1Stdin,
-    network::proto::network::{ExecutionStatus, ProofMode},
-};
+use sp1_sdk::network::proto::network::ExecutionStatus;
 use std::{collections::HashMap, fmt::Display};
 use tokio::sync::RwLock;
 
 pub type ProofStore = RwLock<HashMap<ProofRequestId, ProofStatus>>;
-
-/*
-pub enum ExecutionStatus {
-    UnspecifiedExecutionStatus = 0,
-    /// The request has not been executed.
-    Unexecuted = 1,
-    /// The request has been executed.
-    Executed = 2,
-    /// The request cannot be executed.
-    Unexecutable = 3,
-}
-*/
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ProofStatus {
@@ -33,13 +17,6 @@ pub struct ProofStatus {
 }
 
 impl ProofStatus {
-    pub fn unspecified() -> Self {
-        Self {
-            execution_status: ExecutionStatus::UnspecifiedExecutionStatus.into(),
-            proof: None,
-        }
-    }
-
     pub fn unexecuted() -> Self {
         Self {
             execution_status: ExecutionStatus::UnspecifiedExecutionStatus.into(),

@@ -1,21 +1,14 @@
-mod proof_cache;
 mod worker_registry;
 
 use crate::{
-    artifact_store::{self, ArtifactStoreClient, ArtifactUri},
+    artifact_store::{ArtifactStoreClient, ArtifactUri},
     hierophant_state::ProofStatus,
-    network::RequestProofRequestBody,
 };
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use log::{error, warn};
 use network_lib::{ContemplantProofRequest, ProofRequestId};
-use proof_cache::ProofCache;
-use sp1_sdk::{
-    SP1Stdin,
-    network::proto::network::{ExecutionStatus, FulfillmentStatus, ProofMode},
-};
-use std::{fmt::Display, sync::Arc};
-use tokio::{sync::Mutex, time::Instant};
+use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
+use std::fmt::Display;
 use worker_registry::WorkerRegistryClient;
 pub use worker_registry::WorkerState;
 
@@ -23,7 +16,6 @@ use crate::config::Config;
 
 #[derive(Debug, Clone)]
 pub struct ProofRouter {
-    pub proof_cache: Arc<Mutex<ProofCache>>,
     pub worker_registry_client: WorkerRegistryClient,
     pub mock_mode: bool,
 }
@@ -31,16 +23,9 @@ pub struct ProofRouter {
 impl ProofRouter {
     // TODO: Should config live at the top level or is inside here okay?
     pub fn new(config: &Config) -> Self {
-        let proof_cache = Arc::new(Mutex::new(
-            ProofCache::new(config.proof_cache_size, &config.proof_cache_directory)
-                .context("Create proof cache")
-                // This error is unrecoverable
-                .unwrap(),
-        ));
         let worker_registry_client = WorkerRegistryClient::new(config.max_worker_strikes);
 
         Self {
-            proof_cache,
             worker_registry_client,
             mock_mode: config.mock_mode,
         }
@@ -62,13 +47,7 @@ impl ProofRouter {
         // artifact_store
         artifact_store_client: ArtifactStoreClient,
     ) -> Result<()> {
-        // check if we have this proof on-disk cache, otherwise parse artifacts and send it to
-        // the prover network
-        if let Some(_) = self.proof_cache.lock().await.read_proof(&request_id) {
-            // Don't route it.  We already have this proof on-disk in the proof cache.  It will be
-            // retreived on get_proof_status
-            return Ok(());
-        };
+        // TODO: first check if we have it in artifact_store already
 
         let stdin_artifact_bytes = match artifact_store_client
             .get_artifact_bytes(stdin_uri.clone())
@@ -107,20 +86,7 @@ impl ProofRouter {
         res
     }
 
-    // TODO: what if we get this request before the proof can be assigned to a worker?
     pub async fn get_proof_status(&self, proof_request_id: ProofRequestId) -> Result<ProofStatus> {
-        // first check to see if we have it in the proof cache
-        if let Some(proof_bytes) = self.proof_cache.lock().await.read_proof(&proof_request_id) {
-            let status = ProofStatus {
-                fulfillment_status: FulfillmentStatus::Fulfilled.into(),
-                execution_status: ExecutionStatus::Executed.into(),
-                proof: proof_bytes,
-            };
-
-            return Ok(status);
-        };
-
-        // then check the prover network
         match self
             .worker_registry_client
             .proof_status(proof_request_id)

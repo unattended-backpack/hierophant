@@ -2,15 +2,16 @@ use crate::artifact_store::ArtifactUri;
 use crate::hierophant_state::{HierophantState, VkHash};
 use crate::network::prover_network_server::ProverNetwork;
 use crate::network::{
-    CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, GetNonceRequest,
-    GetNonceResponse, GetProgramRequest, GetProgramResponse, GetProofRequestStatusRequest,
-    GetProofRequestStatusResponse, Program, RequestProofRequest, RequestProofResponse,
-    RequestProofResponseBody,
+    CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, FulfillmentStatus,
+    GetNonceRequest, GetNonceResponse, GetProgramRequest, GetProgramResponse,
+    GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
+    RequestProofResponse, RequestProofResponseBody,
 };
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::{error, info};
 use network_lib::ProofRequestId;
+use sp1_sdk::network::proto::network::ExecutionStatus;
 use sp1_sdk::network::proto::{artifact::ArtifactType, network::ProofMode};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{str::FromStr, sync::Arc};
@@ -384,7 +385,33 @@ impl ProverNetwork for ProverNetworkService {
             }
         };
 
-        // TODO: try to get the proof from artifact_store first
+        // try to get the proof from artifact_store first
+        // TODO: make this a check instead of actually loading the whole proof when we do have it
+        if let Ok(Some(_)) = self
+            .state
+            .artifact_store_client
+            .get_artifact_bytes(proof_uri.clone())
+            .await
+        {
+            info!("Found proof request {request_id} in artifact store with uri {proof_uri}");
+            // TODO: do these values matter?
+            let request_tx_hash = vec![];
+            let fulfill_tx_hash = None;
+            // TODO: is this a hash of stdin?  Does that mean I have to load stdin_uri?
+            let public_values_hash = None;
+
+            let response = GetProofRequestStatusResponse {
+                fulfillment_status: FulfillmentStatus::Fulfilled.into(),
+                execution_status: ExecutionStatus::Executed.into(),
+                request_tx_hash,
+                deadline: request_proof_request_body.deadline,
+                fulfill_tx_hash,
+                proof_uri: Some(proof_uri.to_string()),
+                public_values_hash,
+            };
+
+            return Ok(Response::new(response));
+        };
 
         // Have the proof router find the proof
         let proof_status = match self.state.proof_router.get_proof_status(request_id).await {

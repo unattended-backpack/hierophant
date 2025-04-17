@@ -1,7 +1,7 @@
 mod config;
 mod types;
 
-use alloy_primitives::{B256, hex};
+use alloy_primitives::B256;
 use tokio::time::Instant;
 
 use crate::config::Config;
@@ -14,19 +14,14 @@ use axum::{
     routing::{get, post},
 };
 use log::{error, info};
-use network_lib::{
-    ContemplantProofRequest, ProofRequestId, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo,
-};
+use network_lib::{ContemplantProofRequest, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use reqwest::Client;
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
 };
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
-use tokio::{
-    sync::RwLock,
-    time::{Duration, sleep},
-};
+use tokio::sync::RwLock;
 use tower_http::limit::RequestBodyLimitLayer;
 
 #[derive(Clone)]
