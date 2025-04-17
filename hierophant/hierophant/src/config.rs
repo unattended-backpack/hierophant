@@ -14,6 +14,8 @@ pub struct Config {
     // publicly reachable address of this Hierophant for artifact uploads
     // TODO: remove, should discover this
     pub this_hierophant_ip: String,
+    // key pair used for signing messages to the client and retreiving nonces
+    pub pub_key: Address,
     // Make mock proofs instead of real proofs.  Witnessgen still happens.
     #[serde(default = "default_mock_mode")]
     pub mock_mode: bool,
