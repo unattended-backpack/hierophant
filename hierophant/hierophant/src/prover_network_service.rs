@@ -258,7 +258,8 @@ impl ProverNetwork for ProverNetworkService {
         let program_uri = match ArtifactUri::from_str(&program_uri) {
             Ok(uri) => uri,
             Err(e) => {
-                let error_msg = format!("Error parsing program_uri {program_uri} as ArtifactUri");
+                let error_msg =
+                    format!("Error parsing program_uri {program_uri} as ArtifactUri {e}");
                 error!("{error_msg}");
                 return Err(Status::invalid_argument(error_msg));
             }

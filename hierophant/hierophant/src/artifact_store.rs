@@ -1,22 +1,21 @@
 use anyhow::{Context, Result, anyhow};
 use axum::body::Bytes;
-use log::{debug, error, info, trace, warn};
-use reqwest::Client;
+use log::{error, info, warn};
 use serde::{
-    Deserialize, Deserializer, Serialize,
+    Deserialize, Deserializer,
     de::{self, Visitor},
 };
 use sp1_sdk::network::proto::artifact::ArtifactType;
 use std::{
     collections::HashSet,
-    fmt::{self, Display},
+    fmt::{self},
     fs,
     path::Path,
     str::FromStr,
 };
 use tokio::{
     sync::{mpsc, oneshot},
-    time::{Instant, sleep},
+    time::Instant,
 };
 use uuid::Uuid;
 
@@ -131,7 +130,7 @@ impl ArtifactStore {
                     uri_sender,
                 } => {
                     let artifact_uri = self.handle_create_artifact(artifact_type);
-                    uri_sender.send(artifact_uri);
+                    uri_sender.send(artifact_uri).unwrap();
                 }
                 ArtifactStoreCommand::SaveArtifact {
                     artifact_uri,
@@ -139,14 +138,14 @@ impl ArtifactStore {
                     result_sender,
                 } => {
                     let res = self.handle_save_artifact(artifact_uri, bytes);
-                    result_sender.send(res);
+                    result_sender.send(res).unwrap();
                 }
                 ArtifactStoreCommand::GetArtifactBytes {
                     artifact_uri,
                     artifact_sender,
                 } => {
                     let res = self.handle_get_artifact_bytes(artifact_uri);
-                    artifact_sender.send(res);
+                    artifact_sender.send(res).unwrap();
                 }
             };
 

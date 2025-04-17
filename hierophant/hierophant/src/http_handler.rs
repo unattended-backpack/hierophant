@@ -65,33 +65,30 @@ async fn handle_register_worker(
 
     //println!("my connection info: {:?}", addr);
 
-    println!("Worker register info: {:?}", worker_register_info);
-    // TODO: store worker address.
-    // let worker_info = WorkerInfo {
-    //     id: Uuid::new_v4().to_string(),
-    //     name: worker_registration.name,
-    //     status: WorkerStatus::Idle,
-    // };
-    //
-    //let worker = WorkerState::new(worker_registration.name, addr);
+    info!(
+        "Received worker ready check from {:?}",
+        worker_register_info
+    );
 
-    // info!("Registering worker:");
-    // info!("  Name: {}", worker.name);
-    // info!("  ID: {}", worker.id);
-    // info!("  Status: {}", worker.status);
-    // info!("  Address: {}", addr);
+    let worker_addr = format!(
+        "http://{}:{}",
+        worker_register_info.ip, worker_register_info.port
+    );
 
-    /*
-    // Store the worker info
-    state
-        .workers
-        .write()
+    match state
+        .proof_router
+        .worker_registry_client
+        .worker_ready(worker_addr.clone())
         .await
-        .insert(worker_info.id.clone(), worker_info);
-    */
-
-    // Return success response with the worker ID
-    Ok(StatusCode::OK)
+    {
+        Ok(_) => Ok(StatusCode::OK),
+        Err(e) => {
+            let error_msg =
+                format!("Error sending worker_ready command for worker {worker_addr}: {e}");
+            error!("{error_msg}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 // TODO:
