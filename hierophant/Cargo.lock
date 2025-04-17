@@ -2801,9 +2801,11 @@ dependencies = [
 name = "network-lib"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "hex",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

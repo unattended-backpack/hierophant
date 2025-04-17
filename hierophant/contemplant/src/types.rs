@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use network_lib::RequestId;
+use network_lib::ProofRequestId;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{
     SP1Stdin,
@@ -12,12 +12,12 @@ use sp1_sdk::{
 use std::{collections::HashMap, fmt::Display};
 use tokio::sync::RwLock;
 
-pub type ProofStore = RwLock<HashMap<B256, ProofStatus>>;
+pub type ProofStore = RwLock<HashMap<ProofRequestId, ProofStatus>>;
 
 // TODO: (maybe) Gas limit and cycle limit
 #[derive(Serialize, Deserialize)]
 pub struct ProofRequest {
-    pub request_id: RequestId,
+    pub request_id: ProofRequestId,
     pub elf: Vec<u8>,
     pub mock: bool,
     pub mode: ProofMode,

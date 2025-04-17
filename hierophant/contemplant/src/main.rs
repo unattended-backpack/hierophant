@@ -14,11 +14,12 @@ use axum::{
     routing::{get, post},
 };
 use log::{error, info};
-use network_lib::{REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
+use network_lib::{ProofRequestId, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use reqwest::Client;
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
 };
+use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
     sync::RwLock,
@@ -65,7 +66,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/request_proof", post(request_proof))
-        .route("/status/:proof_id", get(get_proof_status))
+        .route("/status/:request_id", get(get_proof_request_status))
         .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(102400 * 1024 * 1024))
         .with_state(worker_state);
@@ -146,7 +147,7 @@ async fn request_proof(
         .proof_store
         .write()
         .await
-        .insert(payload.proof_id, initial_status);
+        .insert(payload.request_id, initial_status);
 
     tokio::spawn(async move {
         let start_time = Instant::now();
@@ -229,29 +230,38 @@ async fn request_proof(
             .proof_store
             .write()
             .await
-            .insert(payload.proof_id, updated_proof_status);
+            .insert(payload.request_id, updated_proof_status);
     });
 
     Ok(StatusCode::OK)
 }
 
-async fn get_proof_status(
+async fn get_proof_request_status(
     State(state): State<WorkerState>,
-    Path(proof_id): Path<String>,
+    Path(request_id): Path<String>,
 ) -> Result<(StatusCode, Json<ProofStatus>), AppError> {
-    let proof_id_bytes = hex::decode(&proof_id)?;
-    let proof_id = B256::from_slice(&proof_id_bytes);
-    info!("Received proof status request: {:?}", proof_id);
+    let request_id = match B256::from_str(&request_id) {
+        Ok(r) => r.into(),
+        Err(e) => {
+            let error_msg = format!(
+                "Couldn't parse request_id {request_id} as B256 in get_proof_request_status. Error {e}"
+            );
+            error!("{error_msg}");
+            return Err(anyhow!("{error_msg}").into());
+        }
+    };
+
+    info!("Received proof status request: {:?}", request_id);
 
     let proof_store = state.proof_store.read().await;
 
-    let proof_status: ProofStatus = match proof_store.get(&proof_id) {
+    let proof_status: ProofStatus = match proof_store.get(&request_id) {
         Some(status) => {
-            info!("Proof status of {proof_id}: {}", status);
+            info!("Proof status of {request_id}: {}", status);
             status.clone()
         }
         None => {
-            error!("Proof {} not found", proof_id);
+            error!("Proof {} not found", request_id);
             ProofStatus::unexecutable()
         }
     };
