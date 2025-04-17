@@ -11,6 +11,7 @@ use alloy_primitives::{Address, B256};
 use anyhow::Context;
 use axum::body::Bytes;
 use log::debug;
+use network_lib::ProofRequestId;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::network::proto::artifact::ArtifactType;
 use std::io::Read;

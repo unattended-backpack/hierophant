@@ -14,26 +14,6 @@ use tokio::sync::RwLock;
 
 pub type ProofStore = RwLock<HashMap<ProofRequestId, ProofStatus>>;
 
-// TODO: (maybe) Gas limit and cycle limit
-#[derive(Serialize, Deserialize)]
-pub struct ProofRequest {
-    pub request_id: ProofRequestId,
-    pub elf: Vec<u8>,
-    pub mock: bool,
-    pub mode: ProofMode,
-    pub sp1_stdin: SP1Stdin,
-}
-
-impl Display for ProofRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let request_id = self.request_id;
-        let mock = self.mock;
-        let mode = self.mode.as_str_name();
-
-        write!(f, "request_id: {request_id}, mock: {mock}, mode: {mode}",)
-    }
-}
-
 /*
 pub enum ExecutionStatus {
     UnspecifiedExecutionStatus = 0,

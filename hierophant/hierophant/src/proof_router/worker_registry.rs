@@ -1,6 +1,8 @@
+use crate::hierophant_state::ProofStatus;
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
+use network_lib::{ContemplantProofRequest, ProofRequestId};
 use reqwest::Client;
 use serde::Serialize;
 use std::{
@@ -479,15 +481,15 @@ impl WorkerRegistry {
 
 pub enum WorkerRegistryCommand {
     AssignProofRequest {
-        proof_id: B256,
-        proof_request: GenericProofRequest,
+        request_id: ProofRequestId,
+        proof_request: ContemplantProofRequest,
         mock_mode: bool,
     },
     WorkerReady {
         worker_addr: String,
     },
     ProofStatus {
-        target_proof_id: B256,
+        target_request_id: ProofRequestId,
         // returns the proof_status to the calling thread
         // returns None if there is no worker assigned to this proof
         // returns Some(Err(worker_addr)) if there is worker assigned to that is communicating with
@@ -495,7 +497,7 @@ pub enum WorkerRegistryCommand {
         resp_sender: oneshot::Sender<Option<std::result::Result<ProofStatus, String>>>,
     },
     ProofComplete {
-        proof_id: B256,
+        request_id: ProofRequestId,
     },
     Workers {
         resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>,
@@ -505,26 +507,19 @@ pub enum WorkerRegistryCommand {
 impl fmt::Debug for WorkerRegistryCommand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let command = match self {
-            WorkerRegistryCommand::AssignProofRequest {
-                proof_id,
-                ref proof_request,
-                mock_mode,
-            } => {
+            WorkerRegistryCommand::AssignProofRequest { .. } => {
                 format!("AssignProofRequest")
             }
-            WorkerRegistryCommand::WorkerReady { worker_addr } => {
+            WorkerRegistryCommand::WorkerReady { .. } => {
                 format!("WorkerReady")
             }
-            WorkerRegistryCommand::ProofComplete { proof_id } => {
+            WorkerRegistryCommand::ProofComplete { .. } => {
                 format!("ProofComplete")
             }
-            WorkerRegistryCommand::ProofStatus {
-                target_proof_id,
-                resp_sender,
-            } => {
+            WorkerRegistryCommand::ProofStatus { .. } => {
                 format!("ProofStatus")
             }
-            WorkerRegistryCommand::Workers { resp_sender } => {
+            WorkerRegistryCommand::Workers { .. } => {
                 format!("Workers")
             }
         };
@@ -597,7 +592,7 @@ impl Display for WorkerState {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize)]
 pub enum WorkerStatus {
     Idle,
-    Busy { proof_id: B256 },
+    Busy { request_id: ProofRequestId },
 }
 
 impl Display for WorkerStatus {

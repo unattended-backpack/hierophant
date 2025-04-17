@@ -1,4 +1,4 @@
-use crate::hierophant_state::{HierophantState, ProofRequestId, VkHash};
+use crate::hierophant_state::{HierophantState, VkHash};
 use crate::network::prover_network_server::ProverNetwork;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, ExecutionStatus,
@@ -10,6 +10,7 @@ use crate::proof_router::worker_state::WorkerState;
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::{error, info};
+use network_lib::ProofRequestId;
 use sp1_sdk::network::proto::artifact::ArtifactType;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -226,7 +227,11 @@ impl ProverNetwork for ProverNetworkService {
         // Log the signature
         info!("Signature: 0x{}", hex::encode(&req.signature));
 
-        let request_id = ProofRequestId::new(&body);
+        let request_id = ProofRequestId::new(
+            body.vk_hash.clone(),
+            body.version.clone(),
+            body.stdin_uri.clone(),
+        );
 
         info!("Assigned proof request id {request_id}");
 

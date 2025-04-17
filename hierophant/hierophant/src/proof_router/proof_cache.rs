@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use log::{error, info};
+use network_lib::ProofRequestId;
 use std::{fs, path::Path};
-use uuid::Uuid;
 
 // If the proving server goes offline and it has completed some proofs, when it comes back up
 // it will have to re-run those exact same proofs.  Proofs can take hours so we want some degree of
@@ -22,7 +22,7 @@ pub struct ProofCache {
     // when we get a new proof, replace the proof at current_index and also look it up in
     // proof_requests and evict the address that we just replaced
     // (proof_request_id, proof_file_path_name)
-    cache_list: Vec<(Uuid, String)>,
+    cache_list: Vec<(ProofRequestId, String)>,
 }
 
 impl ProofCache {
@@ -41,7 +41,7 @@ impl ProofCache {
         let mut cache_list = Vec::with_capacity(cache_size);
         // fill with default values so we never have to check if current_cache_index is out of
         // bounds
-        cache_list.resize_with(cache_size, || (Uuid::default(), "empty".into()));
+        cache_list.resize_with(cache_size, || (ProofRequestId::default(), "empty".into()));
 
         Ok(Self {
             cache_size,
@@ -54,7 +54,7 @@ impl ProofCache {
     // Retreive a proof that we previously computed.  This can save us hours of proving time.
     // Safe to call even if we're not sure we have a proof.
     // called in get_proof_status()
-    pub async fn read_proof(&self, proof_request_id: &Uuid) -> Option<Vec<u8>> {
+    pub fn read_proof(&self, proof_request_id: &ProofRequestId) -> Option<Vec<u8>> {
         // if cache is disabled
         if self.cache_size == 0 {
             return None;
@@ -87,10 +87,10 @@ impl ProofCache {
     // writes the completed proof to file, deleting the Least Recently Completed proof that the
     // cache is aware of.
     // Takes a mutable reference, so only use this if you're sure the proof isn't already on disk
-    pub async fn write_proof(
+    pub fn write_proof(
         &mut self,
         proof_bytes: Vec<u8>,
-        proof_request_id: &Uuid,
+        proof_request_id: &ProofRequestId,
     ) -> Result<()> {
         // if cache is disabled
         if self.cache_size == 0 {
@@ -147,6 +147,9 @@ impl ProofCache {
     }
 }
 
-fn proof_request_id_to_file_path(proof_cache_directory: &str, proof_request_id: &Uuid) -> String {
+fn proof_request_id_to_file_path(
+    proof_cache_directory: &str,
+    proof_request_id: &ProofRequestId,
+) -> String {
     format!("{}/{}", proof_cache_directory, proof_request_id)
 }

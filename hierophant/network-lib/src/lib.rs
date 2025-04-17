@@ -1,6 +1,10 @@
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sp1_sdk::{
+    SP1Stdin,
+    network::proto::network::{ExecutionStatus, ProofMode},
+};
 use std::fmt::Display;
 
 pub const REGISTER_CONTEMPLANT_ENDPOINT: &str = "register_contemplant";
@@ -14,7 +18,7 @@ pub struct WorkerRegisterInfo {
 // Is deterministic on a RequestProofRequestBody using the fields
 // vk_hash, version, mode, strategy, and stdin_uri.  This way we can
 // skip execution for proofs we already have saved
-#[derive(Debug, Clone, Copy, Serialize, Eq, PartialEq, Hash, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, Serialize, Eq, PartialEq, Hash, Deserialize)]
 pub struct ProofRequestId(B256);
 
 impl ProofRequestId {
@@ -57,5 +61,25 @@ impl TryFrom<Vec<u8>> for ProofRequestId {
 impl Display for ProofRequestId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+// TODO: (maybe) Gas limit and cycle limit
+#[derive(Serialize, Deserialize)]
+pub struct ContemplantProofRequest {
+    pub request_id: ProofRequestId,
+    pub elf: Vec<u8>,
+    pub mock: bool,
+    pub mode: ProofMode,
+    pub sp1_stdin: SP1Stdin,
+}
+
+impl Display for ContemplantProofRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let request_id = self.request_id;
+        let mock = self.mock;
+        let mode = self.mode.as_str_name();
+
+        write!(f, "request_id: {request_id}, mock: {mock}, mode: {mode}",)
     }
 }
