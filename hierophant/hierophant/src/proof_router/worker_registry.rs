@@ -11,7 +11,7 @@ use std::{
 };
 use tokio::{
     sync::{mpsc, oneshot},
-    time::{Instant, sleep},
+    time::Instant,
 };
 
 #[derive(Clone, Debug)]

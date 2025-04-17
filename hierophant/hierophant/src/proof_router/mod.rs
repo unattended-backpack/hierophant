@@ -3,11 +3,12 @@ mod worker_registry;
 pub mod worker_state;
 
 use crate::hierophant_state::ProofStatus;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
+use log::{error, info};
 use network_lib::ProofRequestId;
 use proof_cache::ProofCache;
 use sp1_sdk::network::proto::network::{ExecutionStatus, FulfillmentStatus};
-use std::sync::Arc;
+use std::{fmt::Display, sync::Arc};
 use tokio::sync::Mutex;
 use worker_registry::WorkerRegistryClient;
 
