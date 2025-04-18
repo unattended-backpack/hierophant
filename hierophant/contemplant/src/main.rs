@@ -129,7 +129,7 @@ fn register_worker(config: Config) {
     });
 }
 
-// uses the CudaProver to execute proofs given the elf, ProofMode, and SP1Stdin
+// uses the CudaProver or MockProver to execute proofs given the elf, ProofMode, and SP1Stdin
 // provided by the Hierophant
 async fn request_proof(
     State(state): State<WorkerState>,
