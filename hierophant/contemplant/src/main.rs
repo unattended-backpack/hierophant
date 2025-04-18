@@ -201,6 +201,7 @@ async fn request_proof(
         let minutes = (start_time.elapsed().as_secs_f32() / 60.0).round() as u32;
 
         // Turn proof struct into bytes
+        /*
         let proof_bytes_res = proof_res.and_then(|proof| {
             if let ProofMode::Compressed = payload.mode {
                 // If it's a compressed proof, we need to serialize the entire struct with bincode.
@@ -212,6 +213,10 @@ async fn request_proof(
                 // TODO: It's unclear if we can do this for ProofMode::Core
                 Ok(proof.bytes())
             }
+        });
+        */
+        let proof_bytes_res = proof_res.and_then(|proof| {
+            bincode::serialize(&proof).map_err(|e| anyhow!("Error serializing proof {e}"))
         });
 
         // Create new proof status based on success or error
