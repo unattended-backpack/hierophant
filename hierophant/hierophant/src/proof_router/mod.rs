@@ -58,15 +58,14 @@ impl ProofRouter {
             Err(e) => return Err(anyhow!("Error getting stdin artifact {stdin_uri}: {e}")),
         };
 
-        // TODO: where does witnessgen happen????
         let sp1_stdin: SP1Stdin = bincode::deserialize(&stdin_artifact_bytes)?;
 
         // get the elf
-        let program_artifact_bytes = match artifact_store_client
+        let elf = match artifact_store_client
             .get_artifact_bytes(program_uri.clone())
             .await
         {
-            Ok(Some(bytes)) => bytes,
+            Ok(Some(bytes)) => bincode::deserialize(&bytes)?,
             Ok(None) => return Err(anyhow!("Program artifact with uri {program_uri} not found")),
             Err(e) => return Err(anyhow!("Error getting program artifact {program_uri}: {e}")),
         };
@@ -76,7 +75,7 @@ impl ProofRouter {
             mock: self.mock_mode,
             mode,
             sp1_stdin,
-            elf: program_artifact_bytes,
+            elf,
         };
 
         let res = self

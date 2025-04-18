@@ -49,20 +49,19 @@ impl ProverNetwork for ProverNetworkService {
         let maybe_program = self.state.program_store.lock().await.get(&vk_hash).cloned();
 
         match maybe_program {
-            Some(_) => {
+            Some(program) => {
                 info!("Program with vk_hash {vk_hash_hex} found");
+                // Create the response with the program
+                let response = GetProgramResponse {
+                    program: Some(program),
+                };
+                Ok(Response::new(response))
             }
             None => {
                 info!("Program with vk_hash {vk_hash_hex} not found");
+                Err(Status::not_found("program not found"))
             }
         }
-
-        // Create the response with the program
-        let response = GetProgramResponse {
-            program: maybe_program,
-        };
-
-        Ok(Response::new(response))
     }
 
     async fn get_nonce(
@@ -401,13 +400,23 @@ impl ProverNetwork for ProverNetworkService {
             // TODO: is this a hash of stdin?  Does that mean I have to load stdin_uri?
             let public_values_hash = None;
 
+            // TODO: do this in a better fashion
+            let proof_download_address = format!(
+                "http://{}:{}/{}",
+                self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
+            );
+
+            info!("Responding with proof download address {proof_download_address}");
+
             let response = GetProofRequestStatusResponse {
                 fulfillment_status: FulfillmentStatus::Fulfilled.into(),
                 execution_status: ExecutionStatus::Executed.into(),
                 request_tx_hash,
                 deadline: request_proof_request_body.deadline,
                 fulfill_tx_hash,
-                proof_uri: Some(proof_uri.to_string()),
+                // It's called proof_uri but the client is actually expecting the endpoint to hit
+                // to donwload this proof
+                proof_uri: Some(proof_download_address),
                 public_values_hash,
             };
 
@@ -459,13 +468,21 @@ impl ProverNetwork for ProverNetworkService {
         // TODO: is this a hash of stdin?  Does that mean I have to load stdin_uri?
         let public_values_hash = None;
 
+        // TODO: do this in a better fashion
+        let proof_download_address = format!(
+            "http://{}:{}/{}",
+            self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
+        );
+
+        info!("Responding with proof download address {proof_download_address}");
+
         let response = GetProofRequestStatusResponse {
             fulfillment_status: proof_status.fulfillment_status,
             execution_status: proof_status.execution_status,
             request_tx_hash,
             deadline: request_proof_request_body.deadline,
             fulfill_tx_hash,
-            proof_uri: Some(proof_uri.to_string()),
+            proof_uri: Some(proof_download_address),
             public_values_hash,
         };
 

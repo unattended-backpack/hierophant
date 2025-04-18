@@ -12,7 +12,7 @@ use axum::{
 use log::{error, info};
 use network_lib::{REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 // Structure to receive worker registration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,26 +108,28 @@ async fn contemplants(
 async fn handle_artifact_download(
     State(state): State<Arc<HierophantState>>,
     Path(uri): Path<ArtifactUri>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<Vec<u8>, StatusCode> {
     info!("\n=== Received Download Request ===");
     info!("Artifact uri {uri}");
 
-    match state
+    let bytes = match state
         .artifact_store_client
         .get_artifact_bytes(uri.clone())
         .await
     {
-        Ok(Some(bytes)) => Ok(bytes),
+        Ok(Some(bytes)) => bytes,
         Ok(None) => {
             let error_msg = format!("Artifact {uri} not found");
             error!("{error_msg}");
-            Err(StatusCode::BAD_REQUEST)
+            return Err(StatusCode::BAD_REQUEST);
         }
         Err(e) => {
             error!("{e}");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
-    }
+    };
+
+    Ok(bytes)
 }
 
 // Handler for artifact uploads

@@ -93,8 +93,6 @@ struct ArtifactStore {
     artifact_directory: String,
     // uris that can be uploaded
     upload_uris: HashSet<ArtifactUri>,
-    // set of uris that we have on-disk already
-    on_disk_uris: HashSet<ArtifactUri>,
 }
 
 impl ArtifactStore {
@@ -116,14 +114,13 @@ impl ArtifactStore {
             receiver,
             artifact_directory: artifact_directory.to_string(),
             upload_uris: HashSet::new(),
-            on_disk_uris: HashSet::new(),
         }
     }
 
     async fn background_event_loop(mut self) {
         while let Some(command) = self.receiver.recv().await {
             let start = Instant::now();
-            let command_string = format!("{:?}", command);
+            let command_string = format!("{}", command);
             match command {
                 ArtifactStoreCommand::CreateArtifact {
                     artifact_type,
@@ -167,12 +164,6 @@ impl ArtifactStore {
     }
 
     fn handle_save_artifact(&mut self, artifact_uri: ArtifactUri, bytes: Bytes) -> Result<()> {
-        // skip if artifact already exists
-        if self.on_disk_uris.contains(&artifact_uri) {
-            info!("Artifact {artifact_uri} requested to be saved but it already exists on-disk");
-            return Ok(());
-        }
-
         // make sure the uri is listed as a valid upload
         if let None = self.upload_uris.get(&artifact_uri) {
             let error_msg = format!("artifact uri {artifact_uri} is not a registered upload uri");
@@ -180,25 +171,23 @@ impl ArtifactStore {
             return Err(anyhow!("{error_msg}"));
         }
 
+        let artifact_path = artifact_uri.file_path(&self.artifact_directory);
+        let path = Path::new(&artifact_path);
+
+        // check to see if this artifact already exists on-disk
+        if path.exists() {
+            warn!("Artifact {artifact_path} already exists on-disk");
+            return Ok(());
+        }
+
         info!(
             "Writing artifact {} to disk.  Num bytes: {}",
             artifact_uri,
             bytes.len()
         );
-        let artifact_path = artifact_uri.file_path(&self.artifact_directory);
-        let path = Path::new(&artifact_path);
-
-        // error if the artifact at this uri already exists
-        if path.exists() {
-            let error_msg = format!("Artifact {artifact_path} already exists");
-            error!("{error_msg}");
-            return Err(anyhow!("{error_msg}"));
-        }
-
         // write artifact to disk
-        fs::write(path, bytes).context(format!("Write artifact to file {artifact_path}"))?;
-
-        self.on_disk_uris.insert(artifact_uri);
+        fs::write(path, bytes.to_vec())
+            .context(format!("Write artifact to file {artifact_path}"))?;
 
         info!("Artifact written to {artifact_path}");
 
@@ -237,6 +226,24 @@ enum ArtifactStoreCommand {
     },
 }
 
+impl fmt::Display for ArtifactStoreCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let display = match self {
+            Self::CreateArtifact { artifact_type, .. } => {
+                format!("CreateArtifact {}", artifact_type.as_str_name())
+            }
+            Self::SaveArtifact { artifact_uri, .. } => {
+                format!("SaveArtifact {}", artifact_uri)
+            }
+            Self::GetArtifactBytes { artifact_uri, .. } => {
+                format!("GetArtifactBytes {}", artifact_uri)
+            }
+        };
+
+        write!(f, "{display}",)
+    }
+}
+
 // artifact_uri is {artifact_type}-{artifact_uuid}
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ArtifactUri {
@@ -260,7 +267,7 @@ impl ArtifactUri {
 // {artifact_type}-{artifact_uuid}
 impl fmt::Display for ArtifactUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}-{}", self.artifact_type.as_str_name(), self.id)
+        write!(f, "{}_{}", self.artifact_type.as_str_name(), self.id)
     }
 }
 
@@ -280,8 +287,8 @@ impl FromStr for ArtifactUri {
     type Err = ParseArtifactUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Split the string by '-'
-        let parts: Vec<&str> = s.split('-').collect();
+        // Split the string by '_'
+        let parts: Vec<&str> = s.split('_').collect();
 
         // Check if we have exactly 2 parts
         if parts.len() != 2 {
