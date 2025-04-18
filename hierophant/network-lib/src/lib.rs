@@ -1,6 +1,7 @@
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sp1_sdk::network::proto::network::ExecutionStatus;
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use std::fmt::Display;
 
@@ -85,5 +86,53 @@ impl Display for ContemplantProofRequest {
             f,
             "ProofRequest request_id: {request_id}, mock: {mock}, mode: {mode}",
         )
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ContemplantProofStatus {
+    pub execution_status: i32,
+    pub proof: Option<Vec<u8>>,
+}
+
+impl ContemplantProofStatus {
+    pub fn unexecuted() -> Self {
+        Self {
+            execution_status: ExecutionStatus::UnspecifiedExecutionStatus.into(),
+            proof: None,
+        }
+    }
+
+    pub fn executed(proof_bytes: Vec<u8>) -> Self {
+        Self {
+            execution_status: ExecutionStatus::Executed.into(),
+            proof: Some(proof_bytes),
+        }
+    }
+
+    pub fn unexecutable() -> Self {
+        Self {
+            execution_status: ExecutionStatus::Unexecutable.into(),
+            proof: None,
+        }
+    }
+}
+
+impl Display for ContemplantProofStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let execution_status = match self.execution_status {
+            0 => "UnspecifiedExecutionStatus",
+            1 => "Unexecuted",
+            2 => "Executed",
+            3 => "Unexecutable",
+            _ => "Display Error: Unknown execution execution status",
+        };
+
+        let proof = match self.proof {
+            Some(_) => "some",
+            None => "none",
+        };
+
+        write!(f, "ExecutionStatus: {}, Proof: {}", execution_status, proof)
     }
 }

@@ -1,8 +1,9 @@
 use crate::hierophant_state::ProofStatus;
+use crate::network::{ExecutionStatus, FulfillmentStatus, Program, RequestProofRequestBody};
 use crate::proof_router::request_with_retries;
 use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
-use network_lib::{ContemplantProofRequest, ProofRequestId};
+use network_lib::{ContemplantProofRequest, ContemplantProofStatus, ProofRequestId};
 use reqwest::Client;
 use serde::Serialize;
 use std::{
@@ -412,12 +413,12 @@ impl WorkerRegistry {
         };
 
         if response.status().is_success() {
-            let proof_status: ProofStatus = match response.json().await {
+            let contemplant_proof_status: ContemplantProofStatus = match response.json().await {
                 Ok(proof_status) => proof_status,
                 Err(err) => {
                     worker_state.add_strike();
                     error!(
-                        "Error deserializing response from {}/status{}.Error: {}",
+                        "Error deserializing response from {}/status/{}.Error: {}",
                         worker_addr, target_request_id, err
                     );
 
@@ -429,8 +430,22 @@ impl WorkerRegistry {
             };
             debug!(
                 "ProofStatus of {} from worker {}: {}",
-                target_request_id, worker_addr, proof_status
+                target_request_id, worker_addr, contemplant_proof_status
             );
+
+            // TODO: implement From<ContemplantProofStatus> for ProofStatus
+            let proof_status = match contemplant_proof_status.proof {
+                Some(proof) => ProofStatus {
+                    fulfillment_status: FulfillmentStatus::Fulfilled.into(),
+                    execution_status: ExecutionStatus::Executed.into(),
+                    proof,
+                },
+                None => ProofStatus {
+                    fulfillment_status: FulfillmentStatus::Assigned.into(),
+                    execution_status: ExecutionStatus::Unexecuted.into(),
+                    proof: Vec::new(),
+                },
+            };
 
             resp_sender.send(Some(Ok(proof_status))).unwrap();
         } else {
