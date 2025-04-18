@@ -400,13 +400,22 @@ impl ProverNetwork for ProverNetworkService {
             // TODO: is this a hash of stdin?  Does that mean I have to load stdin_uri?
             let public_values_hash = None;
 
+            let proof_download_address = format!(
+                "http://{}:{}/{}",
+                self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
+            );
+
+            info!("Responding with proof download address {proof_download_address}");
+
             let response = GetProofRequestStatusResponse {
                 fulfillment_status: FulfillmentStatus::Fulfilled.into(),
                 execution_status: ExecutionStatus::Executed.into(),
                 request_tx_hash,
                 deadline: request_proof_request_body.deadline,
                 fulfill_tx_hash,
-                proof_uri: Some(proof_uri.to_string()),
+                // It's called proof_uri but the client is actually expecting the endpoint to hit
+                // to donwload this proof
+                proof_uri: Some(proof_download_address),
                 public_values_hash,
             };
 

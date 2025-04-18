@@ -108,26 +108,39 @@ async fn contemplants(
 async fn handle_artifact_download(
     State(state): State<Arc<HierophantState>>,
     Path(uri): Path<ArtifactUri>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<Vec<u8>, StatusCode> {
     info!("\n=== Received Download Request ===");
     info!("Artifact uri {uri}");
 
-    match state
+    let bytes = match state
         .artifact_store_client
         .get_artifact_bytes(uri.clone())
         .await
     {
-        Ok(Some(bytes)) => Ok(bytes),
+        Ok(Some(bytes)) => bytes,
         Ok(None) => {
             let error_msg = format!("Artifact {uri} not found");
             error!("{error_msg}");
-            Err(StatusCode::BAD_REQUEST)
+            return Err(StatusCode::BAD_REQUEST);
         }
         Err(e) => {
             error!("{e}");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
-    }
+    };
+
+    // sp1-sdk client uses bincode::deserialize on the bytes it receives, so we have to serialize
+    // TODO: serialize when we get the proof in the first place
+    let bytes = match bincode::serialize(&bytes) {
+        Ok(b) => b,
+        Err(e) => {
+            let error_msg = format!("error serializing proof {uri} bytes {e}");
+            error!("{error_msg}");
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    Ok(bytes)
 }
 
 // Handler for artifact uploads
