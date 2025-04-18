@@ -15,8 +15,8 @@ pub mod artifact {
 use crate::config::Config;
 use crate::hierophant_state::HierophantState;
 use anyhow::Context;
-use artifact::create_artifact_server::CreateArtifactServer;
-use create_artifact_service::CreateArtifactService;
+use artifact::artifact_store_server::ArtifactStoreServer;
+use create_artifact_service::ArtifactStoreService;
 use log::{error, info};
 use network::prover_network_server::ProverNetworkServer;
 use prover_network_service::ProverNetworkService;
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create the gRPC services with access to shared state.
     let prover_service = ProverNetworkService::new(hierophant_state.clone());
-    let artifact_service = CreateArtifactService::new(hierophant_state.clone());
+    let artifact_service = ArtifactStoreService::new(hierophant_state.clone());
 
     // Run the gRPC server
     // Then modify your server setup
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             prover_service,
             interceptor.clone(),
         ))
-        .add_service(CreateArtifactServer::with_interceptor(
+        .add_service(ArtifactStoreServer::with_interceptor(
             artifact_service,
             interceptor,
         ))

@@ -1,10 +1,10 @@
 syntax = "proto3";
 package artifact;
 
-// The CreateArtifact service definition
-service CreateArtifact {
+// The ArtifactStore service definition
+service ArtifactStore {
   // Creates an artifact that can be used for proof requests
-  rpc CreateArtifact (CreateArtifactRequest) returns (CreateArtifactResponse);
+  rpc ArtifactStore (CreateArtifactRequest) returns (CreateArtifactResponse);
 }
 
 // Types of artifacts

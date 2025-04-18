@@ -1,4 +1,4 @@
-use crate::artifact::create_artifact_server::CreateArtifact;
+use crate::artifact::artifact_store_server::ArtifactStore;
 use crate::artifact::{CreateArtifactRequest, CreateArtifactResponse};
 use crate::hierophant_state::HierophantState;
 use log::{error, info};
@@ -8,19 +8,19 @@ use tonic::{Request, Response, Status};
 
 // Our CreateArtifact service implementation
 #[derive(Debug)]
-pub struct CreateArtifactService {
+pub struct ArtifactStoreService {
     state: Arc<HierophantState>,
 }
 
-impl CreateArtifactService {
+impl ArtifactStoreService {
     pub fn new(state: Arc<HierophantState>) -> Self {
         Self { state }
     }
 }
 
 #[tonic::async_trait]
-impl CreateArtifact for CreateArtifactService {
-    async fn create_artifact(
+impl ArtifactStore for ArtifactStoreService {
+    async fn artifact_store(
         &self,
         request: Request<CreateArtifactRequest>,
     ) -> Result<Response<CreateArtifactResponse>, Status> {
