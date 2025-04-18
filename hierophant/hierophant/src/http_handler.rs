@@ -12,7 +12,7 @@ use axum::{
 use log::{error, info};
 use network_lib::{REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 // Structure to receive worker registration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

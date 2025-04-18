@@ -260,7 +260,7 @@ impl ArtifactUri {
 // {artifact_type}-{artifact_uuid}
 impl fmt::Display for ArtifactUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}-{}", self.artifact_type.as_str_name(), self.id)
+        write!(f, "{}_{}", self.artifact_type.as_str_name(), self.id)
     }
 }
 
@@ -280,8 +280,8 @@ impl FromStr for ArtifactUri {
     type Err = ParseArtifactUriError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Split the string by '-'
-        let parts: Vec<&str> = s.split('-').collect();
+        // Split the string by '_'
+        let parts: Vec<&str> = s.split('_').collect();
 
         // Check if we have exactly 2 parts
         if parts.len() != 2 {
