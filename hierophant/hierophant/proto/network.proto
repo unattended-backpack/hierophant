@@ -43,11 +43,10 @@ enum FulfillmentStrategy {
 // Fulfillment status
 enum FulfillmentStatus {
   UNSPECIFIED_FULFILLMENT_STATUS = 0;
-  PENDING = 1;     // Proof request is pending
+  REQUESTED = 1;
   ASSIGNED = 2;    // Proof request is assigned to a prover
   FULFILLED = 3;   // Proof has been generated
-  FAILED = 4;      // Proof generation failed
-  CANCELLED = 5;   // Proof request was cancelled
+  UNFULFILLABLE = 4;
 }
 
 // Execution status

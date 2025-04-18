@@ -1,5 +1,5 @@
 use crate::artifact_store::ArtifactUri;
-use crate::hierophant_state::{HierophantState, VkHash};
+use crate::hierophant_state::{HierophantState, ProofStatus, VkHash};
 use crate::network::prover_network_server::ProverNetwork;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, FulfillmentStatus,
@@ -9,7 +9,7 @@ use crate::network::{
 };
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
-use log::{error, info};
+use log::{error, info, warn};
 use network_lib::ProofRequestId;
 use sp1_sdk::network::proto::network::ExecutionStatus;
 use sp1_sdk::network::proto::{artifact::ArtifactType, network::ProofMode};
@@ -359,8 +359,19 @@ impl ProverNetwork for ProverNetworkService {
                     "Error parsing request_id 0x{} as ProofRequestId (u64): {e}",
                     hex::encode(&req.request_id)
                 );
-                error!("{error_msg}");
-                return Err(Status::not_found(error_msg));
+                warn!("{error_msg}");
+                let proof_status = ProofStatus::lost();
+                let response = GetProofRequestStatusResponse {
+                    fulfillment_status: proof_status.fulfillment_status,
+                    execution_status: proof_status.execution_status,
+                    request_tx_hash: vec![],
+                    deadline: 0,
+                    fulfill_tx_hash: None,
+                    proof_uri: None,
+                    public_values_hash: None,
+                };
+
+                return Ok(Response::new(response));
             }
         };
 
@@ -380,8 +391,19 @@ impl ProverNetwork for ProverNetworkService {
                 let error_msg = format!(
                     "Proof request {request_id} not found in proof_requests mapping.  This proof might not have been requested yet."
                 );
-                error!("{error_msg}");
-                return Err(Status::not_found(error_msg));
+                warn!("{error_msg}");
+                let proof_status = ProofStatus::lost();
+                let response = GetProofRequestStatusResponse {
+                    fulfillment_status: proof_status.fulfillment_status,
+                    execution_status: proof_status.execution_status,
+                    request_tx_hash: vec![],
+                    deadline: 0,
+                    fulfill_tx_hash: None,
+                    proof_uri: None,
+                    public_values_hash: None,
+                };
+
+                return Ok(Response::new(response));
             }
         };
 

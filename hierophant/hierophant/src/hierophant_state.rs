@@ -108,8 +108,8 @@ pub struct ProofStatus {
 impl ProofStatus {
     pub fn lost() -> Self {
         Self {
-            fulfillment_status: FulfillmentStatus::UnspecifiedFulfillmentStatus.into(),
-            execution_status: ExecutionStatus::UnspecifiedExecutionStatus.into(),
+            fulfillment_status: FulfillmentStatus::Unfulfillable.into(),
+            execution_status: ExecutionStatus::Unexecutable.into(),
             proof: vec![],
         }
     }
