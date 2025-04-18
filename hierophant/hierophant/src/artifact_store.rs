@@ -123,7 +123,7 @@ impl ArtifactStore {
     async fn background_event_loop(mut self) {
         while let Some(command) = self.receiver.recv().await {
             let start = Instant::now();
-            let command_string = format!("{:?}", command);
+            let command_string = format!("{}", command);
             match command {
                 ArtifactStoreCommand::CreateArtifact {
                     artifact_type,
@@ -235,6 +235,24 @@ enum ArtifactStoreCommand {
         artifact_uri: ArtifactUri,
         artifact_sender: oneshot::Sender<Result<Option<Vec<u8>>>>,
     },
+}
+
+impl fmt::Display for ArtifactStoreCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let display = match self {
+            Self::CreateArtifact { artifact_type, .. } => {
+                format!("CreateArtifact {}", artifact_type.as_str_name())
+            }
+            Self::SaveArtifact { artifact_uri, .. } => {
+                format!("SaveArtifact {}", artifact_uri)
+            }
+            Self::GetArtifactBytes { artifact_uri, .. } => {
+                format!("GetArtifactBytes {}", artifact_uri)
+            }
+        };
+
+        write!(f, "{display}",)
+    }
 }
 
 // artifact_uri is {artifact_type}-{artifact_uuid}

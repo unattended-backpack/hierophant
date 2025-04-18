@@ -81,6 +81,9 @@ impl Display for ContemplantProofRequest {
         let mock = self.mock;
         let mode = self.mode.as_str_name();
 
-        write!(f, "request_id: {request_id}, mock: {mock}, mode: {mode}",)
+        write!(
+            f,
+            "ProofRequest request_id: {request_id}, mock: {mock}, mode: {mode}",
+        )
     }
 }
