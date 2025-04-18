@@ -4,7 +4,7 @@ package artifact;
 // The ArtifactStore service definition
 service ArtifactStore {
   // Creates an artifact that can be used for proof requests
-  rpc ArtifactStore (CreateArtifactRequest) returns (CreateArtifactResponse);
+  rpc CreateArtifact (CreateArtifactRequest) returns (CreateArtifactResponse);
 }
 
 // Types of artifacts

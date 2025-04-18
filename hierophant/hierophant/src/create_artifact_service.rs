@@ -20,7 +20,7 @@ impl ArtifactStoreService {
 
 #[tonic::async_trait]
 impl ArtifactStore for ArtifactStoreService {
-    async fn artifact_store(
+    async fn create_artifact(
         &self,
         request: Request<CreateArtifactRequest>,
     ) -> Result<Response<CreateArtifactResponse>, Status> {
