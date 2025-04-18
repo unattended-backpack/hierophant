@@ -129,18 +129,6 @@ async fn handle_artifact_download(
         }
     };
 
-    // sp1-sdk client uses bincode::deserialize on the bytes it receives, so we have to serialize
-    // TODO: serialize when we get the proof in the first place
-    // TODO: allow for downloading more than proof artifacts
-    let bytes = match bincode::serialize(&bytes) {
-        Ok(b) => b,
-        Err(e) => {
-            let error_msg = format!("error serializing proof {uri} bytes {e}");
-            error!("{error_msg}");
-            return Err(StatusCode::BAD_REQUEST);
-        }
-    };
-
     Ok(bytes)
 }
 
