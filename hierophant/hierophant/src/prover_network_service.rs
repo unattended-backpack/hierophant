@@ -400,6 +400,7 @@ impl ProverNetwork for ProverNetworkService {
             // TODO: is this a hash of stdin?  Does that mean I have to load stdin_uri?
             let public_values_hash = None;
 
+            // TODO: do this in a better fashion
             let proof_download_address = format!(
                 "http://{}:{}/{}",
                 self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
@@ -467,13 +468,21 @@ impl ProverNetwork for ProverNetworkService {
         // TODO: is this a hash of stdin?  Does that mean I have to load stdin_uri?
         let public_values_hash = None;
 
+        // TODO: do this in a better fashion
+        let proof_download_address = format!(
+            "http://{}:{}/{}",
+            self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
+        );
+
+        info!("Responding with proof download address {proof_download_address}");
+
         let response = GetProofRequestStatusResponse {
             fulfillment_status: proof_status.fulfillment_status,
             execution_status: proof_status.execution_status,
             request_tx_hash,
             deadline: request_proof_request_body.deadline,
             fulfill_tx_hash,
-            proof_uri: Some(proof_uri.to_string()),
+            proof_uri: Some(proof_download_address),
             public_values_hash,
         };
 
