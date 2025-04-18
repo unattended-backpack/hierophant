@@ -69,7 +69,6 @@ async fn main() -> Result<()> {
         .route("/request_proof", post(request_proof))
         .route("/status/:request_id", get(get_proof_request_status))
         .layer(DefaultBodyLimit::disable())
-        .layer(RequestBodyLimitLayer::new(102400 * 1024 * 1024))
         .with_state(worker_state);
 
     let port = config.port.to_string();

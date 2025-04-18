@@ -92,6 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap(),
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
+        .layer(DefaultBodyLimit::disable())
         .await
         .context("Axum serve on {http_addr}")
         .unwrap();
