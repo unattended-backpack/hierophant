@@ -3,6 +3,7 @@ mod types;
 
 use alloy_primitives::B256;
 use tokio::time::Instant;
+use types::ProofFromNetwork;
 
 use crate::config::Config;
 use crate::types::{AppError, ProofStore};
@@ -215,8 +216,10 @@ async fn request_proof(
             }
         });
         */
+
         let proof_bytes_res = proof_res.and_then(|proof| {
-            bincode::serialize(&proof).map_err(|e| anyhow!("Error serializing proof {e}"))
+            let network_proof: ProofFromNetwork = proof.into();
+            bincode::serialize(&network_proof).map_err(|e| anyhow!("Error serializing proof {e}"))
         });
 
         // Create new proof status based on success or error
