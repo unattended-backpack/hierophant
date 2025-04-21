@@ -1,9 +1,10 @@
 use crate::hierophant_state::ProofStatus;
 use crate::network::{ExecutionStatus, FulfillmentStatus, Program, RequestProofRequestBody};
 use crate::proof_router::request_with_retries;
+use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
-use network_lib::{ContemplantProofRequest, ContemplantProofStatus, ProofRequestId};
+use network_lib::{ContemplantProofRequest, ContemplantProofStatus};
 use reqwest::Client;
 use serde::Serialize;
 use std::{
@@ -54,7 +55,7 @@ impl WorkerRegistryClient {
 
     pub async fn assign_proof_request(
         &self,
-        request_id: ProofRequestId,
+        request_id: B256,
         proof_request: ContemplantProofRequest,
     ) -> Result<()> {
         self.sender
@@ -68,7 +69,7 @@ impl WorkerRegistryClient {
 
     // run until we get None (no worker has this proof) or Some(Ok(ProofStatus)).
     // Each run it potentially trims naughty workers
-    pub async fn proof_status(&self, request_id: ProofRequestId) -> Result<Option<ProofStatus>> {
+    pub async fn proof_status(&self, request_id: B256) -> Result<Option<ProofStatus>> {
         let mut a_worker_is_assigned = false;
         loop {
             let (resp_sender, receiver) = oneshot::channel();
@@ -117,7 +118,7 @@ impl WorkerRegistryClient {
     }
 
     // signal that the proposer got the proof and the worker is ready to receive a new proof
-    pub async fn proof_complete(&self, request_id: ProofRequestId) -> Result<()> {
+    pub async fn proof_complete(&self, request_id: B256) -> Result<()> {
         self.sender
             .send(WorkerRegistryCommand::ProofComplete { request_id })
             .await
@@ -219,7 +220,7 @@ impl WorkerRegistry {
 
     async fn handle_assign_proof(
         &mut self,
-        request_id: ProofRequestId,
+        request_id: B256,
         proof_request: &ContemplantProofRequest,
     ) {
         // remove any dead workers
@@ -336,7 +337,7 @@ impl WorkerRegistry {
         }
     }
 
-    async fn handle_proof_complete(&mut self, request_id: ProofRequestId) {
+    async fn handle_proof_complete(&mut self, request_id: B256) {
         if let Some((worker_addr, worker_state)) = self
             .workers
             .iter_mut()
@@ -363,7 +364,7 @@ impl WorkerRegistry {
 
     async fn handle_proof_status(
         &mut self,
-        target_request_id: ProofRequestId,
+        target_request_id: B256,
         resp_sender: oneshot::Sender<Option<std::result::Result<ProofStatus, String>>>,
     ) {
         // remove any dead workers
@@ -477,14 +478,14 @@ impl WorkerRegistry {
 
 pub enum WorkerRegistryCommand {
     AssignProofRequest {
-        request_id: ProofRequestId,
+        request_id: B256,
         proof_request: ContemplantProofRequest,
     },
     WorkerReady {
         worker_addr: String,
     },
     ProofStatus {
-        target_request_id: ProofRequestId,
+        target_request_id: B256,
         // returns the proof_status to the calling thread
         // returns None if there is no worker assigned to this proof
         // returns Some(Err(worker_addr)) if there is worker assigned to that is communicating with
@@ -492,7 +493,7 @@ pub enum WorkerRegistryCommand {
         resp_sender: oneshot::Sender<Option<std::result::Result<ProofStatus, String>>>,
     },
     ProofComplete {
-        request_id: ProofRequestId,
+        request_id: B256,
     },
     Workers {
         resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>,
@@ -557,7 +558,7 @@ impl WorkerState {
         );
     }
 
-    fn assigned_proof(&mut self, request_id: ProofRequestId) {
+    fn assigned_proof(&mut self, request_id: B256) {
         self.status = WorkerStatus::Busy { request_id };
         // This worker has been good.  Reset their strikes
         self.strikes = 0;
@@ -568,7 +569,7 @@ impl WorkerState {
     }
 
     // returns the proof it's currently working on, if any
-    fn current_request_id(&self) -> Option<ProofRequestId> {
+    fn current_request_id(&self) -> Option<B256> {
         match self.status {
             WorkerStatus::Idle => None,
             WorkerStatus::Busy { request_id } => Some(request_id),
@@ -589,7 +590,7 @@ impl Display for WorkerState {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize)]
 pub enum WorkerStatus {
     Idle,
-    Busy { request_id: ProofRequestId },
+    Busy { request_id: B256 },
 }
 
 impl Display for WorkerStatus {

@@ -249,7 +249,7 @@ async fn get_proof_request_status(
     Path(request_id): Path<String>,
 ) -> Result<Json<ContemplantProofStatus>, AppError> {
     let request_id = match B256::from_str(&request_id) {
-        Ok(r) => r.into(),
+        Ok(r) => r,
         Err(e) => {
             let error_msg = format!(
                 "Couldn't parse request_id {request_id} as B256 in get_proof_request_status. Error {e}"

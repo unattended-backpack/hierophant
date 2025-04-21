@@ -10,7 +10,6 @@ use crate::network::{
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::{error, info, warn};
-use network_lib::ProofRequestId;
 use sp1_sdk::network::proto::network::ExecutionStatus;
 use sp1_sdk::network::proto::{artifact::ArtifactType, network::ProofMode};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -231,12 +230,7 @@ impl ProverNetwork for ProverNetworkService {
         // Log the signature
         info!("Signature: 0x{}", hex::encode(&req.signature));
 
-        let request_id = ProofRequestId::new(
-            body.vk_hash.clone(),
-            body.version.clone(),
-            body.stdin_uri.clone(),
-            body.mode,
-        );
+        let request_id = B256::random();
 
         info!("Assigned proof request id {request_id}");
 
@@ -337,7 +331,7 @@ impl ProverNetwork for ProverNetworkService {
         let response = RequestProofResponse {
             tx_hash,
             body: Some(RequestProofResponseBody {
-                request_id: request_id.into(),
+                request_id: request_id.to_vec(),
             }),
         };
 
@@ -358,10 +352,10 @@ impl ProverNetwork for ProverNetworkService {
         info!("\n=== get_proof_request_status called ===");
         let req = request.into_inner();
         let request_id = match req.request_id.clone().try_into() {
-            Ok(id) => id,
-            Err(e) => {
+            Ok(id) => B256::new(id),
+            Err(_) => {
                 let error_msg = format!(
-                    "Error parsing request_id 0x{} as ProofRequestId (u64): {e}",
+                    "Error parsing request_id 0x{} as B256.",
                     hex::encode(&req.request_id)
                 );
                 warn!("{error_msg}");

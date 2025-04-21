@@ -4,9 +4,10 @@ use crate::{
     artifact_store::{ArtifactStoreClient, ArtifactUri},
     hierophant_state::ProofStatus,
 };
+use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{error, warn};
-use network_lib::{ContemplantProofRequest, ProofRequestId};
+use network_lib::ContemplantProofRequest;
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use std::fmt::Display;
 use worker_registry::WorkerRegistryClient;
@@ -36,7 +37,7 @@ impl ProofRouter {
     // returns a proof request id
     pub async fn route_proof(
         &self,
-        request_id: ProofRequestId,
+        request_id: B256,
         // uri of the ELF previously stored
         program_uri: ArtifactUri,
         // uri of the stdin previously stored
@@ -85,7 +86,7 @@ impl ProofRouter {
         res
     }
 
-    pub async fn get_proof_status(&self, proof_request_id: ProofRequestId) -> Result<ProofStatus> {
+    pub async fn get_proof_status(&self, proof_request_id: B256) -> Result<ProofStatus> {
         match self
             .worker_registry_client
             .proof_status(proof_request_id)
