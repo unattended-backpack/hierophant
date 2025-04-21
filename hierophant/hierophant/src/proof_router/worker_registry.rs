@@ -1,11 +1,13 @@
 use crate::hierophant_state::ProofStatus;
 use crate::network::{ExecutionStatus, FulfillmentStatus, Program, RequestProofRequestBody};
 use crate::proof_router::request_with_retries;
+use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
-use network_lib::{ContemplantProofRequest, ContemplantProofStatus, ProofRequestId};
+use network_lib::{ContemplantProofRequest, ContemplantProofStatus};
 use reqwest::Client;
 use serde::Serialize;
+use sp1_sdk::network::proto::network::ProofMode;
 use std::{
     collections::HashMap,
     fmt::{self, Display},
@@ -52,23 +54,16 @@ impl WorkerRegistryClient {
             .map_err(|e| anyhow::anyhow!("Failed to send command WorkerReady: {}", e))
     }
 
-    pub async fn assign_proof_request(
-        &self,
-        request_id: ProofRequestId,
-        proof_request: ContemplantProofRequest,
-    ) -> Result<()> {
+    pub async fn assign_proof_request(&self, proof_request: ContemplantProofRequest) -> Result<()> {
         self.sender
-            .send(WorkerRegistryCommand::AssignProofRequest {
-                request_id,
-                proof_request,
-            })
+            .send(WorkerRegistryCommand::AssignProofRequest { proof_request })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send command AssignProofRequest: {}", e))
     }
 
     // run until we get None (no worker has this proof) or Some(Ok(ProofStatus)).
     // Each run it potentially trims naughty workers
-    pub async fn proof_status(&self, request_id: ProofRequestId) -> Result<Option<ProofStatus>> {
+    pub async fn proof_status(&self, request_id: B256) -> Result<Option<ProofStatus>> {
         let mut a_worker_is_assigned = false;
         loop {
             let (resp_sender, receiver) = oneshot::channel();
@@ -117,7 +112,7 @@ impl WorkerRegistryClient {
     }
 
     // signal that the proposer got the proof and the worker is ready to receive a new proof
-    pub async fn proof_complete(&self, request_id: ProofRequestId) -> Result<()> {
+    pub async fn proof_complete(&self, request_id: B256) -> Result<()> {
         self.sender
             .send(WorkerRegistryCommand::ProofComplete { request_id })
             .await
@@ -153,11 +148,8 @@ impl WorkerRegistry {
                 self.receiver.len()
             );
             match command {
-                WorkerRegistryCommand::AssignProofRequest {
-                    request_id,
-                    ref proof_request,
-                } => {
-                    self.handle_assign_proof(request_id, proof_request).await;
+                WorkerRegistryCommand::AssignProofRequest { ref proof_request } => {
+                    self.handle_assign_proof(proof_request).await;
                 }
                 WorkerRegistryCommand::WorkerReady { worker_addr } => {
                     self.handle_worker_ready(worker_addr).await;
@@ -177,11 +169,15 @@ impl WorkerRegistry {
                 }
             };
 
-            info!(
-                "Took {} seconds to process worker_registry command {:?}",
-                start.elapsed().as_secs_f64(),
-                command_string
-            );
+            let secs = start.elapsed().as_secs_f64();
+
+            if secs > 0.5 {
+                // TODO: remove this or send it to debug.  Just for basic benchmarking
+                info!(
+                    "Slow execution detected: took {} seconds to process worker_registry command {:?}",
+                    secs, command_string
+                );
+            }
         }
     }
 
@@ -203,32 +199,35 @@ impl WorkerRegistry {
             // remove them from the mapping
             if let Some(dead_worker_state) = self.workers.remove(&dead_worker_addr) {
                 info!("Removing worker {dead_worker_addr} from worker registry");
-                if let Some(dangling_proof) = dead_worker_state.current_request_id() {
+                if let Some((dangling_proof, dangling_proof_mode)) =
+                    dead_worker_state.current_proof()
+                {
                     // The dangling proof will eventually be requested for by the proposer via
                     // `proof_status` and the registry will return None, which will cause the
                     // coordinator to return `ProofStatus::lost()`, which will cause the proposer
                     // to re-request the proof
 
                     warn!(
-                        "Proof {dangling_proof} left incomplete as a result of killing worker {dead_worker_addr}"
+                        "{} proof {} left incomplete as a result of killing worker {} at {dead_worker_addr}",
+                        dangling_proof_mode.as_str_name(),
+                        dangling_proof,
+                        dead_worker_state.name
                     );
                 }
             }
         }
     }
 
-    async fn handle_assign_proof(
-        &mut self,
-        request_id: ProofRequestId,
-        proof_request: &ContemplantProofRequest,
-    ) {
+    async fn handle_assign_proof(&mut self, proof_request: &ContemplantProofRequest) {
         // remove any dead workers
         self.trim_workers();
+        let request_id = proof_request.request_id;
 
         // first check if there's already a worker working on this proof
         if let Some((worker_addr, _)) = self.workers.iter().find(|(_, worker_state)| {
             if let WorkerStatus::Busy {
                 request_id: workers_request_id,
+                ..
             } = worker_state.status
             {
                 workers_request_id == request_id
@@ -237,8 +236,10 @@ impl WorkerRegistry {
             }
         }) {
             info!(
-                "Received proof request for proof {} but worker {} is already busy with it",
-                request_id, worker_addr
+                "Received proof request for {} proof {} but worker {} is already busy with it",
+                proof_request.mode.as_str_name(),
+                request_id,
+                worker_addr
             );
             // there's already a worker proving this.  We can return
             // early
@@ -286,7 +287,7 @@ impl WorkerRegistry {
                 );
 
                 // successfully assigned proof, can exit
-                worker_state.assigned_proof(request_id);
+                worker_state.assigned_proof(request_id, proof_request.mode);
                 return;
             } else {
                 // TODO: could make a StrikeWorker command then make handling
@@ -336,14 +337,19 @@ impl WorkerRegistry {
         }
     }
 
-    async fn handle_proof_complete(&mut self, request_id: ProofRequestId) {
-        if let Some((worker_addr, worker_state)) = self
-            .workers
-            .iter_mut()
-            .find(|(_, worker_state)| worker_state.current_request_id() == Some(request_id))
+    async fn handle_proof_complete(&mut self, request_id: B256) {
+        if let Some((worker_addr, worker_state)) =
+            self.workers.iter_mut().find(|(_, worker_state)| {
+                if let Some((id, _)) = worker_state.current_proof() {
+                    id == request_id
+                } else {
+                    false
+                }
+            })
         {
             if let WorkerStatus::Busy {
                 request_id: busy_request_id,
+                ..
             } = worker_state.status
             {
                 // if they're marked as busy with the proof we just saw completed
@@ -363,7 +369,7 @@ impl WorkerRegistry {
 
     async fn handle_proof_status(
         &mut self,
-        target_request_id: ProofRequestId,
+        target_request_id: B256,
         resp_sender: oneshot::Sender<Option<std::result::Result<ProofStatus, String>>>,
     ) {
         // remove any dead workers
@@ -375,7 +381,7 @@ impl WorkerRegistry {
                 .iter_mut()
                 .find(|(_, worker_state)| match worker_state.status {
                     WorkerStatus::Idle => false,
-                    WorkerStatus::Busy { request_id } => request_id == target_request_id,
+                    WorkerStatus::Busy { request_id, .. } => request_id == target_request_id,
                 }) {
                 Some(worker_assigned) => worker_assigned,
                 None => {
@@ -385,6 +391,8 @@ impl WorkerRegistry {
                     return;
                 }
             };
+
+        info!("Worker {} is {}", worker_state.name, worker_state.status);
 
         // forward proof_status request to worker
         let worker_proof_status_request = || {
@@ -428,10 +436,6 @@ impl WorkerRegistry {
                     return;
                 }
             };
-            info!(
-                "ContemplantProofStatus of {} from worker {}: {}",
-                target_request_id, worker_addr, contemplant_proof_status
-            );
 
             // TODO: implement From<ContemplantProofStatus> for ProofStatus
             let proof_status = match contemplant_proof_status.proof {
@@ -477,14 +481,13 @@ impl WorkerRegistry {
 
 pub enum WorkerRegistryCommand {
     AssignProofRequest {
-        request_id: ProofRequestId,
         proof_request: ContemplantProofRequest,
     },
     WorkerReady {
         worker_addr: String,
     },
     ProofStatus {
-        target_request_id: ProofRequestId,
+        target_request_id: B256,
         // returns the proof_status to the calling thread
         // returns None if there is no worker assigned to this proof
         // returns Some(Err(worker_addr)) if there is worker assigned to that is communicating with
@@ -492,7 +495,7 @@ pub enum WorkerRegistryCommand {
         resp_sender: oneshot::Sender<Option<std::result::Result<ProofStatus, String>>>,
     },
     ProofComplete {
-        request_id: ProofRequestId,
+        request_id: B256,
     },
     Workers {
         resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>,
@@ -522,7 +525,7 @@ impl fmt::Debug for WorkerRegistryCommand {
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Debug, Serialize)]
+#[derive(Eq, PartialEq, Clone, Debug)]
 pub struct WorkerState {
     name: String,
     status: WorkerStatus,
@@ -557,8 +560,12 @@ impl WorkerState {
         );
     }
 
-    fn assigned_proof(&mut self, request_id: ProofRequestId) {
-        self.status = WorkerStatus::Busy { request_id };
+    fn assigned_proof(&mut self, request_id: B256, proof_mode: ProofMode) {
+        self.status = WorkerStatus::Busy {
+            request_id,
+            proof_mode,
+            start_time: Instant::now(),
+        };
         // This worker has been good.  Reset their strikes
         self.strikes = 0;
     }
@@ -568,10 +575,14 @@ impl WorkerState {
     }
 
     // returns the proof it's currently working on, if any
-    fn current_request_id(&self) -> Option<ProofRequestId> {
+    fn current_proof(&self) -> Option<(B256, ProofMode)> {
         match self.status {
             WorkerStatus::Idle => None,
-            WorkerStatus::Busy { request_id } => Some(request_id),
+            WorkerStatus::Busy {
+                request_id,
+                proof_mode,
+                ..
+            } => Some((request_id, proof_mode)),
         }
     }
 }
@@ -580,23 +591,38 @@ impl Display for WorkerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Worker {} status: {}, strikes: {}",
+            "name: {} status: {}, strikes: {}",
             self.name, self.status, self.strikes
         )
     }
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Serialize)]
+#[derive(Eq, PartialEq, Debug, Clone)]
 pub enum WorkerStatus {
     Idle,
-    Busy { request_id: ProofRequestId },
+    Busy {
+        request_id: B256,
+        proof_mode: ProofMode,
+        start_time: Instant,
+    },
 }
 
 impl Display for WorkerStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Idle => write!(f, "Idle"),
-            Self::Busy { request_id } => write!(f, "Busy with proof {request_id}"),
+            Self::Busy {
+                request_id,
+                proof_mode,
+                start_time,
+            } => {
+                let minutes = start_time.elapsed().as_secs_f32() / 60.0;
+                write!(
+                    f,
+                    "busy with {} proof {request_id} for {minutes} minutes",
+                    proof_mode.as_str_name()
+                )
+            }
         }
     }
 }

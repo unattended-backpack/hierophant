@@ -1,15 +1,15 @@
+use alloy_primitives::B256;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use network_lib::ContemplantProofStatus;
-use network_lib::ProofRequestId;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{SP1Proof, SP1ProofWithPublicValues, SP1PublicValues};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 
-pub type ProofStore = RwLock<HashMap<ProofRequestId, ContemplantProofStatus>>;
+pub type ProofStore = RwLock<HashMap<B256, ContemplantProofStatus>>;
 
 pub struct AppError(pub anyhow::Error);
 

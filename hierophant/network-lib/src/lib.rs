@@ -14,6 +14,7 @@ pub struct WorkerRegisterInfo {
     pub port: usize,
 }
 
+/*
 // Is deterministic on a RequestProofRequestBody using the fields
 // vk_hash, version, mode, and stdin_uri.  This way we can
 // skip execution for proofs we already have saved
@@ -65,11 +66,12 @@ impl Display for ProofRequestId {
         write!(f, "{}", self.0)
     }
 }
+*/
 
 // TODO: (maybe) Gas limit and cycle limit
 #[derive(Serialize, Deserialize)]
 pub struct ContemplantProofRequest {
-    pub request_id: ProofRequestId,
+    pub request_id: B256,
     pub elf: Vec<u8>,
     pub mock: bool,
     pub mode: ProofMode,
@@ -82,10 +84,7 @@ impl Display for ContemplantProofRequest {
         let mock = self.mock;
         let mode = self.mode.as_str_name();
 
-        write!(
-            f,
-            "ProofRequest request_id: {request_id}, mock: {mock}, mode: {mode}",
-        )
+        write!(f, "{mode} proof with request id {request_id}")
     }
 }
 
