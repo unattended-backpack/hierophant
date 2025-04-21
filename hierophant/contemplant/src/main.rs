@@ -50,8 +50,7 @@ async fn main() -> Result<()> {
     let config: Config = toml::de::from_str(&config).context("parse config")?;
 
     // Set up the SP1 SDK logger.
-    //utils::setup_logger();
-    env_logger::init();
+    utils::setup_logger();
 
     // TODO: test if we can have both of these initialized
     let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
