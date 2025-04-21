@@ -146,11 +146,15 @@ impl ArtifactStore {
                 }
             };
 
-            info!(
-                "Took {} seconds to process artifact_store command {:?}",
-                start.elapsed().as_secs_f64(),
-                command_string
-            );
+            let secs = start.elapsed().as_secs_f64();
+
+            if secs > 0.5 {
+                // TODO: remove this or send it to debug.  Just for basic benchmarking
+                info!(
+                    "Slow execution detected: took {} seconds to process artifact_store command {:?}",
+                    secs, command_string
+                );
+            }
         }
     }
 
