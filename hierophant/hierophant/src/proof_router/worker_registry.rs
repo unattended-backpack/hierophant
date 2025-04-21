@@ -428,8 +428,8 @@ impl WorkerRegistry {
                     return;
                 }
             };
-            debug!(
-                "ProofStatus of {} from worker {}: {}",
+            info!(
+                "ContemplantProofStatus of {} from worker {}: {}",
                 target_request_id, worker_addr, contemplant_proof_status
             );
 

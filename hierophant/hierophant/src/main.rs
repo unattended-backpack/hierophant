@@ -26,16 +26,16 @@ use tonic::service::Interceptor;
 use tonic::{Request, Response, Status, transport::Server};
 
 // Create a custom interceptor
-#[derive(Clone)]
-struct LoggingInterceptor;
+// #[derive(Clone)]
+// struct LoggingInterceptor;
 
-impl Interceptor for LoggingInterceptor {
-    fn call(&mut self, request: Request<()>) -> Result<Request<()>, Status> {
-        // Log the full request path which includes service and method name
-        info!("Incoming gRPC request: {:?}", request);
-        Ok(request)
-    }
-}
+// impl Interceptor for LoggingInterceptor {
+//     fn call(&mut self, request: Request<()>) -> Result<Request<()>, Status> {
+//         // Log the full request path which includes service and method name
+//         info!("Incoming gRPC request: {:?}", request);
+//         Ok(request)
+//     }
+// }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -60,25 +60,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Run the gRPC server
     // Then modify your server setup
-    let interceptor = LoggingInterceptor;
-
-    info!("gRPC server starting on {grpc_addr}");
-    let grpc_server = Server::builder()
-        .add_service(ProverNetworkServer::with_interceptor(
-            prover_service,
-            interceptor.clone(),
-        ))
-        .add_service(ArtifactStoreServer::with_interceptor(
-            artifact_service,
-            interceptor,
-        ))
-        .serve(grpc_addr);
+    //let interceptor = LoggingInterceptor;
 
     // info!("gRPC server starting on {grpc_addr}");
     // let grpc_server = Server::builder()
-    //     .add_service(ProverNetworkServer::new(prover_service))
-    //     .add_service(CreateArtifactServer::new(artifact_service))
+    //     .add_service(ProverNetworkServer::with_interceptor(
+    //         prover_service,
+    //         .interceptor.clone(),
+    //     ))
+    //     .add_service(ArtifactStoreServer::with_interceptor(
+    //         artifact_service,
+    //         interceptor,
+    //     ))
     //     .serve(grpc_addr);
+
+    info!("gRPC server starting on {grpc_addr}");
+    let grpc_server = Server::builder()
+        .add_service(ProverNetworkServer::new(prover_service))
+        .add_service(ArtifactStoreServer::new(artifact_service))
+        .serve(grpc_addr);
 
     // Create the axum router with all routes
     let app =
@@ -99,25 +99,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
     });
 
-    println!("Starting Hierophant services:");
-    println!("  - gRPC server on {grpc_addr}");
-    println!("  - HTTP server on {http_addr}");
-    println!("Implemented methods:");
-    println!("  - network.ProverNetwork/GetProgram");
-    println!("  - network.ProverNetwork/GetNonce");
-    println!("  - network.ProverNetwork/CreateProgram");
-    println!("  - network.ProverNetwork/RequestProof");
-    println!("  - network.ProverNetwork/GetProofRequestStatus");
-    println!("  - artifact.CreateArtifact/CreateArtifact");
-    println!("  - HTTP POST/PUT to /:id (for artifact uploads)");
-    println!("  - HTTP GET to /:id (for artifact downloads)");
-    println!("  - HTTP PUT to /register_worker (for contemplant registration)");
-    println!("Servers started. Press Ctrl+C to stop.");
+    info!("Starting Hierophant services:");
+    info!("  - gRPC server on {grpc_addr}");
+    info!("  - HTTP server on {http_addr}");
+    info!("Implemented methods:");
+    info!("  - network.ProverNetwork/GetProgram");
+    info!("  - network.ProverNetwork/GetNonce");
+    info!("  - network.ProverNetwork/CreateProgram");
+    info!("  - network.ProverNetwork/RequestProof");
+    info!("  - network.ProverNetwork/GetProofRequestStatus");
+    info!("  - artifact.CreateArtifact/CreateArtifact");
+    info!("  - HTTP POST/PUT to /:id (for artifact uploads)");
+    info!("  - HTTP GET to /:id (for artifact downloads)");
+    info!("  - HTTP PUT to /register_worker (for contemplant registration)");
+    info!("Servers started. Press Ctrl+C to stop.");
 
     // Wait for both servers to complete (or error)
     tokio::select! {
-        _ = grpc_server => println!("gRPC server terminated"),
-        _ = http_server => println!("HTTP server terminated"),
+        _ = grpc_server => info!("gRPC server terminated"),
+        _ = http_server => info!("HTTP server terminated"),
     }
 
     Ok(())

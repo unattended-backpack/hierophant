@@ -120,19 +120,19 @@ impl ContemplantProofStatus {
 
 impl Display for ContemplantProofStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let execution_status = match self.execution_status {
-            0 => "UnspecifiedExecutionStatus",
-            1 => "Unexecuted",
-            2 => "Executed",
-            3 => "Unexecutable",
-            _ => "Display Error: Unknown execution execution status",
-        };
+        let execution_status = ExecutionStatus::try_from(self.execution_status)
+            .unwrap_or(ExecutionStatus::UnspecifiedExecutionStatus);
 
         let proof = match self.proof {
             Some(_) => "some",
             None => "none",
         };
 
-        write!(f, "ExecutionStatus: {}, Proof: {}", execution_status, proof)
+        write!(
+            f,
+            "ExecutionStatus: {}, Proof: {}",
+            execution_status.as_str_name(),
+            proof
+        )
     }
 }

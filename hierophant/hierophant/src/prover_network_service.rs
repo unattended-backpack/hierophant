@@ -36,7 +36,7 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<GetProgramRequest>,
     ) -> Result<Response<GetProgramResponse>, Status> {
-        info!("get_program called");
+        info!("\n=== get_program called ===");
         let req = request.into_inner();
 
         let vk_hash: VkHash = req.vk_hash.into();
@@ -68,7 +68,7 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<GetNonceRequest>,
     ) -> Result<Response<GetNonceResponse>, Status> {
-        info!("get_nonce called");
+        info!("\n=== get_nonce called ===");
         let req = request.into_inner();
 
         let address: Address = match req.address.as_slice().try_into() {
@@ -100,7 +100,7 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<CreateProgramRequest>,
     ) -> Result<Response<CreateProgramResponse>, Status> {
-        info!("create_program called");
+        info!("\n=== create_program called ===");
         // TODO: might have to handle differently based on request.format
         // or does tonic handle this for us?
         /*
@@ -192,7 +192,7 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<RequestProofRequest>,
     ) -> Result<Response<RequestProofResponse>, Status> {
-        info!("request_proof called");
+        info!("\n=== request_proof called ===");
         let req = request.into_inner();
 
         let body = match req.body {
@@ -216,7 +216,12 @@ impl ProverNetwork for ProverNetworkService {
         info!("  Nonce: {}", body.nonce);
         info!("  VK Hash: {}", vk_hash_hex);
         info!("  Version: {}", body.version);
-        info!("  Mode: {}", body.mode);
+        info!(
+            "  Mode: {}",
+            ProofMode::try_from(body.mode)
+                .unwrap_or(ProofMode::UnspecifiedProofMode)
+                .as_str_name()
+        );
         info!("  Strategy: {}", body.strategy);
         info!("  Stdin URI: {}", body.stdin_uri);
         info!("  Deadline: {}", body.deadline);
@@ -350,7 +355,7 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<GetProofRequestStatusRequest>,
     ) -> Result<Response<GetProofRequestStatusResponse>, Status> {
-        info!("get_proof_request_status called");
+        info!("\n=== get_proof_request_status called ===");
         let req = request.into_inner();
         let request_id = match req.request_id.clone().try_into() {
             Ok(id) => id,
@@ -360,17 +365,7 @@ impl ProverNetwork for ProverNetworkService {
                     hex::encode(&req.request_id)
                 );
                 warn!("{error_msg}");
-                let proof_status = ProofStatus::lost();
-                let response = GetProofRequestStatusResponse {
-                    fulfillment_status: proof_status.fulfillment_status,
-                    execution_status: proof_status.execution_status,
-                    request_tx_hash: vec![],
-                    deadline: 0,
-                    fulfill_tx_hash: None,
-                    proof_uri: None,
-                    public_values_hash: None,
-                };
-
+                let response = lost_proof_response();
                 return Ok(Response::new(response));
             }
         };
@@ -392,23 +387,13 @@ impl ProverNetwork for ProverNetworkService {
                     "Proof request {request_id} not found in proof_requests mapping.  This proof might not have been requested yet."
                 );
                 warn!("{error_msg}");
-                let proof_status = ProofStatus::lost();
-                let response = GetProofRequestStatusResponse {
-                    fulfillment_status: proof_status.fulfillment_status,
-                    execution_status: proof_status.execution_status,
-                    request_tx_hash: vec![],
-                    deadline: 0,
-                    fulfill_tx_hash: None,
-                    proof_uri: None,
-                    public_values_hash: None,
-                };
 
+                let response = lost_proof_response();
                 return Ok(Response::new(response));
             }
         };
 
         // try to get the proof from artifact_store first
-        // TODO: make this a check instead of actually loading the whole proof when we do have it
         if let Ok(Some(_)) = self
             .state
             .artifact_store_client
@@ -445,15 +430,21 @@ impl ProverNetwork for ProverNetworkService {
             return Ok(Response::new(response));
         };
 
-        // Have the proof router find the proof
+        // Check the workers for the proof
         let proof_status = match self.state.proof_router.get_proof_status(request_id).await {
             Ok(status) => status,
             Err(e) => {
                 let error_msg = format!("Error getting proof status {e}");
                 error!("{error_msg}");
-                return Err(Status::not_found(error_msg));
+
+                let response = lost_proof_response();
+                return Ok(Response::new(response));
             }
         };
+
+        info!(
+            "Got proof status for proof request {request_id} with proof_uri {proof_uri} from network: {proof_status}"
+        );
 
         // if proof is complete, save it to disk as an artifact and mark the worker
         // as idle
@@ -467,7 +458,9 @@ impl ProverNetwork for ProverNetworkService {
                 .await
             {
                 error!("{e}");
-                return Err(Status::internal(e.to_string()));
+
+                let response = lost_proof_response();
+                return Ok(Response::new(response));
             }
 
             // save artifact to disk
@@ -478,7 +471,8 @@ impl ProverNetwork for ProverNetworkService {
                 .await
             {
                 error!("{e}");
-                return Err(Status::internal(e.to_string()));
+                let response = lost_proof_response();
+                return Ok(Response::new(response));
             }
 
             info!("Saved proof from request_id {request_id} to disk with uri {proof_uri}");
@@ -496,6 +490,7 @@ impl ProverNetwork for ProverNetworkService {
             self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
         );
 
+        // TODO: don't respond with a download address when we don't have the proof yet
         info!("Responding with proof download address {proof_download_address}");
 
         let response = GetProofRequestStatusResponse {
@@ -509,5 +504,18 @@ impl ProverNetwork for ProverNetworkService {
         };
 
         Ok(Response::new(response))
+    }
+}
+
+fn lost_proof_response() -> GetProofRequestStatusResponse {
+    let proof_status = ProofStatus::lost();
+    GetProofRequestStatusResponse {
+        fulfillment_status: proof_status.fulfillment_status,
+        execution_status: proof_status.execution_status,
+        request_tx_hash: vec![],
+        deadline: 0,
+        fulfill_tx_hash: None,
+        proof_uri: None,
+        public_values_hash: None,
     }
 }

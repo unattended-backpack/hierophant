@@ -110,21 +110,26 @@ async fn handle_artifact_download(
     Path(uri): Path<ArtifactUri>,
 ) -> Result<Vec<u8>, StatusCode> {
     info!("\n=== Received Download Request ===");
-    info!("Artifact uri {uri}");
 
     let bytes = match state
         .artifact_store_client
         .get_artifact_bytes(uri.clone())
         .await
     {
-        Ok(Some(bytes)) => bytes,
+        Ok(Some(bytes)) => {
+            info!(
+                "Client downloading artifact {uri} with {} bytes",
+                bytes.len()
+            );
+            bytes
+        }
         Ok(None) => {
             let error_msg = format!("Artifact {uri} not found");
             error!("{error_msg}");
             return Err(StatusCode::BAD_REQUEST);
         }
         Err(e) => {
-            error!("{e}");
+            error!("Error downloading artifact {uri}: {e}");
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
         }
     };
@@ -139,14 +144,17 @@ async fn handle_artifact_upload(
     body: Bytes,
 ) -> Result<impl IntoResponse, StatusCode> {
     info!("\n=== Received Upload Request ===");
-    info!("Artifact uri {uri}");
 
-    info!("Received artifact data: {} bytes", body.len());
+    info!("Received {} bytes of artifact {uri}", body.len());
 
-    match state.artifact_store_client.save_artifact(uri, body).await {
+    match state
+        .artifact_store_client
+        .save_artifact(uri.clone(), body)
+        .await
+    {
         Ok(_) => Ok("Upload successful"),
         Err(e) => {
-            error!("{e}");
+            error!("Error uploading artifact {uri}: {e}");
             Err(StatusCode::BAD_REQUEST)
         }
     }
