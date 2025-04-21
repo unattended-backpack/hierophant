@@ -1218,6 +1218,7 @@ dependencies = [
  "axum",
  "base64",
  "bincode",
+ "env_logger",
  "log",
  "network-lib",
  "reqwest",

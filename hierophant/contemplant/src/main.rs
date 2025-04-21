@@ -50,11 +50,13 @@ async fn main() -> Result<()> {
     let config: Config = toml::de::from_str(&config).context("parse config")?;
 
     // Set up the SP1 SDK logger.
-    utils::setup_logger();
+    //utils::setup_logger();
+    env_logger::init();
 
     // TODO: test if we can have both of these initialized
     let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
     let mock_prover = Arc::new(ProverClient::builder().mock().build());
+    info!("Prover built");
 
     let proof_store = Arc::new(RwLock::new(HashMap::new()));
 
@@ -199,22 +201,6 @@ async fn request_proof(
         };
 
         let minutes = (start_time.elapsed().as_secs_f32() / 60.0).round() as u32;
-
-        // Turn proof struct into bytes
-        /*
-        let proof_bytes_res = proof_res.and_then(|proof| {
-            if let ProofMode::Compressed = payload.mode {
-                // If it's a compressed proof, we need to serialize the entire struct with bincode.
-                // Note: We're re-serializing the entire struct with bincode here, but this is fine
-                // because we're on localhost and the size of the struct is small.
-                bincode::serialize(&proof)
-                    .map_err(|e| anyhow!("Error serializing compressed proof {e}"))
-            } else {
-                // TODO: It's unclear if we can do this for ProofMode::Core
-                Ok(proof.bytes())
-            }
-        });
-        */
 
         let proof_bytes_res = proof_res.and_then(|proof| {
             let network_proof: ProofFromNetwork = proof.into();
