@@ -12,7 +12,12 @@ use axum::{
 use log::{error, info};
 use network_lib::{REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
-use std::{str::FromStr, sync::Arc};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    str::FromStr,
+    sync::Arc,
+};
 
 // Structure to receive worker registration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,9 +98,17 @@ async fn handle_register_worker(
 
 async fn contemplants(
     State(state): State<Arc<HierophantState>>,
-) -> Result<Json<Vec<(String, WorkerState)>>, StatusCode> {
+) -> Result<Json<Vec<String>>, StatusCode> {
     match state.proof_router.worker_registry_client.workers().await {
-        Ok(workers) => Ok(Json(workers)),
+        Ok(workers) => {
+            let workers: Vec<String> = workers
+                .iter()
+                .map(|(addr, state)| format!("addr: {addr}, {state}"))
+                .collect();
+
+            Ok(Json(workers))
+        }
+        //Ok(Json(workers)),
         Err(e) => {
             let error_msg = format!("Error sending workers command: {e}");
             error!("{error_msg}");
@@ -118,8 +131,9 @@ async fn handle_artifact_download(
     {
         Ok(Some(bytes)) => {
             info!(
-                "Client downloading artifact {uri} with {} bytes",
-                bytes.len()
+                "Client downloading artifact {uri} with {} bytes.  Artifact bytes as hex: {}",
+                bytes.len(),
+                display_artifact_hex(&bytes)
             );
             bytes
         }
@@ -158,4 +172,12 @@ async fn handle_artifact_upload(
             Err(StatusCode::BAD_REQUEST)
         }
     }
+}
+
+fn display_artifact_hex(bytes: &[u8]) -> String {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    format!("{:016x}", hash)
 }

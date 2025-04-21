@@ -2,8 +2,7 @@ use crate::artifact_store::{ArtifactStoreClient, ArtifactUri};
 use crate::config::Config;
 use crate::network::{ExecutionStatus, FulfillmentStatus, Program, RequestProofRequestBody};
 use crate::proof_router::ProofRouter;
-use alloy_primitives::Address;
-use network_lib::ProofRequestId;
+use alloy_primitives::{Address, B256};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
 use tokio::sync::Mutex;
@@ -13,7 +12,7 @@ pub struct HierophantState {
     pub config: Config,
     // mapping id -> (proof_uri, ProofRequestBody)
     // TODO: If we only use this in the proof router, move it to ProofRouter state
-    pub proof_requests: Arc<Mutex<HashMap<ProofRequestId, (ArtifactUri, RequestProofRequestBody)>>>,
+    pub proof_requests: Arc<Mutex<HashMap<B256, (ArtifactUri, RequestProofRequestBody)>>>,
     // mapping vk_hash -> Program (contains program_uri)
     // programs are requested by vk_hash in ProverNetworkService.get_program reqs
     pub program_store: Arc<Mutex<HashMap<VkHash, Program>>>,
