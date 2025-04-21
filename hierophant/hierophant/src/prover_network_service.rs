@@ -364,9 +364,6 @@ impl ProverNetwork for ProverNetworkService {
             }
         };
 
-        // Log request ID
-        info!("Requested status for request_id: {request_id}");
-
         // look up previously generated artifact_uri (proof_uri is made in request_proof)
         let (proof_uri, request_proof_request_body) = match self
             .state
@@ -408,7 +405,7 @@ impl ProverNetwork for ProverNetworkService {
                 self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
             );
 
-            info!("Responding with proof download address {proof_download_address}");
+            // info!("Responding with proof download address {proof_download_address}");
 
             let response = GetProofRequestStatusResponse {
                 fulfillment_status: FulfillmentStatus::Fulfilled.into(),
@@ -437,9 +434,7 @@ impl ProverNetwork for ProverNetworkService {
             }
         };
 
-        info!(
-            "Got proof status for proof request {request_id} with proof_uri {proof_uri} from network: {proof_status}"
-        );
+        info!("Proof request {request_id} with uri {proof_uri} status: {proof_status}");
 
         // if proof is complete, save it to disk as an artifact and mark the worker
         // as idle
@@ -486,7 +481,7 @@ impl ProverNetwork for ProverNetworkService {
         );
 
         // TODO: don't respond with a download address when we don't have the proof yet
-        info!("Responding with proof download address {proof_download_address}");
+        //info!("Responding with proof download address {proof_download_address}");
 
         let response = GetProofRequestStatusResponse {
             fulfillment_status: proof_status.fulfillment_status,

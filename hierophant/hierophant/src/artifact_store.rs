@@ -202,12 +202,10 @@ impl ArtifactStore {
         let artifact_path = artifact_uri.file_path(&self.artifact_directory);
         let path = Path::new(&artifact_path);
         if path.exists() {
-            info!("Loading artifact bytes from file {artifact_path}");
             fs::read(path)
                 .context(format!("Loading artifact from file {artifact_path}"))
                 .map(|b| Some(b))
         } else {
-            warn!("Artifact {artifact_uri} not found on disk.  No file at {artifact_path}");
             Ok(None)
         }
     }

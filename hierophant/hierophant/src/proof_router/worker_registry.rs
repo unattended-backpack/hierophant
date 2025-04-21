@@ -47,9 +47,12 @@ impl WorkerRegistryClient {
         Self { sender }
     }
 
-    pub async fn worker_ready(&self, worker_addr: String) -> Result<()> {
+    pub async fn worker_ready(&self, worker_addr: String, worker_name: String) -> Result<()> {
         self.sender
-            .send(WorkerRegistryCommand::WorkerReady { worker_addr })
+            .send(WorkerRegistryCommand::WorkerReady {
+                worker_addr,
+                worker_name,
+            })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send command WorkerReady: {}", e))
     }
@@ -151,8 +154,11 @@ impl WorkerRegistry {
                 WorkerRegistryCommand::AssignProofRequest { ref proof_request } => {
                     self.handle_assign_proof(proof_request).await;
                 }
-                WorkerRegistryCommand::WorkerReady { worker_addr } => {
-                    self.handle_worker_ready(worker_addr).await;
+                WorkerRegistryCommand::WorkerReady {
+                    worker_addr,
+                    worker_name,
+                } => {
+                    self.handle_worker_ready(worker_addr, worker_name).await;
                 }
                 WorkerRegistryCommand::ProofComplete { request_id } => {
                     self.handle_proof_complete(request_id).await;
@@ -311,8 +317,8 @@ impl WorkerRegistry {
         warn!("No workers available for proof {request_id}");
     }
 
-    async fn handle_worker_ready(&mut self, worker_addr: String) {
-        let default_state = WorkerState::default();
+    async fn handle_worker_ready(&mut self, worker_addr: String, worker_name: String) {
+        let default_state = WorkerState::new(worker_name);
         match self
             .workers
             .insert(worker_addr.clone(), default_state.clone())
@@ -485,6 +491,7 @@ pub enum WorkerRegistryCommand {
     },
     WorkerReady {
         worker_addr: String,
+        worker_name: String,
     },
     ProofStatus {
         target_request_id: B256,
@@ -532,17 +539,14 @@ pub struct WorkerState {
     strikes: usize,
 }
 
-impl Default for WorkerState {
-    fn default() -> Self {
+impl WorkerState {
+    fn new(name: String) -> Self {
         Self {
-            name: "Default".into(),
+            name,
             status: WorkerStatus::Idle,
             strikes: 0,
         }
     }
-}
-
-impl WorkerState {
     fn is_busy(&self) -> bool {
         self.status != WorkerStatus::Idle
     }
