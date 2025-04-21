@@ -620,7 +620,7 @@ impl Display for WorkerStatus {
                 proof_mode,
                 start_time,
             } => {
-                let minutes = start_time.elapsed().as_secs_f32() / 60.0;
+                let minutes = (start_time.elapsed().as_secs_f32() / 60.0).round() as u32;
                 write!(
                     f,
                     "busy with {} proof {request_id} for {minutes} minutes",
