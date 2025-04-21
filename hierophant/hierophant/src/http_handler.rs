@@ -83,7 +83,7 @@ async fn handle_register_worker(
     match state
         .proof_router
         .worker_registry_client
-        .worker_ready(worker_addr.clone())
+        .worker_ready(worker_addr.clone(), worker_register_info.name)
         .await
     {
         Ok(_) => Ok(StatusCode::OK),
