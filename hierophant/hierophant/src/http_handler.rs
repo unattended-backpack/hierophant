@@ -98,9 +98,17 @@ async fn handle_register_worker(
 
 async fn contemplants(
     State(state): State<Arc<HierophantState>>,
-) -> Result<Json<Vec<(String, WorkerState)>>, StatusCode> {
+) -> Result<Json<Vec<String>>, StatusCode> {
     match state.proof_router.worker_registry_client.workers().await {
-        Ok(workers) => Ok(Json(workers)),
+        Ok(workers) => {
+            let workers: Vec<String> = workers
+                .iter()
+                .map(|(addr, state)| format!("addr: {addr}, {state}"))
+                .collect();
+
+            Ok(Json(workers))
+        }
+        //Ok(Json(workers)),
         Err(e) => {
             let error_msg = format!("Error sending workers command: {e}");
             error!("{error_msg}");
