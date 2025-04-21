@@ -48,8 +48,6 @@ impl ProofRouter {
         // artifact_store
         artifact_store_client: ArtifactStoreClient,
     ) -> Result<()> {
-        // TODO: first check if we have it in artifact_store already
-
         let stdin_artifact_bytes = match artifact_store_client
             .get_artifact_bytes(stdin_uri.clone())
             .await
@@ -81,7 +79,7 @@ impl ProofRouter {
 
         let res = self
             .worker_registry_client
-            .assign_proof_request(request_id, proof_request)
+            .assign_proof_request(proof_request)
             .await;
         res
     }

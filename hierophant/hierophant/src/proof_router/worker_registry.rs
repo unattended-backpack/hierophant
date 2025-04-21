@@ -53,16 +53,9 @@ impl WorkerRegistryClient {
             .map_err(|e| anyhow::anyhow!("Failed to send command WorkerReady: {}", e))
     }
 
-    pub async fn assign_proof_request(
-        &self,
-        request_id: B256,
-        proof_request: ContemplantProofRequest,
-    ) -> Result<()> {
+    pub async fn assign_proof_request(&self, proof_request: ContemplantProofRequest) -> Result<()> {
         self.sender
-            .send(WorkerRegistryCommand::AssignProofRequest {
-                request_id,
-                proof_request,
-            })
+            .send(WorkerRegistryCommand::AssignProofRequest { proof_request })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send command AssignProofRequest: {}", e))
     }
@@ -154,11 +147,8 @@ impl WorkerRegistry {
                 self.receiver.len()
             );
             match command {
-                WorkerRegistryCommand::AssignProofRequest {
-                    request_id,
-                    ref proof_request,
-                } => {
-                    self.handle_assign_proof(request_id, proof_request).await;
+                WorkerRegistryCommand::AssignProofRequest { ref proof_request } => {
+                    self.handle_assign_proof(proof_request).await;
                 }
                 WorkerRegistryCommand::WorkerReady { worker_addr } => {
                     self.handle_worker_ready(worker_addr).await;
@@ -218,13 +208,10 @@ impl WorkerRegistry {
         }
     }
 
-    async fn handle_assign_proof(
-        &mut self,
-        request_id: B256,
-        proof_request: &ContemplantProofRequest,
-    ) {
+    async fn handle_assign_proof(&mut self, proof_request: &ContemplantProofRequest) {
         // remove any dead workers
         self.trim_workers();
+        let request_id = proof_request.request_id;
 
         // first check if there's already a worker working on this proof
         if let Some((worker_addr, _)) = self.workers.iter().find(|(_, worker_state)| {
@@ -478,7 +465,6 @@ impl WorkerRegistry {
 
 pub enum WorkerRegistryCommand {
     AssignProofRequest {
-        request_id: B256,
         proof_request: ContemplantProofRequest,
     },
     WorkerReady {

@@ -358,7 +358,7 @@ impl ProverNetwork for ProverNetworkService {
                     "Error parsing request_id 0x{} as B256.",
                     hex::encode(&req.request_id)
                 );
-                warn!("{error_msg}");
+                error!("{error_msg}");
                 let response = lost_proof_response();
                 return Ok(Response::new(response));
             }
@@ -387,7 +387,8 @@ impl ProverNetwork for ProverNetworkService {
             }
         };
 
-        // try to get the proof from artifact_store first
+        // If proof is already in artifact store, no need to request prover network.  Can return
+        // early
         if let Ok(Some(_)) = self
             .state
             .artifact_store_client
