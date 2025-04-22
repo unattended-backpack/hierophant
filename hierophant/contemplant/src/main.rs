@@ -26,42 +26,34 @@ use sp1_sdk::{
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
-use tower_http::limit::RequestBodyLimitLayer;
 
 #[derive(Clone)]
 pub struct WorkerState {
     // config: Config,
-    // cuda_prover: Arc<CudaProver>,
-    // mock_prover: Arc<CpuProver>,
+    cuda_prover: Arc<CudaProver>,
+    mock_prover: Arc<CpuProver>,
     proof_store: Arc<ProofStore>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Enable logging.
-    // unsafe {
-    //     env::set_var("RUST_LOG", "info");
-    // }
-
     let config = tokio::fs::read_to_string("contemplant.toml")
         .await
         .context("read contemplant.toml file")?;
-
     let config: Config = toml::de::from_str(&config).context("parse config")?;
 
     // Set up the SP1 SDK logger.
     utils::setup_logger();
 
-    // TODO: test if we can have both of these initialized
-    // let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
-    // let mock_prover = Arc::new(ProverClient::builder().mock().build());
+    let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
+    let mock_prover = Arc::new(ProverClient::builder().mock().build());
     info!("Prover built");
 
     let proof_store = Arc::new(RwLock::new(HashMap::new()));
 
     let worker_state = WorkerState {
-        // cuda_prover,
-        // mock_prover,
+        cuda_prover,
+        mock_prover,
         // config: config.clone(),
         proof_store: proof_store.clone(),
     };

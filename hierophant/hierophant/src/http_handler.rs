@@ -1,6 +1,5 @@
 use crate::artifact_store::ArtifactUri;
 use crate::hierophant_state::HierophantState;
-use crate::proof_router::WorkerState;
 use axum::{
     Json, Router,
     body::Bytes,
@@ -45,21 +44,7 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         // Get all healthy contemplants
         .route("/contemplants", get(contemplants))
         .with_state(state)
-
-    // .layer(axum::extract::connect_info::IntoConnectInfo::<SocketAddr>::layer())
 }
-// #[derive(Clone, Debug)]
-// struct MyConnectionInfo {
-//     ip: String,
-// }
-//
-// impl Connected<IncomingStream<'_>> for MyConnectionInfo {
-//     fn connect_info(target: IncomingStream<'_>) -> Self {
-//         MyConnectionInfo {
-//             ip: target.remote_addr().to_string(),
-//         }
-//     }
-// }
 
 async fn handle_register_worker(
     State(state): State<Arc<HierophantState>>,
@@ -68,34 +53,27 @@ async fn handle_register_worker(
 ) -> Result<impl IntoResponse, StatusCode> {
     info!("\n=== Received Worker Registration Request ===");
 
-    println!("connection info: {:?}", addr);
+    let worker_addr = format!("http://{}:{}", addr.ip(), worker_register_info.port);
 
     info!(
-        "Received worker ready check from {:?}",
-        worker_register_info
+        "Received contemplant ready check from {} at {}",
+        worker_register_info.name, worker_addr
     );
 
-    // let worker_addr = format!(
-    //     "http://{}:{}",
-    //     worker_register_info.ip, worker_register_info.port
-    // );
-
-    // match state
-    //     .proof_router
-    //     .worker_registry_client
-    //     .worker_ready(worker_addr.clone(), worker_register_info.name)
-    //     .await
-    // {
-    //     Ok(_) => Ok(StatusCode::OK),
-    //     Err(e) => {
-    //         let error_msg =
-    //             format!("Error sending worker_ready command for worker {worker_addr}: {e}");
-    //         error!("{error_msg}");
-    //         Err(StatusCode::INTERNAL_SERVER_ERROR)
-    //     }
-    // }
-    //
-    Ok(StatusCode::OK)
+    match state
+        .proof_router
+        .worker_registry_client
+        .worker_ready(worker_addr.clone(), worker_register_info.name)
+        .await
+    {
+        Ok(_) => Ok(StatusCode::OK),
+        Err(e) => {
+            let error_msg =
+                format!("Error sending worker_ready command for worker {worker_addr}: {e}");
+            error!("{error_msg}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 async fn contemplants(

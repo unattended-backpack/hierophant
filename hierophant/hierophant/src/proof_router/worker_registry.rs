@@ -1,12 +1,11 @@
 use crate::hierophant_state::ProofStatus;
-use crate::network::{ExecutionStatus, FulfillmentStatus, Program, RequestProofRequestBody};
+use crate::network::{ExecutionStatus, FulfillmentStatus};
 use crate::proof_router::request_with_retries;
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
 use network_lib::{ContemplantProofRequest, ContemplantProofStatus};
 use reqwest::Client;
-use serde::Serialize;
 use sp1_sdk::network::proto::network::ProofMode;
 use std::{
     collections::HashMap,

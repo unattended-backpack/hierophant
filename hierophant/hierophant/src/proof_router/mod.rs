@@ -11,7 +11,6 @@ use network_lib::ContemplantProofRequest;
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use std::fmt::Display;
 use worker_registry::WorkerRegistryClient;
-pub use worker_registry::WorkerState;
 
 use crate::config::Config;
 
