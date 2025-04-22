@@ -1,0 +1,11 @@
+Ethereum is the greatest network on the planet, second to none. It is the network with the highest [total cost of attack](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=4727999), vastly eclipsing Bitcoin even against the lower bar of a mere 33% attack triggering temporary weak finality. It is the network that takes the importance of client diversity the most seriously, and has made tremendous strides in ensuring that a simple client bug will not cripple operations. It is the only solution on this planet that will survive a coordinated attack from multiple global superpowers.
+
+Unlike Bitcoin, it actually does something too: censorship-resistant compute is far more of a future for humanity than neogoldbugism. It eclipses all other use. What do Bitcoin people do, send coins from A to B over and over again? We've transfers with arbitrary logic. Monero is great and private and punk: oops! Its total cost of attack is pitiful. Privacy tools built atop our admittedly-transparent base layer will dismantle the financial panopticon.
+
+VC-spawned fastchain-go-brrr slop is not even worth mentioning. The entire Los Angeles shitfluencing parasite class cums at the notion of making more fiat to spend on vapid garbage, and their followers line up on their knees to drink straight from the tap as a mixed gambling/humiliation ritual. There have been others before and there will be more in the future.
+
+Ethereum has a research team committed to maintaining censorship-resistance. There is simply nothing else that matters. The rollup-centric roadmap has only been a failure insofar as corporatist entities have failed to make themselves sufficiently trustless. We will rectify this with novel, powerful, and quite-frankly alien execution environments all trustlessly inheriting the security of Ethereum.
+
+The endgame of the world is a monumental, composable, single world computer of off-chain logic living in blobs atop a base layer 100% consumed by zero knowledge validity proofs. This is a beautiful thing. This is the world we care about and are building towards. This is the dream. The world machine will consume all compute within the lightcone.
+
+I have only contempt for those who think otherwise.
