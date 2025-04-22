@@ -47,14 +47,20 @@ async fn main() -> Result<()> {
 
     let cuda_prover = match &config.moongate_endpoint {
         // build with undockerized moongate server
-        Some(moongate_endpoint) => Arc::new(
-            ProverClient::builder()
-                .cuda()
-                .with_moongate_endpoint(moongate_endpoint)
-                .build(),
-        ),
+        Some(moongate_endpoint) => {
+            info!("Building CudaProver with moongate endpoint {moongate_endpoint}...");
+            Arc::new(
+                ProverClient::builder()
+                    .cuda()
+                    .with_moongate_endpoint(moongate_endpoint)
+                    .build(),
+            )
+        }
         // spin up cuda prover docker container
-        None => Arc::new(ProverClient::builder().cuda().build()),
+        None => {
+            info!("Starting CudaProver docker container...");
+            Arc::new(ProverClient::builder().cuda().build())
+        }
     };
     let mock_prover = Arc::new(ProverClient::builder().mock().build());
     info!("Prover built");
