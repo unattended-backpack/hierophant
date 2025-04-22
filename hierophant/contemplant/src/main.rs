@@ -16,8 +16,8 @@ use axum::{
 };
 use log::{error, info};
 use network_lib::{
-    ContemplantProofRequest, ContemplantProofStatus, REGISTER_CONTEMPLANT_ENDPOINT,
-    WorkerRegisterInfo,
+    CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus,
+    REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo,
 };
 use reqwest::Client;
 use sp1_sdk::{
@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
 
 fn register_worker(config: Config) {
     let worker_register_info = WorkerRegisterInfo {
-        // ip: config.ip,
+        contemplant_version: CONTEMPLANT_VERSION.into(),
         name: config.contemplant_name.clone(),
         port: config.port,
     };
