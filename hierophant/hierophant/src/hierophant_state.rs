@@ -105,10 +105,20 @@ pub struct ProofStatus {
 }
 
 impl ProofStatus {
+    /*
+    If the fulfillment_status is Unfulfillable && ExecutionStatus is NOT Unexecutable then the proposer will re-try the same span proof request.
+    We set the fulfillment_status to Unfulfillable because we want the proposer to re-try this request but we set execution status to Unspecified because
+    we DON'T want the proposer to split it into 2 requests
+
+    [from op-succinct/validity/src/proof_requester ln 303]:
+    If the request is a range proof and the number of failed requests is greater than 2 or the execution status is unexecutable, the request is split into two new requests.
+    Otherwise, add_new_ranges will insert the new request. This ensures better failure-resilience. If the request to add two range requests fails, add_new_ranges will handle it gracefully by submitting
+    the same range.
+    */
     pub fn lost() -> Self {
         Self {
             fulfillment_status: FulfillmentStatus::Unfulfillable.into(),
-            execution_status: ExecutionStatus::Unexecutable.into(),
+            execution_status: ExecutionStatus::UnspecifiedExecutionStatus.into(),
             proof: vec![],
         }
     }
