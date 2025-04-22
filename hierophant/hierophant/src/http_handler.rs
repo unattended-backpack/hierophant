@@ -4,7 +4,7 @@ use crate::proof_router::WorkerState;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{Path, State},
+    extract::{ConnectInfo, Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post, put},
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    str::FromStr,
+    net::SocketAddr,
     sync::Arc,
 };
 
@@ -63,37 +63,39 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
 
 async fn handle_register_worker(
     State(state): State<Arc<HierophantState>>,
-    // ConnectInfo(addr): ConnectInfo<MyConnectionInfo>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(worker_register_info): Json<WorkerRegisterInfo>,
 ) -> Result<impl IntoResponse, StatusCode> {
     info!("\n=== Received Worker Registration Request ===");
 
-    //println!("my connection info: {:?}", addr);
+    println!("connection info: {:?}", addr);
 
     info!(
         "Received worker ready check from {:?}",
         worker_register_info
     );
 
-    let worker_addr = format!(
-        "http://{}:{}",
-        worker_register_info.ip, worker_register_info.port
-    );
+    // let worker_addr = format!(
+    //     "http://{}:{}",
+    //     worker_register_info.ip, worker_register_info.port
+    // );
 
-    match state
-        .proof_router
-        .worker_registry_client
-        .worker_ready(worker_addr.clone(), worker_register_info.name)
-        .await
-    {
-        Ok(_) => Ok(StatusCode::OK),
-        Err(e) => {
-            let error_msg =
-                format!("Error sending worker_ready command for worker {worker_addr}: {e}");
-            error!("{error_msg}");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
+    // match state
+    //     .proof_router
+    //     .worker_registry_client
+    //     .worker_ready(worker_addr.clone(), worker_register_info.name)
+    //     .await
+    // {
+    //     Ok(_) => Ok(StatusCode::OK),
+    //     Err(e) => {
+    //         let error_msg =
+    //             format!("Error sending worker_ready command for worker {worker_addr}: {e}");
+    //         error!("{error_msg}");
+    //         Err(StatusCode::INTERNAL_SERVER_ERROR)
+    //     }
+    // }
+    //
+    Ok(StatusCode::OK)
 }
 
 async fn contemplants(

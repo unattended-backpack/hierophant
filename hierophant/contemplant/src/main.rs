@@ -31,8 +31,8 @@ use tower_http::limit::RequestBodyLimitLayer;
 #[derive(Clone)]
 pub struct WorkerState {
     // config: Config,
-    cuda_prover: Arc<CudaProver>,
-    mock_prover: Arc<CpuProver>,
+    // cuda_prover: Arc<CudaProver>,
+    // mock_prover: Arc<CpuProver>,
     proof_store: Arc<ProofStore>,
 }
 
@@ -53,15 +53,15 @@ async fn main() -> Result<()> {
     utils::setup_logger();
 
     // TODO: test if we can have both of these initialized
-    let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
-    let mock_prover = Arc::new(ProverClient::builder().mock().build());
+    // let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
+    // let mock_prover = Arc::new(ProverClient::builder().mock().build());
     info!("Prover built");
 
     let proof_store = Arc::new(RwLock::new(HashMap::new()));
 
     let worker_state = WorkerState {
-        cuda_prover,
-        mock_prover,
+        // cuda_prover,
+        // mock_prover,
         // config: config.clone(),
         proof_store: proof_store.clone(),
     };
@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
 
 fn register_worker(config: Config) {
     let worker_register_info = WorkerRegisterInfo {
-        ip: config.ip,
+        // ip: config.ip,
         name: config.contemplant_name.clone(),
         port: config.port,
     };
