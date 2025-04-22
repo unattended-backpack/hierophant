@@ -45,7 +45,17 @@ async fn main() -> Result<()> {
     // Set up the SP1 SDK logger.
     utils::setup_logger();
 
-    let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
+    let cuda_prover = match &config.moongate_endpoint {
+        // build with undockerized moongate server
+        Some(moongate_endpoint) => Arc::new(
+            ProverClient::builder()
+                .cuda()
+                .with_moongate_endpoint(moongate_endpoint)
+                .build(),
+        ),
+        // spin up cuda prover docker container
+        None => Arc::new(ProverClient::builder().cuda().build()),
+    };
     let mock_prover = Arc::new(ProverClient::builder().mock().build());
     info!("Prover built");
 
