@@ -10,7 +10,12 @@ contemplants.
 > "Contemplant: One who contemplates."
 [wikipedia](https://en.wiktionary.org/wiki/contemplant)
 
-# Developing
+## Developing
+
+When making a breaking change in Hierophant/Contemplant compatability, increment
+the `CONTEMPLANT_VERSION` var in `network-lib/src/lib.rs`.  On each contemplant
+connection, the Hierophant asserts that the `CONTEMPLANT_VERSION` that they have
+is the same as the `CONTEMPLANT_VERSION` being passed in by the contemplant.
 
 ## Building
 

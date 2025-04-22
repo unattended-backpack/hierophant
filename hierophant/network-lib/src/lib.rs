@@ -5,11 +5,16 @@ use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use std::fmt::Display;
 
 pub const REGISTER_CONTEMPLANT_ENDPOINT: &str = "register_contemplant";
+// Increment this whenever there is a breaking change in the contemplant
+// This is to ensure the contemplant is on the same version as the Hierophant it's
+// connecting to
+pub const CONTEMPLANT_VERSION: &str = "1.0.0";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerRegisterInfo {
     pub name: String,
     pub port: usize,
+    pub contemplant_version: String,
 }
 
 /*

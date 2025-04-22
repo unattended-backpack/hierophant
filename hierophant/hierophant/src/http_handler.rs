@@ -9,7 +9,7 @@ use axum::{
     routing::{get, post, put},
 };
 use log::{error, info};
-use network_lib::{REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
+use network_lib::{CONTEMPLANT_VERSION, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::hash_map::DefaultHasher,
@@ -60,18 +60,30 @@ async fn handle_register_worker(
         worker_register_info.name, worker_addr
     );
 
-    match state
-        .proof_router
-        .worker_registry_client
-        .worker_ready(worker_addr.clone(), worker_register_info.name)
-        .await
-    {
-        Ok(_) => Ok(StatusCode::OK),
-        Err(e) => {
-            let error_msg =
-                format!("Error sending worker_ready command for worker {worker_addr}: {e}");
-            error!("{error_msg}");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+    // check contemplant version
+    if CONTEMPLANT_VERSION != worker_register_info.contemplant_version {
+        error!(
+            "Contemplant {} at {} running incorrect CONTEMPLANT_VERSION: {}. This Hierophant's CONTEMPLANT_VERSION: {}",
+            worker_register_info.name,
+            worker_addr,
+            worker_register_info.contemplant_version,
+            CONTEMPLANT_VERSION
+        );
+        return Err(StatusCode::UPGRADE_REQUIRED);
+    } else {
+        match state
+            .proof_router
+            .worker_registry_client
+            .worker_ready(worker_addr.clone(), worker_register_info.name)
+            .await
+        {
+            Ok(_) => Ok(StatusCode::OK),
+            Err(e) => {
+                let error_msg =
+                    format!("Error sending worker_ready command for worker {worker_addr}: {e}");
+                error!("{error_msg}");
+                Err(StatusCode::INTERNAL_SERVER_ERROR)
+            }
         }
     }
 }
