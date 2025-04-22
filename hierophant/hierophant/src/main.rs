@@ -18,12 +18,11 @@ use anyhow::Context;
 use artifact::artifact_store_server::ArtifactStoreServer;
 use axum::extract::DefaultBodyLimit;
 use create_artifact_service::ArtifactStoreService;
-use log::{error, info};
+use log::info;
 use network::prover_network_server::ProverNetworkServer;
 use prover_network_service::ProverNetworkService;
 use std::{net::SocketAddr, sync::Arc};
-use tonic::service::Interceptor;
-use tonic::{Request, Response, Status, transport::Server};
+use tonic::transport::Server;
 
 // Create a custom interceptor
 // #[derive(Clone)]

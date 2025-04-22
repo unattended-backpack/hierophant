@@ -26,7 +26,6 @@ use sp1_sdk::{
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
-use tower_http::limit::RequestBodyLimitLayer;
 
 #[derive(Clone)]
 pub struct WorkerState {
@@ -38,21 +37,14 @@ pub struct WorkerState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Enable logging.
-    // unsafe {
-    //     env::set_var("RUST_LOG", "info");
-    // }
-
     let config = tokio::fs::read_to_string("contemplant.toml")
         .await
         .context("read contemplant.toml file")?;
-
     let config: Config = toml::de::from_str(&config).context("parse config")?;
 
     // Set up the SP1 SDK logger.
     utils::setup_logger();
 
-    // TODO: test if we can have both of these initialized
     let cuda_prover = Arc::new(ProverClient::builder().cuda().build());
     let mock_prover = Arc::new(ProverClient::builder().mock().build());
     info!("Prover built");
@@ -88,7 +80,7 @@ async fn main() -> Result<()> {
 
 fn register_worker(config: Config) {
     let worker_register_info = WorkerRegisterInfo {
-        ip: config.ip,
+        // ip: config.ip,
         name: config.contemplant_name.clone(),
         port: config.port,
     };

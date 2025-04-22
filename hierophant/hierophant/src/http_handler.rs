@@ -1,10 +1,9 @@
 use crate::artifact_store::ArtifactUri;
 use crate::hierophant_state::HierophantState;
-use crate::proof_router::WorkerState;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{Path, State},
+    extract::{ConnectInfo, Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post, put},
@@ -15,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    str::FromStr,
+    net::SocketAddr,
     sync::Arc,
 };
 
@@ -45,39 +44,20 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         // Get all healthy contemplants
         .route("/contemplants", get(contemplants))
         .with_state(state)
-
-    // .layer(axum::extract::connect_info::IntoConnectInfo::<SocketAddr>::layer())
 }
-// #[derive(Clone, Debug)]
-// struct MyConnectionInfo {
-//     ip: String,
-// }
-//
-// impl Connected<IncomingStream<'_>> for MyConnectionInfo {
-//     fn connect_info(target: IncomingStream<'_>) -> Self {
-//         MyConnectionInfo {
-//             ip: target.remote_addr().to_string(),
-//         }
-//     }
-// }
 
 async fn handle_register_worker(
     State(state): State<Arc<HierophantState>>,
-    // ConnectInfo(addr): ConnectInfo<MyConnectionInfo>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(worker_register_info): Json<WorkerRegisterInfo>,
 ) -> Result<impl IntoResponse, StatusCode> {
     info!("\n=== Received Worker Registration Request ===");
 
-    //println!("my connection info: {:?}", addr);
+    let worker_addr = format!("http://{}:{}", addr.ip(), worker_register_info.port);
 
     info!(
-        "Received worker ready check from {:?}",
-        worker_register_info
-    );
-
-    let worker_addr = format!(
-        "http://{}:{}",
-        worker_register_info.ip, worker_register_info.port
+        "Received contemplant ready check from {} at {}",
+        worker_register_info.name, worker_addr
     );
 
     match state
