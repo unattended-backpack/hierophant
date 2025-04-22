@@ -41,6 +41,7 @@ async fn main() -> Result<()> {
         .await
         .context("read contemplant.toml file")?;
     let config: Config = toml::de::from_str(&config).context("parse config")?;
+    info!("Starting contemplant {}", config.contemplant_name);
 
     // Set up the SP1 SDK logger.
     utils::setup_logger();

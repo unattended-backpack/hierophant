@@ -22,3 +22,7 @@ is the same as the `CONTEMPLANT_VERSION` being passed in by the contemplant.
 Install `protoc`: [https://protobuf.dev/installation/](https://protobuf.dev/installation/)
 
 `cargo build`
+
+## `old_testament.txt`
+
+List of biblical names to randomly draw from if a contemplant is started without a name.
