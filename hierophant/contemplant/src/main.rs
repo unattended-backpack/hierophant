@@ -7,21 +7,21 @@ use types::ProofFromNetwork;
 
 use crate::config::Config;
 use crate::types::{AppError, ProofStore};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use axum::{
-    Json, Router,
     extract::{DefaultBodyLimit, Path, State},
     http::StatusCode,
     routing::{get, post},
+    Json, Router,
 };
 use log::{error, info};
 use network_lib::{
-    CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus,
-    REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo,
+    ContemplantProofRequest, ContemplantProofStatus, WorkerRegisterInfo, CONTEMPLANT_VERSION,
+    REGISTER_CONTEMPLANT_ENDPOINT,
 };
 use reqwest::Client;
 use sp1_sdk::{
-    CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
+    network::proto::network::ProofMode, utils, CpuProver, CudaProver, Prover, ProverClient,
 };
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
         .layer(DefaultBodyLimit::disable())
         .with_state(worker_state);
 
-    let port = config.port.to_string();
+    let port = config.internal_port.to_string();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
         .await
         .unwrap();
@@ -99,7 +99,7 @@ fn register_worker(config: Config) {
     let worker_register_info = WorkerRegisterInfo {
         contemplant_version: CONTEMPLANT_VERSION.into(),
         name: config.contemplant_name.clone(),
-        port: config.port,
+        port: config.external_port,
     };
     info!(
         "Sending hierophant at {} worker_register_info {:?}",
