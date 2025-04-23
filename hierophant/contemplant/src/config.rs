@@ -10,8 +10,10 @@ pub struct Config {
     #[serde(default = "default_contemplant_name")]
     pub contemplant_name: String,
     #[serde(default = "default_port")]
-    pub port: usize,
-    // If None, then the contemplant spins up a cuda prover docker container
+    pub internal_port: usize,
+    #[serde(default = "default_port")]
+    pub external_port: usize,
+    // If None, then the contemplant spins up a CUDA prover Docker container.
     #[serde(default = "default_moongate_endpoint")]
     pub moongate_endpoint: Option<String>,
 }
