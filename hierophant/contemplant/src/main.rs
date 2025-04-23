@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
 
     // Set up the SP1 SDK logger.
     utils::setup_logger();
+    info!("Starting contemplant {}", config.contemplant_name);
 
     let cuda_prover = match &config.moongate_endpoint {
         // build with undockerized moongate server
