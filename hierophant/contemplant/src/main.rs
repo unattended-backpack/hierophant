@@ -4,7 +4,7 @@ mod types;
 use alloy_primitives::B256;
 use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
-use tokio::time::Instant;
+use tokio::{sync::mpsc, time::Instant};
 use types::ProofFromNetwork;
 
 use tokio_tungstenite::{
@@ -23,8 +23,8 @@ use axum::{
 };
 use log::{error, info};
 use network_lib::{
-    CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus,
-    REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo, WsMessage,
+    CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromContemplantMessage,
+    FromHierophantMessage, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo,
 };
 use reqwest::Client;
 use sp1_sdk::{
@@ -97,74 +97,124 @@ async fn main() -> Result<()> {
         }
     };
 
-    let (mut sender, mut receiver) = ws_stream.split();
+    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
     let worker_register_info = WorkerRegisterInfo {
         contemplant_version: CONTEMPLANT_VERSION.into(),
         name: config.contemplant_name.clone(),
     };
+
     info!(
         "Sending hierophant at {} worker_register_info {:?}",
         config.hierophant_ws_address, worker_register_info
     );
 
-    let register_message = bincode::serialize(&WsMessage::Register(worker_register_info))
-        .context("Serialize worker_register_info")?;
+    let register_message =
+        bincode::serialize(&FromContemplantMessage::Register(worker_register_info))
+            .context("Serialize worker_register_info")?;
 
     // send a register request to hierophant
-    sender
+    ws_sender
         .send(Message::Binary(register_message))
         .await
         .context("Send contemplant register info to hierophant")?;
 
-    Ok(())
-}
+    // Channel for inter-contemplant use.  Sends messages from the thread that receives tasks from the
+    // hierophant ws conntection to the thread that sends ws messages back to the hierophant
+    let (response_sender, mut response_receiver) = mpsc::channel(100);
 
-fn register_worker(config: Config) {
-    let worker_register_info = WorkerRegisterInfo {
-        contemplant_version: CONTEMPLANT_VERSION.into(),
-        name: config.contemplant_name.clone(),
-        port: config.external_port,
-    };
-    info!(
-        "Sending hierophant at {} worker_register_info {:?}",
-        config.hierophant_ws_address, worker_register_info
-    );
-    tokio::spawn(async move {
-        // Give this server a moment to fully initialize
-        // sleep(Duration::from_secs(1)).await;
-
-        let client = Client::new();
-
-        // Attempt to register with the hierophant
-        match client
-            .post(format!(
-                "{}/{REGISTER_CONTEMPLANT_ENDPOINT}",
-                config.hierophant_ws_address
-            ))
-            .json(&worker_register_info)
-            .send()
-            .await
-        {
-            Ok(response) => {
-                if response.status().is_success() {
-                    info!(
-                        "Successfully registered with hierophant at {}",
-                        config.hierophant_ws_address
-                    );
-                } else {
-                    error!(
-                        "Failed to register with hierophant {}: HTTP {}",
-                        config.hierophant_ws_address,
-                        response.status()
-                    );
+    // this thread solely sends ws messages back to the hierophant
+    let mut send_task = tokio::spawn(async move {
+        while let Some(ws_msg) = response_receiver.recv().await {
+            // serialize message
+            let ws_msg_bytes = match bincode::serialize(&ws_msg) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    let error_msg = format!("Error serializing message {}: {e}", ws_msg);
+                    error!("{error_msg}");
+                    // skip this message
+                    continue;
                 }
+            };
+
+            // send the message to the Hierophant
+            let msg = Message::Binary(ws_msg_bytes);
+            if let Err(e) = ws_sender.send(msg).await {
+                error!("Error sending message to hierophant: {e}");
+                break;
             }
-            Err(err) => {
-                error!("Failed to connect to hierophant: {}", err);
+        }
+
+        // close connection cleanly when contemplant is done
+        if let Err(e) = ws_sender.send(Message::Close(None)).await {
+            println!("Could not send Close due to {e:?}, probably it is ok?");
+        };
+    });
+
+    // this thread receives commands from the Hierophant, processes them, and
+    // sometimes sends responses back to Hierophant using the response_sender (which
+    // sends messages to send_task)
+    let mut recv_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = ws_receiver.next().await {
+            // got some message from hierophant
+            if let Err(e) = handle_message_from_hierophant(msg, response_sender.clone()) {
+                error!("Error handling message {e}");
+                break;
             }
         }
     });
+
+    //wait for either task to finish and kill the other task
+    tokio::select! {
+        _ = (&mut send_task) => {
+            recv_task.abort();
+        },
+        _ = (&mut recv_task) => {
+            send_task.abort();
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_message_from_hierophant(
+    msg: Message,
+    response_sender: mpsc::Sender<FromContemplantMessage>,
+) -> Result<()> {
+    // parse message into FromHierophantMessage
+    let msg: FromHierophantMessage = match msg {
+        Message::Binary(bytes) => match bincode::deserialize(&bytes) {
+            Ok(ws_msg) => ws_msg,
+            Err(e) => {
+                error!("Error deserializing message");
+                return Ok(());
+            }
+        },
+        _ => {
+            error!("Unsupported message type {:?}", msg);
+            return Ok(());
+        }
+    };
+
+    match msg {
+        FromHierophantMessage::ProofRequest(ContemplantProofRequest {
+            request_id,
+            elf,
+            mock,
+            mode,
+            sp1_stdin,
+        }) => {
+            // TODO:
+        }
+        FromHierophantMessage::ProofStatusRequest(proof_request_id) => {
+            // TODO:
+        }
+        FromHierophantMessage::Heartbeat => {
+            // TODO:
+        }
+    }
+
+    Ok(())
 }
 
 // uses the CudaProver or MockProver to execute proofs given the elf, ProofMode, and SP1Stdin
