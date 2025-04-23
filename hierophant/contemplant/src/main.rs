@@ -157,7 +157,10 @@ async fn main() -> Result<()> {
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = ws_receiver.next().await {
             // got some message from hierophant
-            if let Err(e) = handle_message_from_hierophant(msg, response_sender.clone()) {
+            if let Err(e) =
+                handle_message_from_hierophant(worker_state.clone(), msg, response_sender.clone())
+                    .await
+            {
                 error!("Error handling message {e}");
                 break;
             }
@@ -177,7 +180,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_message_from_hierophant(
+async fn handle_message_from_hierophant(
+    state: WorkerState,
     msg: Message,
     response_sender: mpsc::Sender<FromContemplantMessage>,
 ) -> Result<()> {
@@ -186,7 +190,7 @@ fn handle_message_from_hierophant(
         Message::Binary(bytes) => match bincode::deserialize(&bytes) {
             Ok(ws_msg) => ws_msg,
             Err(e) => {
-                error!("Error deserializing message");
+                error!("Error deserializing message: {e}");
                 return Ok(());
             }
         },
@@ -197,33 +201,30 @@ fn handle_message_from_hierophant(
     };
 
     match msg {
-        FromHierophantMessage::ProofRequest(ContemplantProofRequest {
-            request_id,
-            elf,
-            mock,
-            mode,
-            sp1_stdin,
-        }) => {
-            // TODO:
+        FromHierophantMessage::ProofRequest(proof_request) => {
+            request_proof(state, proof_request).await
         }
-        FromHierophantMessage::ProofStatusRequest(proof_request_id) => {
-            // TODO:
+        FromHierophantMessage::ProofStatusRequest(request_id) => {
+            let proof_status = get_proof_request_status(state, request_id).await;
+            if let Err(e) = response_sender
+                .send(FromContemplantMessage::ProofStatusResponse(
+                    request_id,
+                    proof_status,
+                ))
+                .await
+            {
+                return Err(anyhow!(e));
+            }
         }
-        FromHierophantMessage::Heartbeat => {
-            // TODO:
-        }
-    }
+    };
 
     Ok(())
 }
 
 // uses the CudaProver or MockProver to execute proofs given the elf, ProofMode, and SP1Stdin
 // provided by the Hierophant
-async fn request_proof(
-    State(state): State<WorkerState>,
-    Json(payload): Json<ContemplantProofRequest>,
-) -> Result<StatusCode, AppError> {
-    info!("Received proof request {payload}");
+async fn request_proof(state: WorkerState, proof_request: ContemplantProofRequest) {
+    info!("Received proof request {proof_request}");
 
     // proof starts as unexecuted
     let initial_status = ContemplantProofStatus::unexecuted();
@@ -233,25 +234,25 @@ async fn request_proof(
         .proof_store
         .write()
         .await
-        .insert(payload.request_id, initial_status);
+        .insert(proof_request.request_id, initial_status);
 
     tokio::spawn(async move {
         let start_time = Instant::now();
 
-        let mock = payload.mock;
-        let stdin = &payload.sp1_stdin;
+        let mock = proof_request.mock;
+        let stdin = &proof_request.sp1_stdin;
 
         let (pk, _) = if mock {
-            state.mock_prover.setup(&payload.elf)
+            state.mock_prover.setup(&proof_request.elf)
         } else {
             // the cuda prover keeps state of the last `setup()` that was called on it.
             // You must call `setup()` then `prove` *each* time you intend to
             // prove a certain program
-            state.cuda_prover.setup(&payload.elf)
+            state.cuda_prover.setup(&proof_request.elf)
         };
 
         // construct proving function based on ProofMode and if it's a CUDA or mock proof
-        let proof_res = match payload.mode {
+        let proof_res = match proof_request.mode {
             ProofMode::UnspecifiedProofMode => Err(anyhow!("UnspecifiedProofMode")),
             ProofMode::Core => {
                 if mock {
@@ -293,11 +294,11 @@ async fn request_proof(
         // Create new proof status based on success or error
         let updated_proof_status = match proof_bytes_res {
             Ok(proof_bytes) => {
-                info!("Completed proof {} in {} minutes", payload, minutes);
+                info!("Completed proof {} in {} minutes", proof_request, minutes);
                 ContemplantProofStatus::executed(proof_bytes)
             }
             Err(e) => {
-                error!("Error proving {} at minute {}: {e}", payload, minutes);
+                error!("Error proving {} at minute {}: {e}", proof_request, minutes);
                 ContemplantProofStatus::unexecutable()
             }
         };
@@ -307,41 +308,17 @@ async fn request_proof(
             .proof_store
             .write()
             .await
-            .insert(payload.request_id, updated_proof_status);
+            .insert(proof_request.request_id, updated_proof_status);
     });
-
-    Ok(StatusCode::OK)
 }
 
 async fn get_proof_request_status(
-    State(state): State<WorkerState>,
-    Path(request_id): Path<String>,
-) -> Result<Json<ContemplantProofStatus>, AppError> {
-    let request_id = match B256::from_str(&request_id) {
-        Ok(r) => r,
-        Err(e) => {
-            let error_msg = format!(
-                "Couldn't parse request_id {request_id} as B256 in get_proof_request_status. Error {e}"
-            );
-            error!("{error_msg}");
-            return Err(anyhow!("{error_msg}").into());
-        }
-    };
-
+    state: WorkerState,
+    request_id: B256,
+) -> Option<ContemplantProofStatus> {
     info!("Received proof status request: {:?}", request_id);
 
     let proof_store = state.proof_store.read().await;
 
-    let proof_status: ContemplantProofStatus = match proof_store.get(&request_id) {
-        Some(status) => {
-            info!("Proof status of {request_id}: {}", status);
-            status.clone()
-        }
-        None => {
-            error!("Proof {} not found", request_id);
-            ContemplantProofStatus::unexecutable()
-        }
-    };
-
-    Ok(Json(proof_status))
+    proof_store.get(&request_id).cloned()
 }

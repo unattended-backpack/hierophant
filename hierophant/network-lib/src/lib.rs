@@ -31,7 +31,7 @@ pub enum FromContemplantMessage {
     // sent from contemplant to hierophant on startup
     Register(WorkerRegisterInfo),
     // sends proof_status responses to the hierophant
-    ProofStatusResponse(B256, ContemplantProofStatus),
+    ProofStatusResponse(B256, Option<ContemplantProofStatus>),
 }
 
 impl Display for FromContemplantMessage {
@@ -46,8 +46,6 @@ pub enum FromHierophantMessage {
     ProofRequest(ContemplantProofRequest),
     // sent from hierophant to contemplant to get the status of a proof
     ProofStatusRequest(B256),
-    // periodically polled by hierophant to make sure the contemplant is still online
-    Heartbeat,
 }
 
 impl Display for FromHierophantMessage {
