@@ -2,26 +2,33 @@ mod config;
 mod types;
 
 use alloy_primitives::B256;
+use futures_util::stream::FuturesUnordered;
+use futures_util::{SinkExt, StreamExt};
 use tokio::time::Instant;
 use types::ProofFromNetwork;
 
+use tokio_tungstenite::{
+    connect_async,
+    tungstenite::protocol::{CloseFrame, Message, frame::coding::CloseCode},
+};
+
 use crate::config::Config;
 use crate::types::{AppError, ProofStore};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use axum::{
+    Json, Router,
     extract::{DefaultBodyLimit, Path, State},
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
 };
 use log::{error, info};
 use network_lib::{
-    ContemplantProofRequest, ContemplantProofStatus, WorkerRegisterInfo, CONTEMPLANT_VERSION,
-    REGISTER_CONTEMPLANT_ENDPOINT,
+    CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus,
+    REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo, WsMessage,
 };
 use reqwest::Client;
 use sp1_sdk::{
-    network::proto::network::ProofMode, utils, CpuProver, CudaProver, Prover, ProverClient,
+    CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
 };
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
@@ -75,23 +82,41 @@ async fn main() -> Result<()> {
         proof_store: proof_store.clone(),
     };
 
-    let app = Router::new()
-        .route("/request_proof", post(request_proof))
-        .route("/status/:request_id", get(get_proof_request_status))
-        .layer(DefaultBodyLimit::disable())
-        .with_state(worker_state);
+    let ws_stream = match connect_async(config.hierophant_ws_address.clone()).await {
+        Ok((stream, response)) => {
+            info!("Handshake to Hierophant has been completed");
+            // This will be the HTTP response, same as with server this is the last moment we
+            // can still access HTTP stuff.
+            info!("Hierophant response was {response:?}");
+            stream
+        }
+        Err(e) => {
+            let error_msg = format!("WebSocket handshake failed with {e}!");
+            error!("{error_msg}");
+            return Err(anyhow!(error_msg));
+        }
+    };
 
-    let port = config.internal_port.to_string();
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
+    let (mut sender, mut receiver) = ws_stream.split();
+
+    let worker_register_info = WorkerRegisterInfo {
+        contemplant_version: CONTEMPLANT_VERSION.into(),
+        name: config.contemplant_name.clone(),
+    };
+    info!(
+        "Sending hierophant at {} worker_register_info {:?}",
+        config.hierophant_ws_address, worker_register_info
+    );
+
+    let register_message = bincode::serialize(&WsMessage::Register(worker_register_info))
+        .context("Serialize worker_register_info")?;
+
+    // send a register request to hierophant
+    sender
+        .send(Message::Binary(register_message))
         .await
-        .unwrap();
-    let local_addr = listener.local_addr().unwrap();
+        .context("Send contemplant register info to hierophant")?;
 
-    // Send a "ready" notification to the hierophant
-    register_worker(config.clone());
-
-    info!("Worker server listening on {}", local_addr);
-    axum::serve(listener, app).await?;
     Ok(())
 }
 
@@ -103,7 +128,7 @@ fn register_worker(config: Config) {
     };
     info!(
         "Sending hierophant at {} worker_register_info {:?}",
-        config.hierophant_address, worker_register_info
+        config.hierophant_ws_address, worker_register_info
     );
     tokio::spawn(async move {
         // Give this server a moment to fully initialize
@@ -115,7 +140,7 @@ fn register_worker(config: Config) {
         match client
             .post(format!(
                 "{}/{REGISTER_CONTEMPLANT_ENDPOINT}",
-                config.hierophant_address
+                config.hierophant_ws_address
             ))
             .json(&worker_register_info)
             .send()
@@ -125,12 +150,12 @@ fn register_worker(config: Config) {
                 if response.status().is_success() {
                     info!(
                         "Successfully registered with hierophant at {}",
-                        config.hierophant_address
+                        config.hierophant_ws_address
                     );
                 } else {
                     error!(
                         "Failed to register with hierophant {}: HTTP {}",
-                        config.hierophant_address,
+                        config.hierophant_ws_address,
                         response.status()
                     );
                 }

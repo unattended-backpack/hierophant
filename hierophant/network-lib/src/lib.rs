@@ -8,13 +8,36 @@ pub const REGISTER_CONTEMPLANT_ENDPOINT: &str = "register_contemplant";
 // Increment this whenever there is a breaking change in the contemplant
 // This is to ensure the contemplant is on the same version as the Hierophant it's
 // connecting to
-pub const CONTEMPLANT_VERSION: &str = "1.0.0";
+pub const CONTEMPLANT_VERSION: &str = "2.0.0";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerRegisterInfo {
     pub name: String,
-    pub port: usize,
     pub contemplant_version: String,
+}
+
+impl Display for WorkerRegisterInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} CONTEMPLANT_VERSION {}",
+            self.name, self.contemplant_version
+        )
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum WsMessage {
+    // sent from contemplant to hierophant on startup
+    Register(WorkerRegisterInfo),
+    // sent from hierophant to contemplant to start working on a new proof
+    ProofRequest(ContemplantProofRequest),
+    // sent from hierophant to contemplant to get the status of a proof
+    ProofStatusRequest(B256),
+    // sends proof_status responses to the hierophant
+    ProofStatusResponse(B256, ContemplantProofStatus),
+    // periodically polled by hierophant to make sure the contemplant is still online
+    Heartbeat,
 }
 
 /*
