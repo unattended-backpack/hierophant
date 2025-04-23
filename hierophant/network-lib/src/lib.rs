@@ -32,6 +32,7 @@ pub enum FromContemplantMessage {
     Register(WorkerRegisterInfo),
     // sends proof_status responses to the hierophant
     ProofStatusResponse(B256, Option<ContemplantProofStatus>),
+    Heartbeat,
 }
 
 impl Display for FromContemplantMessage {

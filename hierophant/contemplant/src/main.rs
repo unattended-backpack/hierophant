@@ -32,7 +32,7 @@ use sp1_sdk::{
 };
 use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, time::Duration};
 
 #[derive(Clone)]
 pub struct WorkerState {
@@ -154,14 +154,34 @@ async fn main() -> Result<()> {
     // this thread receives commands from the Hierophant, processes them, and
     // sometimes sends responses back to Hierophant using the response_sender (which
     // sends messages to send_task)
+    let response_sender_clone = response_sender.clone();
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = ws_receiver.next().await {
             // got some message from hierophant
-            if let Err(e) =
-                handle_message_from_hierophant(worker_state.clone(), msg, response_sender.clone())
-                    .await
+            if let Err(e) = handle_message_from_hierophant(
+                worker_state.clone(),
+                msg,
+                response_sender_clone.clone(),
+            )
+            .await
             {
                 error!("Error handling message {e}");
+                break;
+            }
+        }
+    });
+
+    // Spawns a task that sends a Heartbeat message every <heartbeat_interval_seconds> to the
+    // Hierophant
+    let response_sender_clone = response_sender.clone();
+    let mut heartbeat_task = tokio::spawn(async move {
+        let mut interval =
+            tokio::time::interval(Duration::from_secs(config.heartbeat_interval_seconds));
+        loop {
+            interval.tick().await;
+            let heartbeat = FromContemplantMessage::Heartbeat;
+            if response_sender_clone.send(heartbeat).await.is_err() {
+                // Channel closed, exit
                 break;
             }
         }
@@ -171,8 +191,14 @@ async fn main() -> Result<()> {
     tokio::select! {
         _ = (&mut send_task) => {
             recv_task.abort();
+            heartbeat_task.abort();
         },
         _ = (&mut recv_task) => {
+            send_task.abort();
+            heartbeat_task.abort();
+        }
+        _ = (&mut heartbeat_task) => {
+            recv_task.abort();
             send_task.abort();
         }
     }

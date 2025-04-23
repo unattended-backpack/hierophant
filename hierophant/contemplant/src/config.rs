@@ -13,10 +13,17 @@ pub struct Config {
     // If None, then the contemplant spins up a CUDA prover Docker container.
     #[serde(default = "default_moongate_endpoint")]
     pub moongate_endpoint: Option<String>,
+    // How often to tell Hierophant that the contemplant is still alive
+    #[serde(default = "default_heartbeat_interval_seconds")]
+    pub heartbeat_interval_seconds: u64,
 }
 
 fn default_moongate_endpoint() -> Option<String> {
     None
+}
+
+fn default_heartbeat_interval_seconds() -> u64 {
+    30
 }
 
 // randomly picks a name from old_testament.txt
