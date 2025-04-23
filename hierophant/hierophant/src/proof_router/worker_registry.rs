@@ -262,7 +262,7 @@ impl WorkerRegistry {
 
             info!("Attemping to assign proof request {request_id} to worker {worker_addr}");
 
-            // TODO: this blocks up things for AWHILE (entire time witnessgen is going on)
+            // TODO: this blocks up things for AWHILE
             let worker_response = self
                 .reqwest_client
                 .post(format!("{}/request_proof", worker_addr))
@@ -421,6 +421,8 @@ impl WorkerRegistry {
                 // it's dead & tell coordinator we lost the proof
                 resp_sender.send(Some(Ok(ProofStatus::lost()))).unwrap();
 
+                // TODO: reassign proof
+
                 return;
             }
         };
@@ -471,6 +473,7 @@ impl WorkerRegistry {
 
             // response status not-ok
             resp_sender.send(Some(Err(worker_addr.clone()))).unwrap();
+            // TODO: reassign proof
         }
     }
 
