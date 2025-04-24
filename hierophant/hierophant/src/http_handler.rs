@@ -50,55 +50,21 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
 // This is the last point where we can extract TCP/IP metadata such as IP address of the client
 // as well as things from HTTP headers such as user-agent of the browser etc.
 async fn ws_handler(
+    State(state): State<Arc<HierophantState>>,
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
+    info!("Received ws connection request from {addr}");
+
     // finalize the upgrade process by returning upgrade callback.
     // we can customize the callback by sending additional info such as address.
-    ws.on_upgrade(move |socket| crate::ws_handler::handle_socket(socket, addr))
-}
-
-// TODO: move to worker_router / ws_handler
-async fn handle_register_worker(
-    State(state): State<Arc<HierophantState>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Json(worker_register_info): Json<WorkerRegisterInfo>,
-) -> Result<impl IntoResponse, StatusCode> {
-    info!("\n=== Received Worker Registration Request ===");
-
-    let worker_addr = format!("http://{}:{}", addr.ip(), worker_register_info.port);
-
-    info!(
-        "Received contemplant ready check from {} at {}",
-        worker_register_info.name, worker_addr
-    );
-
-    // check contemplant version
-    if CONTEMPLANT_VERSION != worker_register_info.contemplant_version {
-        error!(
-            "Contemplant {} at {} running incorrect CONTEMPLANT_VERSION: {}. This Hierophant's CONTEMPLANT_VERSION: {}",
-            worker_register_info.name,
-            worker_addr,
-            worker_register_info.contemplant_version,
-            CONTEMPLANT_VERSION
-        );
-        return Err(StatusCode::UPGRADE_REQUIRED);
-    } else {
-        match state
-            .proof_router
-            .worker_registry_client
-            .worker_ready(worker_addr.clone(), worker_register_info.name)
-            .await
-        {
-            Ok(_) => Ok(StatusCode::OK),
-            Err(e) => {
-                let error_msg =
-                    format!("Error sending worker_ready command for worker {worker_addr}: {e}");
-                error!("{error_msg}");
-                Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
-        }
-    }
+    ws.on_upgrade(move |socket| {
+        crate::ws_handler::handle_socket(
+            socket,
+            addr,
+            state.proof_router.worker_registry_client.clone(),
+        )
+    })
 }
 
 async fn contemplants(
