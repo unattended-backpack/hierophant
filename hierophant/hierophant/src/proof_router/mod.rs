@@ -10,7 +10,7 @@ use log::{error, warn};
 use network_lib::ContemplantProofRequest;
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use std::fmt::Display;
-use worker_registry::WorkerRegistryClient;
+pub use worker_registry::WorkerRegistryClient;
 
 use crate::config::Config;
 

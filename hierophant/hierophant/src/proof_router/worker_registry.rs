@@ -4,7 +4,9 @@ use crate::proof_router::request_with_retries;
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
-use network_lib::{ContemplantProofRequest, ContemplantProofStatus};
+use network_lib::{
+    ContemplantProofRequest, ContemplantProofStatus, FromHierophantMessage, WorkerRegisterInfo,
+};
 use reqwest::Client;
 use sp1_sdk::network::proto::network::ProofMode;
 use std::{
@@ -46,11 +48,18 @@ impl WorkerRegistryClient {
         Self { sender }
     }
 
-    pub async fn worker_ready(&self, worker_addr: String, worker_name: String) -> Result<()> {
+    // TODO: add to worker mapping the message_sender channel
+    pub async fn worker_ready(
+        &self,
+        worker_addr: String,
+        worker_register_info: WorkerRegisterInfo,
+        message_sender: mpsc::Sender<FromHierophantMessage>,
+    ) -> Result<()> {
         self.sender
             .send(WorkerRegistryCommand::WorkerReady {
                 worker_addr,
-                worker_name,
+                worker_register_info,
+                message_sender,
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send command WorkerReady: {}", e))
@@ -155,9 +164,11 @@ impl WorkerRegistry {
                 }
                 WorkerRegistryCommand::WorkerReady {
                     worker_addr,
-                    worker_name,
+                    worker_registry_info,
+                    message_sender,
                 } => {
-                    self.handle_worker_ready(worker_addr, worker_name).await;
+                    self.handle_worker_ready(worker_addr, worker_registry_info, message_sender)
+                        .await;
                 }
                 WorkerRegistryCommand::ProofComplete { request_id } => {
                     self.handle_proof_complete(request_id).await;
@@ -316,7 +327,13 @@ impl WorkerRegistry {
         warn!("No workers available for proof {request_id}");
     }
 
-    async fn handle_worker_ready(&mut self, worker_addr: String, worker_name: String) {
+    async fn handle_worker_ready(
+        &mut self,
+        worker_addr: String,
+        worker_register_info: WorkerRegisterInfo,
+    ) {
+        // TODO: don't register them if their contemplant version doesn't match the
+        // hierophants.  Then drop their connection
         let default_state = WorkerState::new(worker_name);
         match self
             .workers
@@ -372,6 +389,8 @@ impl WorkerRegistry {
         }
     }
 
+    // TODO: spawn a task that mimics http request/response that waits for the status response from
+    // the worker
     async fn handle_proof_status(
         &mut self,
         target_request_id: B256,
@@ -493,7 +512,12 @@ pub enum WorkerRegistryCommand {
     },
     WorkerReady {
         worker_addr: String,
-        worker_name: String,
+        worker_register_info: WorkerRegisterInfo,
+        message_sender: mpsc::Sender<FromHierophantMessage>,
+    },
+    // contemplant updating the hierophant of the proof status
+    ProofStatusUpdate {
+        // TODO: idk the best way to do this
     },
     ProofStatus {
         target_request_id: B256,
@@ -508,6 +532,9 @@ pub enum WorkerRegistryCommand {
     },
     Workers {
         resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>,
+    },
+    Heartbeat {
+        worker_addr: String,
     },
 }
 

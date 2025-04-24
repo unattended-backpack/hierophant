@@ -2,7 +2,6 @@ mod config;
 mod types;
 
 use alloy_primitives::B256;
-use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
 use tokio::{sync::mpsc, time::Instant};
 use types::ProofFromNetwork;
@@ -13,24 +12,16 @@ use tokio_tungstenite::{
 };
 
 use crate::config::Config;
-use crate::types::{AppError, ProofStore};
+use crate::types::ProofStore;
 use anyhow::{Context, Result, anyhow};
-use axum::{
-    Json, Router,
-    extract::{DefaultBodyLimit, Path, State},
-    http::StatusCode,
-    routing::{get, post},
-};
-use log::{error, info};
+use log::{error, info, warn};
 use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromContemplantMessage,
-    FromHierophantMessage, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo,
+    FromHierophantMessage, WorkerRegisterInfo,
 };
-use reqwest::Client;
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
 };
-use std::str::FromStr;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{sync::RwLock, time::Duration};
 
@@ -147,7 +138,7 @@ async fn main() -> Result<()> {
 
         // close connection cleanly when contemplant is done
         if let Err(e) = ws_sender.send(Message::Close(None)).await {
-            println!("Could not send Close due to {e:?}, probably it is ok?");
+            warn!("Could not send Close due to {e:?}, probably it is ok?");
         };
     });
 

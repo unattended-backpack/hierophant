@@ -2231,6 +2231,7 @@ dependencies = [
  "axum",
  "bincode",
  "env_logger",
+ "futures-util",
  "hex",
  "hyper 0.14.32",
  "log",

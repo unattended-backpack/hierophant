@@ -3,11 +3,16 @@ use crate::hierophant_state::HierophantState;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{ConnectInfo, Path, State},
+    extract::{
+        ConnectInfo, DefaultBodyLimit, Path, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
+    },
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post, put},
+    routing::{any, get, post, put},
 };
+use futures_util::stream::FuturesUnordered;
+use futures_util::{SinkExt, StreamExt};
 use log::{error, info};
 use network_lib::{CONTEMPLANT_VERSION, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
@@ -27,15 +32,8 @@ pub struct WorkerRegistration {
 // Create the router with all routes
 pub fn create_router(state: Arc<HierophantState>) -> Router {
     Router::new()
-        // Worker registration endpoint
-        .route(
-            format!("/{REGISTER_CONTEMPLANT_ENDPOINT}").as_ref(),
-            put(handle_register_worker),
-        )
-        .route(
-            format!("/{REGISTER_CONTEMPLANT_ENDPOINT}").as_ref(),
-            post(handle_register_worker),
-        )
+        // for contemplant ws connections
+        .route("/ws", any(ws_handler))
         // Artifact upload endpoint
         .route("/upload/:uri", post(handle_artifact_upload))
         .route("/upload/:uri", put(handle_artifact_upload))
@@ -46,6 +44,21 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         .with_state(state)
 }
 
+// The handler for the HTTP request (this gets called when the HTTP request lands at the start
+// of websocket negotiation). After this completes, the actual switching from HTTP to
+// websocket protocol will occur.
+// This is the last point where we can extract TCP/IP metadata such as IP address of the client
+// as well as things from HTTP headers such as user-agent of the browser etc.
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> impl IntoResponse {
+    // finalize the upgrade process by returning upgrade callback.
+    // we can customize the callback by sending additional info such as address.
+    ws.on_upgrade(move |socket| crate::ws_handler::handle_socket(socket, addr))
+}
+
+// TODO: move to worker_router / ws_handler
 async fn handle_register_worker(
     State(state): State<Arc<HierophantState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
