@@ -84,7 +84,7 @@ pub struct ContemplantProofStatus {
 impl ContemplantProofStatus {
     pub fn unexecuted() -> Self {
         Self {
-            execution_status: ExecutionStatus::UnspecifiedExecutionStatus.into(),
+            execution_status: ExecutionStatus::Unexecuted.into(),
             proof: None,
         }
     }

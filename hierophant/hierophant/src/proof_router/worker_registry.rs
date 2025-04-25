@@ -1,6 +1,5 @@
 use crate::hierophant_state::ProofStatus;
 use crate::network::{ExecutionStatus, FulfillmentStatus};
-use crate::proof_router::request_with_retries;
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use hyper::header::ACCESS_CONTROL_EXPOSE_HEADERS;
@@ -18,7 +17,7 @@ use std::{
 };
 use tokio::{
     sync::{mpsc, oneshot},
-    time::{Duration, Instant},
+    time::{Duration, Instant, timeout},
 };
 
 #[derive(Clone, Debug)]
@@ -36,12 +35,15 @@ impl WorkerRegistryClient {
 
         let (sender, receiver) = mpsc::channel(100);
 
+        let awaiting_proof_status_responses = HashMap::new();
+
         let worker_registry = WorkerRegistry {
             cfg_max_worker_heartbeat_interval_secs,
             cfg_max_worker_strikes,
             workers,
             reqwest_client,
             receiver,
+            awaiting_proof_status_responses,
         };
 
         tokio::task::spawn(async move { worker_registry.background_event_loop().await });
@@ -77,6 +79,7 @@ impl WorkerRegistryClient {
         &self,
         worker_addr: String,
         worker_register_info: WorkerRegisterInfo,
+        from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) -> ControlFlow<(), ()> {
         // check to make sure the contemplant is on the same version as the hierophant
         if CONTEMPLANT_VERSION != worker_register_info.contemplant_version {
@@ -97,6 +100,7 @@ impl WorkerRegistryClient {
             .send(WorkerRegistryCommand::WorkerReady {
                 worker_addr,
                 worker_name: worker_register_info.name,
+                from_hierophant_sender,
             })
             .await
         {
@@ -116,51 +120,72 @@ impl WorkerRegistryClient {
             .map_err(|e| anyhow::anyhow!("Failed to send command AssignProofRequest: {}", e))
     }
 
-    // run until we get None (no worker has this proof) or Some(Ok(ProofStatus)).
-    // Each run it potentially trims naughty workers
-    pub async fn proof_status(&self, request_id: B256) -> Result<Option<ProofStatus>> {
-        let mut a_worker_is_assigned = false;
-        loop {
-            let (resp_sender, receiver) = oneshot::channel();
-            self.sender
-                .send(WorkerRegistryCommand::ProofStatus {
-                    target_request_id: request_id,
-                    resp_sender,
-                })
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to send command ProofStatus: {}", e))?;
+    // response from contemplant about a proof_status we previously requested
+    pub async fn proof_status_response(
+        &self,
+        request_id: B256,
+        maybe_proof_status: Option<ContemplantProofStatus>,
+    ) -> ControlFlow<(), ()> {
+        match self
+            .sender
+            .send(WorkerRegistryCommand::ProofStatusResponse {
+                request_id,
+                maybe_proof_status,
+            })
+            .await
+        {
+            Err(e) => {
+                error!(
+                    "Error {e} sending worker registry command ProofStatusResponse.  Worker registry service likely exited"
+                );
+                ControlFlow::Break(())
+            }
+            Ok(_) => ControlFlow::Continue(()),
+        }
+    }
 
-            match receiver.await? {
-                // worker_registry doesn't have any worker assigned to this proof
-                None => {
-                    if a_worker_is_assigned {
-                        error!(
-                            "Worker assigned to proof {request_id} was kicked from the worker registry."
-                        );
-                        // we know from a previous response that there was a worker assigned to
-                        // this proof, but now worker_registry is returning None, meaning the
-                        // worker that was assign stopped responded and was removed from the
-                        // registry
-                        return Ok(Some(ProofStatus::lost()));
-                    } else {
-                        // no worker is assigned to this proof
-                        debug!("proof {request_id} was not assigned to a worker");
-                        // otherwise, the registry doesn't have any worker assigned to this proof
-                        return Ok(None);
+    // None (no worker has this proof) or Some(ProofStatus)
+    // Initiates a request/response pattern with the contemplant over ws (via
+    // WorkerRegistryCommand::ProofStatusRequest)
+    pub async fn proof_status_request(
+        &self,
+        request_id: B256,
+        response_timeout: Duration,
+    ) -> Result<Option<ProofStatus>> {
+        let (resp_sender, receiver) = oneshot::channel::<Option<ContemplantProofStatus>>();
+        self.sender
+            .send(WorkerRegistryCommand::ProofStatusRequest {
+                target_request_id: request_id,
+                resp_sender,
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send command ProofStatus: {}", e))?;
+
+        // wait for the response or for the worker timeout
+        match timeout(response_timeout, receiver).await {
+            Err(_) => {
+                warn!(
+                    "Reached timeout of {} seconds while waiting for a proof_status response for request {}",
+                    response_timeout.as_secs_f32(),
+                    request_id
+                );
+                Ok(None)
+            }
+            Ok(Err(e)) => {
+                // We didn't reach the timeout but the sender was dropped
+                // This most likely means our worker_registry service shut down and is unrecoverable
+                error!("Worker_registry service might be down. {e}");
+                Ok(None)
+            }
+            Ok(Ok(maybe_contemplant_proof_status)) => {
+                match maybe_contemplant_proof_status {
+                    // No worker is assigned to this proof
+                    None => Ok(None),
+                    // got proof status
+                    Some(contemplant_proof_status) => {
+                        let proof_status = contemplant_proof_status.into();
+                        Ok(Some(proof_status))
                     }
-                }
-                // got proof status from worker
-                Some(Ok(proof_status)) => {
-                    return Ok(Some(proof_status));
-                }
-                // Worker assigned to this proof didn't return proof status
-                Some(Err(worker_addr)) => {
-                    error!(
-                        "Worker {worker_addr} assigned to proof {request_id} didn't return proof status"
-                    );
-                    // we know a worker was working on this proof, but we didn't get a response
-                    // from them
-                    a_worker_is_assigned = true;
                 }
             }
         }
@@ -192,9 +217,9 @@ pub struct WorkerRegistry {
     pub workers: HashMap<String, WorkerState>,
     pub reqwest_client: Client,
     pub receiver: mpsc::Receiver<WorkerRegistryCommand>,
-    // mapping proof_request_id -> ContemplantProofStatus for currently outbound proof status
-    // requests that are being awaited in a thread
-    pub awaiting_proof_status_responses: HashMap<B256, mpsc::Sender<ContemplantProofStatus>>,
+    // mapping for currently outbound proof status requests that are being awaited in a thread
+    pub awaiting_proof_status_responses:
+        HashMap<B256, Vec<oneshot::Sender<Option<ContemplantProofStatus>>>>,
 }
 
 impl WorkerRegistry {
@@ -213,8 +238,10 @@ impl WorkerRegistry {
                 WorkerRegistryCommand::WorkerReady {
                     worker_addr,
                     worker_name,
+                    from_hierophant_sender,
                 } => {
-                    self.handle_worker_ready(worker_addr, worker_name).await;
+                    self.handle_worker_ready(worker_addr, worker_name, from_hierophant_sender)
+                        .await;
                 }
                 WorkerRegistryCommand::ProofComplete { request_id } => {
                     self.handle_proof_complete(request_id).await;
@@ -226,11 +253,11 @@ impl WorkerRegistry {
                     self.handle_proof_status_response(request_id, maybe_proof_status)
                         .await;
                 }
-                WorkerRegistryCommand::ProofStatus {
+                WorkerRegistryCommand::ProofStatusRequest {
                     target_request_id,
                     resp_sender,
                 } => {
-                    self.handle_proof_status(target_request_id, resp_sender)
+                    self.handle_proof_status_request(target_request_id, resp_sender)
                         .await;
                 }
                 WorkerRegistryCommand::Workers { resp_sender } => {
@@ -407,8 +434,13 @@ impl WorkerRegistry {
         warn!("No workers available for proof {request_id}");
     }
 
-    async fn handle_worker_ready(&mut self, worker_addr: String, worker_name: String) {
-        let default_state = WorkerState::new(worker_name.clone());
+    async fn handle_worker_ready(
+        &mut self,
+        worker_addr: String,
+        worker_name: String,
+        from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
+    ) {
+        let default_state = WorkerState::new(worker_name.clone(), from_hierophant_sender);
         match self
             .workers
             .insert(worker_addr.clone(), default_state.clone())
@@ -482,25 +514,27 @@ impl WorkerRegistry {
         request_id: B256,
         maybe_proof_status: Option<ContemplantProofStatus>,
     ) {
-        // remove the sender from this mapping and send the proof status to the thread awaiting it
-        let sender = match self.awaiting_proof_status_responses.remove(&request_id) {
+        // remove the senders from this mapping and send the proof status to the threads awaiting it
+        let tasks_awaiting = match self.awaiting_proof_status_responses.remove(&request_id) {
             Some(s) => s,
             None => {
                 return;
             }
         };
 
-        if let Err(e) = sender.send(maybe_proof_status).await {
-            error!("{e}");
+        // send the proof status to all tasks waiting for it
+        for sender in tasks_awaiting {
+            if let Err(_) = sender.send(maybe_proof_status.clone()) {
+                error!("Receiver for proof status request {request_id} dropped");
+            }
         }
     }
 
-    // TODO: spawn a task that mimics http request/response that waits for the status response from
-    // the worker
-    async fn handle_proof_status(
+    // sends a command to get proof status to a contemplant over ws
+    async fn handle_proof_status_request(
         &mut self,
         target_request_id: B256,
-        resp_sender: oneshot::Sender<Option<std::result::Result<ProofStatus, String>>>,
+        resp_sender: oneshot::Sender<Option<ContemplantProofStatus>>,
     ) {
         // remove any dead workers
         self.trim_workers();
@@ -517,89 +551,41 @@ impl WorkerRegistry {
                 None => {
                     // This proof wasn't assigned to any worker, return none
                     info!("No worker is assigned to proof {}", target_request_id);
-                    resp_sender.send(None).unwrap();
+                    resp_sender.send(None);
                     return;
                 }
             };
 
-        info!("Worker {} is {}", worker_state.name, worker_state.status);
+        info!(
+            "Worker {} at {} is {}",
+            worker_state.name, worker_addr, worker_state.status
+        );
 
-        // forward proof_status request to worker
-        let worker_proof_status_request = || {
-            self.reqwest_client
-                .get(format!("{}/status/{}", worker_addr, target_request_id))
-                .send()
-        };
-
-        let retries = 3;
-        let response = match request_with_retries(retries, worker_proof_status_request).await {
-            Ok(worker_response) => worker_response,
-            Err(err) => {
-                // TODO: could make a StrikeWorker command then make handling
-                // reqwest responses more async by moving them to a tokio task
-                worker_state.add_strikes(retries);
-                error!(
-                    "Failed to send request {}/status/{}. Error: {}",
-                    worker_addr, target_request_id, err
-                );
-                // there's a worker assigned but we can't communicate with it.  Assume
-                // it's dead & tell coordinator we lost the proof
-                resp_sender.send(Some(Ok(ProofStatus::lost()))).unwrap();
-
-                // TODO: reassign proof
-
-                return;
-            }
-        };
-
-        if response.status().is_success() {
-            let contemplant_proof_status: ContemplantProofStatus = match response.json().await {
-                Ok(proof_status) => proof_status,
-                Err(err) => {
-                    worker_state.add_strike();
-                    error!(
-                        "Error deserializing response from {}/status/{}.Error: {}",
-                        worker_addr, target_request_id, err
-                    );
-
-                    // can't deserialize request
-                    resp_sender.send(Some(Err(worker_addr.clone()))).unwrap();
-
-                    return;
-                }
-            };
-
-            // TODO: implement From<ContemplantProofStatus> for ProofStatus
-            let proof_status = match contemplant_proof_status.proof {
-                Some(proof) => ProofStatus {
-                    fulfillment_status: FulfillmentStatus::Fulfilled.into(),
-                    execution_status: ExecutionStatus::Executed.into(),
-                    proof,
-                },
-                None => ProofStatus {
-                    fulfillment_status: FulfillmentStatus::Assigned.into(),
-                    execution_status: ExecutionStatus::Unexecuted.into(),
-                    proof: Vec::new(),
-                },
-            };
-
-            resp_sender.send(Some(Ok(proof_status))).unwrap();
-        } else {
-            // TODO: could make a StrikeWorker command then make handling
-            // reqwest responses more async by moving them to a tokio task
+        // send proof status request to the contemplant working on this proof
+        if let Err(e) = worker_state
+            .from_hierophant_sender
+            .send(FromHierophantMessage::ProofStatusRequest(target_request_id))
+            .await
+        {
+            // The receiving end of this was dropped because the ws was dropped.
+            // This means we're no longer connected to this contemplant.  It'll get cleaned up by
+            // the `trim_workers()` task.
             worker_state.add_strike();
-            error!(
-                "Failed to get response from {}/status/{}. Status code {}: {:?}",
-                worker_addr,
-                target_request_id,
-                response.status().as_u16(),
-                response.status().canonical_reason()
+            // TODO: proof re-assignment if this worker was in the middle of the proof
+            warn!(
+                "No longer connected to worker {} at {} who was working on proof {target_request_id} (error {e})",
+                worker_state.name, worker_addr
             );
-
-            // response status not-ok
-            resp_sender.send(Some(Err(worker_addr.clone()))).unwrap();
-            // TODO: reassign proof
+            resp_sender.send(None);
+            return;
         }
+
+        // add to mapping so we can send a response via resp_sender when we hear back from the
+        // contemplant
+        self.awaiting_proof_status_responses
+            .entry(target_request_id)
+            .or_insert_with(Vec::new)
+            .push(resp_sender);
     }
 
     fn handle_workers(&self, resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>) {
@@ -619,21 +605,17 @@ pub enum WorkerRegistryCommand {
     WorkerReady {
         worker_addr: String,
         worker_name: String,
+        from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     },
-    // triggered when sp1_sdk requests proof status.
-    // sends proof status request to contemplant
-    // Spawns a thread that awaits a ContemplantProofStatusRequest
-    ProofStatusDispatcher {
+    // sp1_sdk requests the status of a proof
+    ProofStatusRequest {
         target_request_id: B256,
+        resp_sender: oneshot::Sender<Option<ContemplantProofStatus>>,
     },
-    // contemplant responding with a proof status that was previously requested
+    // a contemplant responds with a previously requested proof status
     ProofStatusResponse {
         request_id: B256,
-        maybe_proof_status: Option<ContemplantProofRequest>,
-    },
-    // responds to sp1_sdk proof status request
-    ProofStatusResponder {
-        resp_sender: oneshot::Sender<Option<std::result::Result<ProofStatus, String>>>,
+        maybe_proof_status: Option<ContemplantProofStatus>,
     },
     ProofComplete {
         request_id: B256,
@@ -659,32 +641,40 @@ impl fmt::Debug for WorkerRegistryCommand {
             WorkerRegistryCommand::ProofComplete { .. } => {
                 format!("ProofComplete")
             }
-            WorkerRegistryCommand::ProofStatus { .. } => {
-                format!("ProofStatus")
+            WorkerRegistryCommand::ProofStatusRequest { .. } => {
+                format!("ProofStatusRequest")
+            }
+            WorkerRegistryCommand::ProofStatusResponse { .. } => {
+                format!("ProofStatusResponse")
             }
             WorkerRegistryCommand::Workers { .. } => {
                 format!("Workers")
+            }
+            WorkerRegistryCommand::Heartbeat { .. } => {
+                format!("Heartbeat")
             }
         };
         write!(f, "{command}")
     }
 }
 
-#[derive(Eq, PartialEq, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct WorkerState {
     name: String,
     status: WorkerStatus,
     strikes: usize,
     last_heartbeat: Instant,
+    from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
 }
 
 impl WorkerState {
-    fn new(name: String) -> Self {
+    fn new(name: String, from_hierophant_sender: mpsc::Sender<FromHierophantMessage>) -> Self {
         Self {
             name,
             status: WorkerStatus::Idle,
             strikes: 0,
             last_heartbeat: Instant::now(),
+            from_hierophant_sender,
         }
     }
     fn is_busy(&self) -> bool {

@@ -129,11 +129,13 @@ async fn handle_message_from_contemplant(
             // Return this result.  If the worker is on a wrong version this will be an error
             // and we should close the connection with the worker.
             worker_registry_client
-                .worker_ready(worker_addr, worker_register_info)
+                .worker_ready(worker_addr, worker_register_info, from_hierophant_sender)
                 .await
         }
         FromContemplantMessage::ProofStatusResponse(request_id, maybe_proof_status) => {
-            // TODO:
+            worker_registry_client
+                .proof_status_response(request_id, maybe_proof_status)
+                .await
         }
         FromContemplantMessage::Heartbeat => {
             // if we receive a heartbeat from a worker that we evicted, close the connection to it

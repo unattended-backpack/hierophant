@@ -3,6 +3,7 @@ use crate::config::Config;
 use crate::network::{ExecutionStatus, FulfillmentStatus, Program, RequestProofRequestBody};
 use crate::proof_router::ProofRouter;
 use alloy_primitives::{Address, B256};
+use network_lib::ContemplantProofStatus;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
 use tokio::sync::Mutex;
@@ -102,6 +103,38 @@ pub struct ProofStatus {
     pub fulfillment_status: i32,
     pub execution_status: i32,
     pub proof: Vec<u8>,
+}
+
+// CotemplantProofStatus structs are only constructed using it's methods `unexected()`,
+// `executed` or `unexectable` so it will only have a proof when it's executed.  Otherwise
+// this would be unsound code.
+impl From<ContemplantProofStatus> for ProofStatus {
+    fn from(contemplant_proof_status: ContemplantProofStatus) -> Self {
+        match ExecutionStatus::try_from(contemplant_proof_status.execution_status)
+            .unwrap_or(ExecutionStatus::UnspecifiedExecutionStatus)
+        {
+            ExecutionStatus::UnspecifiedExecutionStatus => Self {
+                fulfillment_status: FulfillmentStatus::UnspecifiedFulfillmentStatus.into(),
+                execution_status: ExecutionStatus::UnspecifiedExecutionStatus.into(),
+                proof: vec![],
+            },
+            ExecutionStatus::Unexecuted => Self {
+                fulfillment_status: FulfillmentStatus::Assigned.into(),
+                execution_status: ExecutionStatus::Unexecuted.into(),
+                proof: vec![],
+            },
+            ExecutionStatus::Executed => Self {
+                fulfillment_status: FulfillmentStatus::Fulfilled.into(),
+                execution_status: ExecutionStatus::Executed.into(),
+                proof: contemplant_proof_status.proof.unwrap(),
+            },
+            ExecutionStatus::Unexecutable => Self {
+                fulfillment_status: FulfillmentStatus::Unfulfillable.into(),
+                execution_status: ExecutionStatus::Unexecutable.into(),
+                proof: vec![],
+            },
+        }
+    }
 }
 
 impl ProofStatus {

@@ -10,6 +10,7 @@ use log::{error, warn};
 use network_lib::ContemplantProofRequest;
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use std::fmt::Display;
+use tokio::time::Duration;
 pub use worker_registry::WorkerRegistryClient;
 
 use crate::config::Config;
@@ -18,6 +19,7 @@ use crate::config::Config;
 pub struct ProofRouter {
     pub worker_registry_client: WorkerRegistryClient,
     pub mock_mode: bool,
+    pub proof_status_timeout: Duration,
 }
 
 impl ProofRouter {
@@ -31,6 +33,7 @@ impl ProofRouter {
         Self {
             worker_registry_client,
             mock_mode: config.mock_mode,
+            proof_status_timeout: config.worker_response_timeout_secs,
         }
     }
 
@@ -89,7 +92,7 @@ impl ProofRouter {
     pub async fn get_proof_status(&self, proof_request_id: B256) -> Result<ProofStatus> {
         match self
             .worker_registry_client
-            .proof_status(proof_request_id)
+            .proof_status_request(proof_request_id, self.proof_status_timeout)
             .await
         {
             Ok(Some(status)) => Ok(status),
@@ -107,41 +110,4 @@ impl ProofRouter {
             }
         }
     }
-}
-
-// helper function to send requests to workers multiple times
-pub async fn request_with_retries<F, Fut, T, E>(
-    max_retries: usize,
-    mut request_fn: F,
-) -> Result<T, anyhow::Error>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<T, E>>,
-    E: Display,
-{
-    let mut retry_num = 0;
-    let mut last_error = None;
-
-    while retry_num < max_retries {
-        let request = request_fn();
-        match request.await {
-            Ok(res) => return Ok(res),
-            Err(err) => {
-                let error_msg = format!(
-                    "Prover network request retry {}/{} failed: {}",
-                    retry_num, max_retries, err
-                );
-                error!("{}", error_msg);
-
-                last_error = Some(anyhow!("{}", err));
-            }
-        }
-        retry_num += 1;
-    }
-
-    Err(anyhow!(
-        "All {} requests to the prover network failed. Last error: {}",
-        max_retries,
-        last_error.unwrap_or_else(|| anyhow!("Unknown error"))
-    ))
 }

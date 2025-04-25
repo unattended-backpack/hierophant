@@ -20,6 +20,13 @@ pub struct Config {
         deserialize_with = "deserialize_duration_from_secs"
     )]
     pub max_worker_heartbeat_interval_secs: Duration,
+    // How long to wait for a response from a worker before evicting them.
+    // For example, Hierophant waiting for a response from a worker on a proof_status_request
+    #[serde(
+        default = "default_worker_response_timeout_secs",
+        deserialize_with = "deserialize_duration_from_secs"
+    )]
+    pub worker_response_timeout_secs: Duration,
     // publicly reachable address of this Hierophant for artifact uploads
     // TODO: remove, should discover this
     pub this_hierophant_ip: String,
@@ -38,6 +45,11 @@ pub struct Config {
     // Where artifacts are stored on-disk
     #[serde(default = "default_artifact_store_directory")]
     pub artifact_store_directory: String,
+}
+
+fn default_worker_response_timeout_secs() -> Duration {
+    // If the worker doesn't response within 20 seconds they're likely dead
+    Duration::from_secs(20)
 }
 
 fn default_max_worker_heartbeat_interval_secs() -> Duration {
