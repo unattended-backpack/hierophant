@@ -1,5 +1,7 @@
+use std::time::Duration;
+
 use alloy_primitives::Address;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -11,6 +13,13 @@ pub struct Config {
     // when it fails to respond to a request
     #[serde(default = "default_max_worker_strikes")]
     pub max_worker_strikes: usize,
+    // How long between worker heartbeats to wait before evicting workers.
+    // For reference, the default worker heartbeat is 30 seconds.
+    #[serde(
+        default = "default_max_worker_heartbeat_interval_secs",
+        deserialize_with = "deserialize_duration_from_secs"
+    )]
+    pub max_worker_heartbeat_interval_secs: Duration,
     // publicly reachable address of this Hierophant for artifact uploads
     // TODO: remove, should discover this
     pub this_hierophant_ip: String,
@@ -29,6 +38,11 @@ pub struct Config {
     // Where artifacts are stored on-disk
     #[serde(default = "default_artifact_store_directory")]
     pub artifact_store_directory: String,
+}
+
+fn default_max_worker_heartbeat_interval_secs() -> Duration {
+    // Give the workers a large berth by default, 3 mins
+    Duration::from_secs(3 * 60)
 }
 
 fn default_proof_cache_directory() -> String {
@@ -57,4 +71,14 @@ fn default_grpc_port() -> u16 {
 
 fn default_http_port() -> u16 {
     9010
+}
+
+// Custom deserializer function for Duration from seconds
+fn deserialize_duration_from_secs<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // This will attempt to deserialize the input as a u64
+    let seconds = u64::deserialize(deserializer)?;
+    Ok(Duration::from_secs(seconds))
 }

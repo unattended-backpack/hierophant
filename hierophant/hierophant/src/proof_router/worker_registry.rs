@@ -11,13 +11,14 @@ use network_lib::{
 };
 use reqwest::Client;
 use sp1_sdk::network::proto::network::ProofMode;
+use std::ops::ControlFlow;
 use std::{
     collections::HashMap,
     fmt::{self, Display},
 };
 use tokio::{
     sync::{mpsc, oneshot},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Debug)]
@@ -25,20 +26,18 @@ pub struct WorkerRegistryClient {
     pub sender: mpsc::Sender<WorkerRegistryCommand>,
 }
 
-impl Default for WorkerRegistryClient {
-    fn default() -> Self {
-        Self::new(3)
-    }
-}
-
 impl WorkerRegistryClient {
-    pub fn new(cfg_max_worker_strikes: usize) -> Self {
+    pub fn new(
+        cfg_max_worker_strikes: usize,
+        cfg_max_worker_heartbeat_interval_secs: Duration,
+    ) -> Self {
         let workers = HashMap::new();
         let reqwest_client = Client::new();
 
         let (sender, receiver) = mpsc::channel(100);
 
         let worker_registry = WorkerRegistry {
+            cfg_max_worker_heartbeat_interval_secs,
             cfg_max_worker_strikes,
             workers,
             reqwest_client,
@@ -50,12 +49,35 @@ impl WorkerRegistryClient {
         Self { sender }
     }
 
-    // TODO: add to worker mapping the message_sender channel
+    pub async fn heartbeat(&self, worker_addr: String) -> ControlFlow<(), ()> {
+        let (sender, receiver) = oneshot::channel();
+        self.sender.send(WorkerRegistryCommand::Heartbeat {
+            worker_addr,
+            should_drop_sender: sender,
+        });
+
+        match receiver.await {
+            Ok(should_drop) => {
+                if should_drop {
+                    // tell ws_handler to drop this connection
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            }
+            Err(e) => {
+                // error here isn't a good enough reason to drop the contemplant
+                error!("{e}");
+                ControlFlow::Continue(())
+            }
+        }
+    }
+
     pub async fn worker_ready(
         &self,
         worker_addr: String,
         worker_register_info: WorkerRegisterInfo,
-    ) -> Result<()> {
+    ) -> ControlFlow<(), ()> {
         // check to make sure the contemplant is on the same version as the hierophant
         if CONTEMPLANT_VERSION != worker_register_info.contemplant_version {
             let error = anyhow!(
@@ -66,16 +88,25 @@ impl WorkerRegistryClient {
                 CONTEMPLANT_VERSION
             );
             warn!("{error}");
-            return Err(error);
+            // end this ws connection
+            return ControlFlow::Break(());
         }
 
-        self.sender
+        match self
+            .sender
             .send(WorkerRegistryCommand::WorkerReady {
                 worker_addr,
-                worker_name,
+                worker_name: worker_register_info.name,
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to send command WorkerReady: {}", e))
+        {
+            Ok(_) => ControlFlow::Continue(()),
+            Err(e) => {
+                error!("Worker registry process ended early. {e}");
+                // Program shutting down, end ws connections cleanly
+                ControlFlow::Break(())
+            }
+        }
     }
 
     pub async fn assign_proof_request(&self, proof_request: ContemplantProofRequest) -> Result<()> {
@@ -155,6 +186,7 @@ impl WorkerRegistryClient {
 
 pub struct WorkerRegistry {
     pub cfg_max_worker_strikes: usize,
+    pub cfg_max_worker_heartbeat_interval_secs: Duration,
     // Using a HashMap is a fine complexity tradeoff because we'll never have >20 workers, so
     // iterating isn't horrible in reality.
     pub workers: HashMap<String, WorkerState>,
@@ -204,6 +236,12 @@ impl WorkerRegistry {
                 WorkerRegistryCommand::Workers { resp_sender } => {
                     self.handle_workers(resp_sender);
                 }
+                WorkerRegistryCommand::Heartbeat {
+                    worker_addr,
+                    should_drop_sender,
+                } => {
+                    self.handle_heartbeat(worker_addr, should_drop_sender);
+                }
             };
 
             let secs = start.elapsed().as_secs_f64();
@@ -224,7 +262,10 @@ impl WorkerRegistry {
             .workers
             .iter_mut()
             .filter_map(|(worker_addr, worker_state)| {
-                if worker_state.should_drop(self.cfg_max_worker_strikes) {
+                if worker_state.should_drop(
+                    self.cfg_max_worker_strikes,
+                    self.cfg_max_worker_heartbeat_interval_secs,
+                ) {
                     Some(worker_addr.clone())
                 } else {
                     None
@@ -253,6 +294,24 @@ impl WorkerRegistry {
                 }
             }
         }
+    }
+
+    // updates worker's last heartbeat
+    // if the worker doesn't exist then we order ws_handler to drop the connection
+    fn handle_heartbeat(&mut self, worker_addr: String, should_drop_sender: oneshot::Sender<bool>) {
+        let should_drop = match self.workers.get_mut(&worker_addr) {
+            Some(worker) => {
+                // re-set last heartbeat
+                worker.heartbeat();
+                false
+            }
+            // received a heartbeat from a worker we evicted.  They're still connected by ws so we
+            // should drop them
+            None => true,
+        };
+
+        // does what it says on the can
+        should_drop_sender.send(should_drop);
     }
 
     async fn handle_assign_proof(&mut self, proof_request: &ContemplantProofRequest) {
@@ -356,7 +415,12 @@ impl WorkerRegistry {
         {
             Some(old_state) => {
                 // if this worker was working on a proof but we didn't drop it
-                if old_state.is_busy() && !old_state.should_drop(self.cfg_max_worker_strikes) {
+                if old_state.is_busy()
+                    && !old_state.should_drop(
+                        self.cfg_max_worker_strikes,
+                        self.cfg_max_worker_heartbeat_interval_secs,
+                    )
+                {
                     // TODO: re-assign this proof request
                     // Currently, this is resolved when sp1_sdk requests the proof status because
                     // the hierophant will see no worker working on it and will re-assign.  But we
@@ -579,6 +643,7 @@ pub enum WorkerRegistryCommand {
     },
     Heartbeat {
         worker_addr: String,
+        should_drop_sender: oneshot::Sender<bool>,
     },
 }
 
@@ -610,6 +675,7 @@ pub struct WorkerState {
     name: String,
     status: WorkerStatus,
     strikes: usize,
+    last_heartbeat: Instant,
 }
 
 impl WorkerState {
@@ -618,6 +684,7 @@ impl WorkerState {
             name,
             status: WorkerStatus::Idle,
             strikes: 0,
+            last_heartbeat: Instant::now(),
         }
     }
     fn is_busy(&self) -> bool {
@@ -627,14 +694,6 @@ impl WorkerState {
     fn add_strike(&mut self) {
         self.strikes += 1;
         debug!("Strike added to worker.  New strikes: {}", self.strikes);
-    }
-
-    fn add_strikes(&mut self, strikes: usize) {
-        self.strikes += strikes;
-        debug!(
-            "{} strikes added to worker.  New strikes: {}",
-            strikes, self.strikes
-        );
     }
 
     fn assigned_proof(&mut self, request_id: B256, proof_mode: ProofMode) {
@@ -647,8 +706,33 @@ impl WorkerState {
         self.strikes = 0;
     }
 
-    fn should_drop(&self, cfg_max_worker_strikes: usize) -> bool {
-        self.strikes >= cfg_max_worker_strikes
+    fn heartbeat(&mut self) {
+        self.last_heartbeat = Instant::now();
+    }
+
+    // drop worker if they have too many strikes OR
+    // if it's been too long since their last heartbeat
+    fn should_drop(
+        &self,
+        cfg_max_worker_strikes: usize,
+        cfg_max_worker_heartbeat_interval_secs: Duration,
+    ) -> bool {
+        if self.strikes >= cfg_max_worker_strikes {
+            warn!(
+                "Dropping contemplant {} because they have {} strikes",
+                self.name, self.strikes
+            );
+            true
+        } else if self.last_heartbeat.elapsed() >= cfg_max_worker_heartbeat_interval_secs {
+            warn!(
+                "Dropping contemplant {} because their last heartbeat was {} seconds ago",
+                self.name,
+                self.last_heartbeat.elapsed().as_secs_f32()
+            );
+            true
+        } else {
+            false
+        }
     }
 
     // returns the proof it's currently working on, if any

@@ -23,7 +23,10 @@ pub struct ProofRouter {
 impl ProofRouter {
     // TODO: Should config live at the top level or is inside here okay?
     pub fn new(config: &Config) -> Self {
-        let worker_registry_client = WorkerRegistryClient::new(config.max_worker_strikes);
+        let worker_registry_client = WorkerRegistryClient::new(
+            config.max_worker_strikes,
+            config.max_worker_heartbeat_interval_secs,
+        );
 
         Self {
             worker_registry_client,

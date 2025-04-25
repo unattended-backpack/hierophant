@@ -4,6 +4,7 @@ use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
 use log::{error, info, warn};
 use network_lib::{FromContemplantMessage, FromHierophantMessage};
+use std::ops::ControlFlow;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::mpsc;
 
@@ -69,15 +70,15 @@ pub async fn handle_socket(
     let mut recv_task = tokio::spawn(async move {
         // wait to receive Messages from the Contemplant's ws
         while let Some(Ok(msg)) = ws_receiver.next().await {
-            if let Err(e) = handle_message_from_contemplant(
+            if handle_message_from_contemplant(
                 msg,
                 who,
                 &worker_registry_client,
                 from_hierophant_msg_sender.clone(),
             )
             .await
+            .is_break()
             {
-                error!("{e}");
                 break;
             }
         }
@@ -97,26 +98,26 @@ pub async fn handle_socket(
 }
 
 // processes a message from the contemplant
-// Returning an error from this function will close the connection to the contemplant
+// returns Continue or Break to decide if the ws connection should be cut or not
 async fn handle_message_from_contemplant(
     msg: Message,
     socket_addr: SocketAddr,
     worker_registry_client: &WorkerRegistryClient,
     // channel that forwards messages to the contemplant via ws
     from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
-) -> Result<()> {
+) -> ControlFlow<(), ()> {
     // parse message into FromContemplantMessage
     let msg: FromContemplantMessage = match msg {
         Message::Binary(bytes) => match bincode::deserialize(&bytes) {
             Ok(ws_msg) => ws_msg,
             Err(e) => {
                 error!("Error deserializing message: {e}");
-                return Ok(());
+                return ControlFlow::Continue(());
             }
         },
         _ => {
             error!("Unsupported message type {:?}", msg);
-            return Ok(());
+            return ControlFlow::Continue(());
         }
     };
 
@@ -133,11 +134,11 @@ async fn handle_message_from_contemplant(
         }
         FromContemplantMessage::ProofStatusResponse(request_id, maybe_proof_status) => {
             // TODO:
-            Ok(())
         }
         FromContemplantMessage::Heartbeat => {
-            // TODO:
-            Ok(())
+            // if we receive a heartbeat from a worker that we evicted, close the connection to it
+            // by returning an error from here
+            worker_registry_client.heartbeat(worker_addr).await
         }
     }
 }
