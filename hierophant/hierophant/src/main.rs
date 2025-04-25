@@ -17,22 +17,12 @@ use crate::config::Config;
 use crate::hierophant_state::HierophantState;
 use anyhow::Context;
 use artifact::artifact_store_server::ArtifactStoreServer;
-use axum::{
-    Router,
-    body::Bytes,
-    extract::{
-        ConnectInfo, DefaultBodyLimit, Path, State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
-    },
-    response::IntoResponse,
-    routing::any,
-};
+use axum::extract::DefaultBodyLimit;
 use create_artifact_service::ArtifactStoreService;
-use log::{error, info, warn};
+use log::info;
 use network::prover_network_server::ProverNetworkServer;
-use network_lib::FromContemplantMessage;
 use prover_network_service::ProverNetworkService;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, sync::Arc};
 use tonic::transport::Server;
 
 #[tokio::main]

@@ -6,10 +6,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::{sync::mpsc, time::Instant};
 use types::ProofFromNetwork;
 
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::protocol::{CloseFrame, Message, frame::coding::CloseCode},
-};
+use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
 use crate::config::Config;
 use crate::types::ProofStore;

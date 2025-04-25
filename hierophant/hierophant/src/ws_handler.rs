@@ -1,30 +1,19 @@
 use crate::proof_router::WorkerRegistryClient;
-use anyhow::Result;
-use futures_util::stream::FuturesUnordered;
 use futures_util::{SinkExt, StreamExt};
 use log::{error, info, warn};
 use network_lib::{FromContemplantMessage, FromHierophantMessage};
+use std::net::SocketAddr;
 use std::ops::ControlFlow;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::mpsc;
 
-use axum::{
-    Router,
-    body::Bytes,
-    extract::{
-        ConnectInfo, DefaultBodyLimit, Path, State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
-    },
-    response::IntoResponse,
-    routing::any,
-};
+use axum::extract::ws::{Message, WebSocket};
 
 // Actual websocket statemachine (one will be spawned per connection)
 // Will spawn 2 tasks for each connection:
 //      1. Receiving messages (Register, ProofStatusResponse, Heartbeat, etc)
 //      2. Sending messages (ProofRequest, ProofStatusRequest, etc)
 pub async fn handle_socket(
-    mut socket: WebSocket,
+    socket: WebSocket,
     who: SocketAddr,
     worker_registry_client: WorkerRegistryClient,
 ) {

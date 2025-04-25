@@ -1,8 +1,6 @@
 use crate::hierophant_state::ProofStatus;
-use crate::network::{ExecutionStatus, FulfillmentStatus};
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
-use hyper::header::ACCESS_CONTROL_EXPOSE_HEADERS;
 use log::{debug, error, info, trace, warn};
 use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromHierophantMessage,
@@ -53,10 +51,16 @@ impl WorkerRegistryClient {
 
     pub async fn heartbeat(&self, worker_addr: String) -> ControlFlow<(), ()> {
         let (sender, receiver) = oneshot::channel();
-        self.sender.send(WorkerRegistryCommand::Heartbeat {
-            worker_addr,
-            should_drop_sender: sender,
-        });
+        if let Err(e) = self
+            .sender
+            .send(WorkerRegistryCommand::Heartbeat {
+                worker_addr,
+                should_drop_sender: sender,
+            })
+            .await
+        {
+            error!("Failed to send command Heartbeat: {}", e);
+        }
 
         match receiver.await {
             Ok(should_drop) => {
@@ -338,7 +342,7 @@ impl WorkerRegistry {
         };
 
         // does what it says on the can
-        should_drop_sender.send(should_drop);
+        let _ = should_drop_sender.send(should_drop);
     }
 
     async fn handle_assign_proof(&mut self, proof_request: &ContemplantProofRequest) {
@@ -368,6 +372,7 @@ impl WorkerRegistry {
             // early
             return;
         }
+        // TODO: combine the two loops
 
         // iterate over all idle workers
         for (worker_addr, worker_state) in self.workers.iter_mut() {
@@ -551,7 +556,7 @@ impl WorkerRegistry {
                 None => {
                     // This proof wasn't assigned to any worker, return none
                     info!("No worker is assigned to proof {}", target_request_id);
-                    resp_sender.send(None);
+                    let _ = resp_sender.send(None);
                     return;
                 }
             };
@@ -576,7 +581,7 @@ impl WorkerRegistry {
                 "No longer connected to worker {} at {} who was working on proof {target_request_id} (error {e})",
                 worker_state.name, worker_addr
             );
-            resp_sender.send(None);
+            let _ = resp_sender.send(None);
             return;
         }
 

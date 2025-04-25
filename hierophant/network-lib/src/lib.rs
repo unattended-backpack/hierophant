@@ -71,7 +71,11 @@ impl Display for ContemplantProofRequest {
         let mock = self.mock;
         let mode = self.mode.as_str_name();
 
-        write!(f, "{mode} proof with request id {request_id}")
+        if mock {
+            write!(f, "{mode} mock proof with request id {request_id}")
+        } else {
+            write!(f, "{mode} proof with request id {request_id}")
+        }
     }
 }
 

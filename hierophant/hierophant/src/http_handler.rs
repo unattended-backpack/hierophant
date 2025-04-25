@@ -3,18 +3,12 @@ use crate::hierophant_state::HierophantState;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{
-        ConnectInfo, DefaultBodyLimit, Path, State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
-    },
+    extract::{ConnectInfo, Path, State, ws::WebSocketUpgrade},
     http::StatusCode,
     response::IntoResponse,
     routing::{any, get, post, put},
 };
-use futures_util::stream::FuturesUnordered;
-use futures_util::{SinkExt, StreamExt};
 use log::{error, info};
-use network_lib::{CONTEMPLANT_VERSION, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::hash_map::DefaultHasher,

@@ -6,10 +6,9 @@ use crate::{
 };
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
-use log::{error, warn};
+use log::warn;
 use network_lib::ContemplantProofRequest;
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
-use std::fmt::Display;
 use tokio::time::Duration;
 pub use worker_registry::WorkerRegistryClient;
 
