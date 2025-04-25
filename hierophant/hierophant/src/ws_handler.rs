@@ -78,8 +78,7 @@ pub async fn handle_socket(
             .await
             {
                 error!("{e}");
-                // TODO: should we break?
-                // How best to close connection to the client?
+                break;
             }
         }
     });
@@ -98,6 +97,7 @@ pub async fn handle_socket(
 }
 
 // processes a message from the contemplant
+// Returning an error from this function will close the connection to the contemplant
 async fn handle_message_from_contemplant(
     msg: Message,
     socket_addr: SocketAddr,
@@ -125,18 +125,19 @@ async fn handle_message_from_contemplant(
     // handle it appropriately
     match msg {
         FromContemplantMessage::Register(worker_register_info) => {
-            // TODO: how to best handle client
+            // Return this result.  If the worker is on a wrong version this will be an error
+            // and we should close the connection with the worker.
             worker_registry_client
-                .worker_ready(worker_addr, worker_register_info, from_hierophant_sender)
-                .await?;
+                .worker_ready(worker_addr, worker_register_info)
+                .await
         }
         FromContemplantMessage::ProofStatusResponse(request_id, maybe_proof_status) => {
             // TODO:
+            Ok(())
         }
         FromContemplantMessage::Heartbeat => {
             // TODO:
+            Ok(())
         }
     }
-
-    Ok(())
 }

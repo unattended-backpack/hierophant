@@ -3,9 +3,11 @@ use crate::network::{ExecutionStatus, FulfillmentStatus};
 use crate::proof_router::request_with_retries;
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
+use hyper::header::ACCESS_CONTROL_EXPOSE_HEADERS;
 use log::{debug, error, info, trace, warn};
 use network_lib::{
-    ContemplantProofRequest, ContemplantProofStatus, FromHierophantMessage, WorkerRegisterInfo,
+    CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromHierophantMessage,
+    WorkerRegisterInfo,
 };
 use reqwest::Client;
 use sp1_sdk::network::proto::network::ProofMode;
@@ -53,13 +55,24 @@ impl WorkerRegistryClient {
         &self,
         worker_addr: String,
         worker_register_info: WorkerRegisterInfo,
-        message_sender: mpsc::Sender<FromHierophantMessage>,
     ) -> Result<()> {
+        // check to make sure the contemplant is on the same version as the hierophant
+        if CONTEMPLANT_VERSION != worker_register_info.contemplant_version {
+            let error = anyhow!(
+                "Contemplant registration denied. Contemplant {} at {} has CONTEMPLANT_VERSION {} but this Hierophant has CONTEMPLANT_VERSION {}.",
+                worker_register_info.name,
+                worker_addr,
+                worker_register_info.contemplant_version,
+                CONTEMPLANT_VERSION
+            );
+            warn!("{error}");
+            return Err(error);
+        }
+
         self.sender
             .send(WorkerRegistryCommand::WorkerReady {
                 worker_addr,
-                worker_register_info,
-                message_sender,
+                worker_name,
             })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to send command WorkerReady: {}", e))
@@ -147,6 +160,9 @@ pub struct WorkerRegistry {
     pub workers: HashMap<String, WorkerState>,
     pub reqwest_client: Client,
     pub receiver: mpsc::Receiver<WorkerRegistryCommand>,
+    // mapping proof_request_id -> ContemplantProofStatus for currently outbound proof status
+    // requests that are being awaited in a thread
+    pub awaiting_proof_status_responses: HashMap<B256, mpsc::Sender<ContemplantProofStatus>>,
 }
 
 impl WorkerRegistry {
@@ -164,14 +180,19 @@ impl WorkerRegistry {
                 }
                 WorkerRegistryCommand::WorkerReady {
                     worker_addr,
-                    worker_registry_info,
-                    message_sender,
+                    worker_name,
                 } => {
-                    self.handle_worker_ready(worker_addr, worker_registry_info, message_sender)
-                        .await;
+                    self.handle_worker_ready(worker_addr, worker_name).await;
                 }
                 WorkerRegistryCommand::ProofComplete { request_id } => {
                     self.handle_proof_complete(request_id).await;
+                }
+                WorkerRegistryCommand::ProofStatusResponse {
+                    request_id,
+                    maybe_proof_status,
+                } => {
+                    self.handle_proof_status_response(request_id, maybe_proof_status)
+                        .await;
                 }
                 WorkerRegistryCommand::ProofStatus {
                     target_request_id,
@@ -327,14 +348,8 @@ impl WorkerRegistry {
         warn!("No workers available for proof {request_id}");
     }
 
-    async fn handle_worker_ready(
-        &mut self,
-        worker_addr: String,
-        worker_register_info: WorkerRegisterInfo,
-    ) {
-        // TODO: don't register them if their contemplant version doesn't match the
-        // hierophants.  Then drop their connection
-        let default_state = WorkerState::new(worker_name);
+    async fn handle_worker_ready(&mut self, worker_addr: String, worker_name: String) {
+        let default_state = WorkerState::new(worker_name.clone());
         match self
             .workers
             .insert(worker_addr.clone(), default_state.clone())
@@ -342,19 +357,27 @@ impl WorkerRegistry {
             Some(old_state) => {
                 // if this worker was working on a proof but we didn't drop it
                 if old_state.is_busy() && !old_state.should_drop(self.cfg_max_worker_strikes) {
+                    // TODO: re-assign this proof request
+                    // Currently, this is resolved when sp1_sdk requests the proof status because
+                    // the hierophant will see no worker working on it and will re-assign.  But we
+                    // might want it to happen earlier than that.  i.e. We might want to NOT be
+                    // driven by proof status requests.
                     error!(
-                        "Worker {} re-started but wasn't dropped yet.  Worker State: {}",
+                        "Contemplant {} re-started but wasn't dropped yet.  Contemplant's previous state: {}",
                         worker_addr, old_state
                     );
                 } else {
                     info!(
-                        "Known worker {} re-started, resetting state from {} to {}",
-                        worker_addr, old_state, default_state
+                        "Known contemplant {} at {} re-started, resetting state from {} to {}",
+                        worker_name, worker_addr, old_state, default_state
                     );
                 }
             }
             None => {
-                info!("New worker {} added to registry", worker_addr);
+                info!(
+                    "New contemplant {} at {} added to registry",
+                    worker_name, worker_addr
+                );
             }
         }
     }
@@ -386,6 +409,25 @@ impl WorkerRegistry {
             }
         } else {
             error!("Worker registry couldn't find worker who was assigned proof {request_id}");
+        }
+    }
+
+    // forwards proof status to the thread awaiting it
+    async fn handle_proof_status_response(
+        &mut self,
+        request_id: B256,
+        maybe_proof_status: Option<ContemplantProofStatus>,
+    ) {
+        // remove the sender from this mapping and send the proof status to the thread awaiting it
+        let sender = match self.awaiting_proof_status_responses.remove(&request_id) {
+            Some(s) => s,
+            None => {
+                return;
+            }
+        };
+
+        if let Err(e) = sender.send(maybe_proof_status).await {
+            error!("{e}");
         }
     }
 
@@ -512,19 +554,21 @@ pub enum WorkerRegistryCommand {
     },
     WorkerReady {
         worker_addr: String,
-        worker_register_info: WorkerRegisterInfo,
-        message_sender: mpsc::Sender<FromHierophantMessage>,
+        worker_name: String,
     },
-    // contemplant updating the hierophant of the proof status
-    ProofStatusUpdate {
-        // TODO: idk the best way to do this
-    },
-    ProofStatus {
+    // triggered when sp1_sdk requests proof status.
+    // sends proof status request to contemplant
+    // Spawns a thread that awaits a ContemplantProofStatusRequest
+    ProofStatusDispatcher {
         target_request_id: B256,
-        // returns the proof_status to the calling thread
-        // returns None if there is no worker assigned to this proof
-        // returns Some(Err(worker_addr)) if there is worker assigned to that is communicating with
-        // us but we can't get the proof status out of it
+    },
+    // contemplant responding with a proof status that was previously requested
+    ProofStatusResponse {
+        request_id: B256,
+        maybe_proof_status: Option<ContemplantProofRequest>,
+    },
+    // responds to sp1_sdk proof status request
+    ProofStatusResponder {
         resp_sender: oneshot::Sender<Option<std::result::Result<ProofStatus, String>>>,
     },
     ProofComplete {
