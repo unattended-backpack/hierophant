@@ -149,14 +149,15 @@ async fn main() -> Result<()> {
             match msg_result {
                 Ok(msg) => {
                     // got some message from hierophant
-                    if let Err(e) = handle_message_from_hierophant(
+                    if handle_message_from_hierophant(
                         worker_state.clone(),
                         msg,
                         response_sender_clone.clone(),
                     )
                     .await
+                    .is_break()
                     {
-                        error!("Error handling message {e}");
+                        warn!("Received break message");
                         break;
                     }
                 }
