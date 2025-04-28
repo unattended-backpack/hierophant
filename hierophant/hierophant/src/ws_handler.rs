@@ -50,7 +50,7 @@ pub async fn handle_socket(
         // when the above while loop exits for some reason, send a close message to the contemplant
         // because this connection is shutting down
         if let Err(e) = ws_sender.send(Message::Close(None)).await {
-            warn!("Could not send Close due to {e}, probably it is ok?");
+            warn!("Could not send Close to contemplant due to {e}");
         }
     });
 
@@ -58,27 +58,45 @@ pub async fn handle_socket(
     // to be handled
     let mut recv_task = tokio::spawn(async move {
         // wait to receive Messages from the Contemplant's ws
-        while let Some(Ok(msg)) = ws_receiver.next().await {
-            if handle_message_from_contemplant(
-                msg,
-                who,
-                &worker_registry_client,
-                from_hierophant_msg_sender.clone(),
-            )
-            .await
-            .is_break()
-            {
-                break;
+        while let Some(msg_result) = ws_receiver.next().await {
+            match msg_result {
+                Ok(msg) => {
+                    if handle_message_from_contemplant(
+                        msg,
+                        who,
+                        &worker_registry_client,
+                        from_hierophant_msg_sender.clone(),
+                    )
+                    .await
+                    .is_break()
+                    {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    error!("Error receiving message from contemplant {who}: {e}");
+                    break;
+                }
             }
         }
     });
 
     // If any one of the tasks exit, abort the other.
     tokio::select! {
-        _ = (&mut send_task) => {
+        result = (&mut send_task) => {
+            match result {
+                Ok(_) => info!("Send task completed normally"),
+                Err(e) => error!("Send task failed with error: {e}"),
+            }
+            info!("Send task exited, aborting recv task");
             recv_task.abort();
         },
-        _ = (&mut recv_task) => {
+        result = (&mut recv_task) => {
+            match result {
+                Ok(_) => info!("Recv task completed normally"),
+                Err(e) => error!("Recv task failed with error: {e}"),
+            }
+            info!("Recv task exited, aborting send task");
             send_task.abort();
         }
     }
@@ -95,6 +113,11 @@ async fn handle_message_from_contemplant(
     // channel that forwards messages to the contemplant via ws
     from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
 ) -> ControlFlow<(), ()> {
+    if let Message::Close(_) = msg {
+        info!("Received WebSocket close message from contemplant {socket_addr}");
+        return ControlFlow::Break(());
+    }
+
     // parse message into FromContemplantMessage
     let msg: FromContemplantMessage = match msg {
         Message::Binary(bytes) => match bincode::deserialize(&bytes) {

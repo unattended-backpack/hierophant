@@ -19,7 +19,7 @@ use network_lib::{
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
 };
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, ops::ControlFlow, sync::Arc};
 use tokio::{sync::RwLock, time::Duration};
 
 #[derive(Clone)]
@@ -144,18 +144,26 @@ async fn main() -> Result<()> {
     // sends messages to send_task)
     let response_sender_clone = response_sender.clone();
     let mut recv_task = tokio::spawn(async move {
-        while let Some(Ok(msg)) = ws_receiver.next().await {
+        while let Some(msg_result) = ws_receiver.next().await {
             trace!("Got ws message from hierophant");
-            // got some message from hierophant
-            if let Err(e) = handle_message_from_hierophant(
-                worker_state.clone(),
-                msg,
-                response_sender_clone.clone(),
-            )
-            .await
-            {
-                error!("Error handling message {e}");
-                break;
+            match msg_result {
+                Ok(msg) => {
+                    // got some message from hierophant
+                    if let Err(e) = handle_message_from_hierophant(
+                        worker_state.clone(),
+                        msg,
+                        response_sender_clone.clone(),
+                    )
+                    .await
+                    {
+                        error!("Error handling message {e}");
+                        break;
+                    }
+                }
+                Err(e) => {
+                    error!("Error receiving message from hierophant: {e}");
+                    break;
+                }
             }
         }
     });
@@ -203,19 +211,24 @@ async fn handle_message_from_hierophant(
     state: WorkerState,
     msg: Message,
     response_sender: mpsc::Sender<FromContemplantMessage>,
-) -> Result<()> {
+) -> ControlFlow<(), ()> {
+    if let Message::Close(_) = msg {
+        info!("Received WebSocket close message from hierophant");
+        return ControlFlow::Break(());
+    }
+
     // parse message into FromHierophantMessage
     let msg: FromHierophantMessage = match msg {
         Message::Binary(bytes) => match bincode::deserialize(&bytes) {
             Ok(ws_msg) => ws_msg,
             Err(e) => {
                 error!("Error deserializing message: {e}");
-                return Ok(());
+                return ControlFlow::Continue(());
             }
         },
         _ => {
             error!("Unsupported message type {:?}", msg);
-            return Ok(());
+            return ControlFlow::Continue(());
         }
     };
 
@@ -234,12 +247,13 @@ async fn handle_message_from_hierophant(
                 ))
                 .await
             {
-                return Err(anyhow!(e));
+                error!("Error sending proof status response to hierophant: {e}");
+                return ControlFlow::Break(());
             }
         }
     };
 
-    Ok(())
+    ControlFlow::Continue(())
 }
 
 // uses the CudaProver or MockProver to execute proofs given the elf, ProofMode, and SP1Stdin
