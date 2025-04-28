@@ -8,71 +8,64 @@ pub const REGISTER_CONTEMPLANT_ENDPOINT: &str = "register_contemplant";
 // Increment this whenever there is a breaking change in the contemplant
 // This is to ensure the contemplant is on the same version as the Hierophant it's
 // connecting to
-pub const CONTEMPLANT_VERSION: &str = "1.0.0";
+pub const CONTEMPLANT_VERSION: &str = "2.0.0";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerRegisterInfo {
     pub name: String,
-    pub port: usize,
     pub contemplant_version: String,
 }
 
-/*
-// Is deterministic on a RequestProofRequestBody using the fields
-// vk_hash, version, mode, and stdin_uri.  This way we can
-// skip execution for proofs we already have saved
-// TODO: I think this isn't being used properly rn because we removed proof_cache and proofs aren't
-// stored by their ProofRequestId in
-#[derive(Default, Debug, Clone, Copy, Serialize, Eq, PartialEq, Hash, Deserialize)]
-pub struct ProofRequestId(B256);
-
-impl ProofRequestId {
-    pub fn new(vk_hash: Vec<u8>, version: String, stdin_uri: String, mode: i32) -> Self {
-        let mut hasher = Sha256::new();
-
-        // Hash the minimum fields that make proof execution distinct
-        // TODO: is this really the minimum fields
-        hasher.update(vk_hash.clone());
-        hasher.update(version.clone());
-        hasher.update(stdin_uri.clone());
-        hasher.update(mode.to_le_bytes());
-
-        // turn it into B256 (how sp1_sdk represents proof_id)
-        let hash = hasher.finalize().to_vec();
-
-        Self(B256::from_slice(&hash))
-    }
-}
-
-impl From<ProofRequestId> for Vec<u8> {
-    fn from(id: ProofRequestId) -> Vec<u8> {
-        id.0.to_vec()
-    }
-}
-
-impl From<B256> for ProofRequestId {
-    fn from(b256: B256) -> ProofRequestId {
-        ProofRequestId(b256)
-    }
-}
-
-impl TryFrom<Vec<u8>> for ProofRequestId {
-    type Error = &'static str;
-
-    fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
-        Ok(ProofRequestId(B256::from_slice(&bytes)))
-    }
-}
-
-impl Display for ProofRequestId {
+impl Display for WorkerRegisterInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(
+            f,
+            "{} CONTEMPLANT_VERSION {}",
+            self.name, self.contemplant_version
+        )
     }
 }
-*/
+
+#[derive(Serialize, Deserialize)]
+pub enum FromContemplantMessage {
+    // sent from contemplant to hierophant on startup
+    Register(WorkerRegisterInfo),
+    // sends proof_status responses to the hierophant
+    ProofStatusResponse(B256, Option<ContemplantProofStatus>),
+    Heartbeat,
+}
+
+impl Display for FromContemplantMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            Self::Register(_) => "Register",
+            Self::ProofStatusResponse(_, _) => "ProofStatusResponse",
+            Self::Heartbeat => "Heartbeat",
+        };
+        write!(f, "{msg}")
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum FromHierophantMessage {
+    // sent from hierophant to contemplant to start working on a new proof
+    ProofRequest(ContemplantProofRequest),
+    // sent from hierophant to contemplant to get the status of a proof
+    ProofStatusRequest(B256),
+}
+
+impl Display for FromHierophantMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            Self::ProofRequest(_) => "ProofRequest",
+            Self::ProofStatusRequest(_) => "ProofStatusRequest",
+        };
+        write!(f, "{msg}")
+    }
+}
 
 // TODO: (maybe) Gas limit and cycle limit
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ContemplantProofRequest {
     pub request_id: B256,
     pub elf: Vec<u8>,
@@ -87,7 +80,11 @@ impl Display for ContemplantProofRequest {
         let mock = self.mock;
         let mode = self.mode.as_str_name();
 
-        write!(f, "{mode} proof with request id {request_id}")
+        if mock {
+            write!(f, "{mode} mock proof with request id {request_id}")
+        } else {
+            write!(f, "{mode} proof with request id {request_id}")
+        }
     }
 }
 
@@ -100,7 +97,7 @@ pub struct ContemplantProofStatus {
 impl ContemplantProofStatus {
     pub fn unexecuted() -> Self {
         Self {
-            execution_status: ExecutionStatus::UnspecifiedExecutionStatus.into(),
+            execution_status: ExecutionStatus::Unexecuted.into(),
             proof: None,
         }
     }

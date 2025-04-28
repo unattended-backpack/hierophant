@@ -6,6 +6,7 @@ mod create_artifact_service;
 mod hierophant_state;
 mod http_handler;
 mod prover_network_service;
+mod ws_handler;
 pub mod network {
     tonic::include_proto!("network");
 }
@@ -23,18 +24,6 @@ use network::prover_network_server::ProverNetworkServer;
 use prover_network_service::ProverNetworkService;
 use std::{net::SocketAddr, sync::Arc};
 use tonic::transport::Server;
-
-// Create a custom interceptor
-// #[derive(Clone)]
-// struct LoggingInterceptor;
-
-// impl Interceptor for LoggingInterceptor {
-//     fn call(&mut self, request: Request<()>) -> Result<Request<()>, Status> {
-//         // Log the full request path which includes service and method name
-//         info!("Incoming gRPC request: {:?}", request);
-//         Ok(request)
-//     }
-// }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -56,22 +45,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the gRPC services with access to shared state.
     let prover_service = ProverNetworkService::new(hierophant_state.clone());
     let artifact_service = ArtifactStoreService::new(hierophant_state.clone());
-
-    // Run the gRPC server
-    // Then modify your server setup
-    //let interceptor = LoggingInterceptor;
-
-    // info!("gRPC server starting on {grpc_addr}");
-    // let grpc_server = Server::builder()
-    //     .add_service(ProverNetworkServer::with_interceptor(
-    //         prover_service,
-    //         .interceptor.clone(),
-    //     ))
-    //     .add_service(ArtifactStoreServer::with_interceptor(
-    //         artifact_service,
-    //         interceptor,
-    //     ))
-    //     .serve(grpc_addr);
 
     info!("gRPC server starting on {grpc_addr}");
     let grpc_server = Server::builder()
@@ -100,17 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting Hierophant services:");
     info!("  - gRPC server on {grpc_addr}");
-    info!("  - HTTP server on {http_addr}");
-    info!("Implemented methods:");
-    info!("  - network.ProverNetwork/GetProgram");
-    info!("  - network.ProverNetwork/GetNonce");
-    info!("  - network.ProverNetwork/CreateProgram");
-    info!("  - network.ProverNetwork/RequestProof");
-    info!("  - network.ProverNetwork/GetProofRequestStatus");
-    info!("  - artifact.CreateArtifact/CreateArtifact");
-    info!("  - HTTP POST/PUT to /:id (for artifact uploads)");
-    info!("  - HTTP GET to /:id (for artifact downloads)");
-    info!("  - HTTP PUT to /register_worker (for contemplant registration)");
+    info!("  - HTTP (/ws) server on {http_addr}");
     info!("Servers started. Press Ctrl+C to stop.");
 
     // Wait for both servers to complete (or error)

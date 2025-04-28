@@ -6,24 +6,24 @@ use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
-    pub hierophant_address: String,
+    // websocket address in the form of <ws://127.0.0.1:3000/ws>
+    pub hierophant_ws_address: String,
     #[serde(default = "default_contemplant_name")]
     pub contemplant_name: String,
-    #[serde(default = "default_port")]
-    pub internal_port: usize,
-    #[serde(default = "default_port")]
-    pub external_port: usize,
     // If None, then the contemplant spins up a CUDA prover Docker container.
     #[serde(default = "default_moongate_endpoint")]
     pub moongate_endpoint: Option<String>,
+    // How often to tell Hierophant that the contemplant is still alive
+    #[serde(default = "default_heartbeat_interval_seconds")]
+    pub heartbeat_interval_seconds: u64,
 }
 
 fn default_moongate_endpoint() -> Option<String> {
     None
 }
 
-fn default_port() -> usize {
-    3000
+fn default_heartbeat_interval_seconds() -> u64 {
+    30
 }
 
 // randomly picks a name from old_testament.txt

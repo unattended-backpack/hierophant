@@ -16,6 +16,8 @@ alloy-primitives = { workspace = true, features = [
 reqwest.workspace = true
 env_logger.workspace = true
 rand = "0.9.1"
+futures-util.workspace = true
+tokio-tungstenite.workspace = true
 
 # local
 # network-lib = { path = "../network-lib" }

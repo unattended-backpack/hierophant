@@ -3,13 +3,12 @@ use crate::hierophant_state::HierophantState;
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{ConnectInfo, Path, State},
+    extract::{ConnectInfo, Path, State, ws::WebSocketUpgrade},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post, put},
+    routing::{any, get, post, put},
 };
 use log::{error, info};
-use network_lib::{CONTEMPLANT_VERSION, REGISTER_CONTEMPLANT_ENDPOINT, WorkerRegisterInfo};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::hash_map::DefaultHasher,
@@ -27,15 +26,8 @@ pub struct WorkerRegistration {
 // Create the router with all routes
 pub fn create_router(state: Arc<HierophantState>) -> Router {
     Router::new()
-        // Worker registration endpoint
-        .route(
-            format!("/{REGISTER_CONTEMPLANT_ENDPOINT}").as_ref(),
-            put(handle_register_worker),
-        )
-        .route(
-            format!("/{REGISTER_CONTEMPLANT_ENDPOINT}").as_ref(),
-            post(handle_register_worker),
-        )
+        // for contemplant ws connections
+        .route("/ws", any(ws_handler))
         // Artifact upload endpoint
         .route("/upload/:uri", post(handle_artifact_upload))
         .route("/upload/:uri", put(handle_artifact_upload))
@@ -46,46 +38,31 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         .with_state(state)
 }
 
-async fn handle_register_worker(
+// The handler for the HTTP request (this gets called when the HTTP request lands at the start
+// of websocket negotiation). After this completes, the actual switching from HTTP to
+// websocket protocol will occur.
+// This is the last point where we can extract TCP/IP metadata such as IP address of the client
+// as well as things from HTTP headers such as user-agent of the browser etc.
+async fn ws_handler(
     State(state): State<Arc<HierophantState>>,
+    ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Json(worker_register_info): Json<WorkerRegisterInfo>,
-) -> Result<impl IntoResponse, StatusCode> {
-    info!("\n=== Received Worker Registration Request ===");
+) -> impl IntoResponse {
+    info!("Received ws connection request from {addr}");
 
-    let worker_addr = format!("http://{}:{}", addr.ip(), worker_register_info.port);
+    let one_hundred_mb: usize = 100 * 1024 * 1024; // 100MB
 
-    info!(
-        "Received contemplant ready check from {} at {}",
-        worker_register_info.name, worker_addr
-    );
-
-    // check contemplant version
-    if CONTEMPLANT_VERSION != worker_register_info.contemplant_version {
-        error!(
-            "Contemplant {} at {} running incorrect CONTEMPLANT_VERSION: {}. This Hierophant's CONTEMPLANT_VERSION: {}",
-            worker_register_info.name,
-            worker_addr,
-            worker_register_info.contemplant_version,
-            CONTEMPLANT_VERSION
-        );
-        return Err(StatusCode::UPGRADE_REQUIRED);
-    } else {
-        match state
-            .proof_router
-            .worker_registry_client
-            .worker_ready(worker_addr.clone(), worker_register_info.name)
-            .await
-        {
-            Ok(_) => Ok(StatusCode::OK),
-            Err(e) => {
-                let error_msg =
-                    format!("Error sending worker_ready command for worker {worker_addr}: {e}");
-                error!("{error_msg}");
-                Err(StatusCode::INTERNAL_SERVER_ERROR)
-            }
-        }
-    }
+    // finalize the upgrade process by returning upgrade callback.
+    // we can customize the callback by sending additional info such as address.
+    ws.max_message_size(one_hundred_mb)
+        .max_frame_size(one_hundred_mb)
+        .on_upgrade(move |socket| {
+            crate::ws_handler::handle_socket(
+                socket,
+                addr,
+                state.proof_router.worker_registry_client.clone(),
+            )
+        })
 }
 
 async fn contemplants(
@@ -127,6 +104,14 @@ async fn handle_artifact_download(
                 bytes.len(),
                 display_artifact_hex(&bytes)
             );
+
+            // TODO: maybe we should periodically trim artifacts instead of deleting after download
+            // also delete the artifact after it's been downloaded by the client for storage saving
+            let _ = state
+                .artifact_store_client
+                .delete_artifact(uri.clone())
+                .await;
+
             bytes
         }
         Ok(None) => {

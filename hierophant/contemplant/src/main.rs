@@ -2,30 +2,28 @@ mod config;
 mod types;
 
 use alloy_primitives::B256;
-use tokio::time::Instant;
+use futures_util::{SinkExt, StreamExt};
+use tokio::{sync::mpsc, time::Instant};
 use types::ProofFromNetwork;
 
+use tokio_tungstenite::{
+    connect_async_with_config,
+    tungstenite::protocol::{Message, WebSocketConfig},
+};
+
 use crate::config::Config;
-use crate::types::{AppError, ProofStore};
-use anyhow::{anyhow, Context, Result};
-use axum::{
-    extract::{DefaultBodyLimit, Path, State},
-    http::StatusCode,
-    routing::{get, post},
-    Json, Router,
-};
-use log::{error, info};
+use crate::types::ProofStore;
+use anyhow::{Context, Result, anyhow};
+use log::{error, info, trace, warn};
 use network_lib::{
-    ContemplantProofRequest, ContemplantProofStatus, WorkerRegisterInfo, CONTEMPLANT_VERSION,
-    REGISTER_CONTEMPLANT_ENDPOINT,
+    CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromContemplantMessage,
+    FromHierophantMessage, WorkerRegisterInfo,
 };
-use reqwest::Client;
 use sp1_sdk::{
-    network::proto::network::ProofMode, utils, CpuProver, CudaProver, Prover, ProverClient,
+    CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
 };
-use std::str::FromStr;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use std::{collections::HashMap, ops::ControlFlow, sync::Arc};
+use tokio::{sync::RwLock, time::Duration};
 
 #[derive(Clone)]
 pub struct WorkerState {
@@ -75,80 +73,203 @@ async fn main() -> Result<()> {
         proof_store: proof_store.clone(),
     };
 
-    let app = Router::new()
-        .route("/request_proof", post(request_proof))
-        .route("/status/:request_id", get(get_proof_request_status))
-        .layer(DefaultBodyLimit::disable())
-        .with_state(worker_state);
+    let ws_config = Some(WebSocketConfig {
+        max_message_size: None,
+        max_frame_size: None,
+        ..WebSocketConfig::default()
+    });
+    let hierophant_ws_address = config.hierophant_ws_address.clone();
+    let ws_stream = match connect_async_with_config(hierophant_ws_address, ws_config, false).await {
+        Ok((stream, response)) => {
+            info!("Handshake to Hierophant has been completed");
+            // This will be the HTTP response, same as with server this is the last moment we
+            // can still access HTTP stuff.
+            info!("Hierophant response was {response:?}");
+            stream
+        }
+        Err(e) => {
+            let error_msg = format!("WebSocket handshake failed with {e}!");
+            error!("{error_msg}");
+            return Err(anyhow!(error_msg));
+        }
+    };
 
-    let port = config.internal_port.to_string();
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
-        .await
-        .unwrap();
-    let local_addr = listener.local_addr().unwrap();
+    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
-    // Send a "ready" notification to the hierophant
-    register_worker(config.clone());
-
-    info!("Worker server listening on {}", local_addr);
-    axum::serve(listener, app).await?;
-    Ok(())
-}
-
-fn register_worker(config: Config) {
     let worker_register_info = WorkerRegisterInfo {
         contemplant_version: CONTEMPLANT_VERSION.into(),
         name: config.contemplant_name.clone(),
-        port: config.external_port,
     };
+
     info!(
         "Sending hierophant at {} worker_register_info {:?}",
-        config.hierophant_address, worker_register_info
+        config.hierophant_ws_address, worker_register_info
     );
-    tokio::spawn(async move {
-        // Give this server a moment to fully initialize
-        // sleep(Duration::from_secs(1)).await;
 
-        let client = Client::new();
+    let register_message =
+        bincode::serialize(&FromContemplantMessage::Register(worker_register_info))
+            .context("Serialize worker_register_info")?;
 
-        // Attempt to register with the hierophant
-        match client
-            .post(format!(
-                "{}/{REGISTER_CONTEMPLANT_ENDPOINT}",
-                config.hierophant_address
-            ))
-            .json(&worker_register_info)
-            .send()
-            .await
-        {
-            Ok(response) => {
-                if response.status().is_success() {
-                    info!(
-                        "Successfully registered with hierophant at {}",
-                        config.hierophant_address
-                    );
-                } else {
-                    error!(
-                        "Failed to register with hierophant {}: HTTP {}",
-                        config.hierophant_address,
-                        response.status()
-                    );
+    // send a register request to hierophant
+    ws_sender
+        .send(Message::Binary(register_message))
+        .await
+        .context("Send contemplant register info to hierophant")?;
+
+    // Channel for inter-contemplant use.  Sends messages from the thread that receives tasks from the
+    // hierophant ws conntection to the thread that sends ws messages back to the hierophant
+    let (response_sender, mut response_receiver) = mpsc::channel(100);
+
+    // this thread solely sends ws messages back to the hierophant
+    let mut send_task = tokio::spawn(async move {
+        while let Some(ws_msg) = response_receiver.recv().await {
+            // serialize message
+            let ws_msg_bytes = match bincode::serialize(&ws_msg) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    let error_msg = format!("Error serializing message {}: {e}", ws_msg);
+                    error!("{error_msg}");
+                    // skip this message
+                    continue;
                 }
+            };
+
+            // send the message to the Hierophant
+            let msg = Message::Binary(ws_msg_bytes);
+            if let Err(e) = ws_sender.send(msg).await {
+                error!("Error sending message to hierophant: {e}");
+                break;
             }
-            Err(err) => {
-                error!("Failed to connect to hierophant: {}", err);
+        }
+
+        // close connection cleanly when contemplant is done
+        if let Err(e) = ws_sender.send(Message::Close(None)).await {
+            warn!("Could not send Close due to {e:?}, probably it is ok?");
+        };
+    });
+
+    // this thread receives commands from the Hierophant, processes them, and
+    // sometimes sends responses back to Hierophant using the response_sender (which
+    // sends messages to send_task)
+    let response_sender_clone = response_sender.clone();
+    let mut recv_task = tokio::spawn(async move {
+        while let Some(msg_result) = ws_receiver.next().await {
+            trace!("Got ws message from hierophant");
+            match msg_result {
+                Ok(msg) => {
+                    // got some message from hierophant
+                    if handle_message_from_hierophant(
+                        worker_state.clone(),
+                        msg,
+                        response_sender_clone.clone(),
+                    )
+                    .await
+                    .is_break()
+                    {
+                        warn!("Received break message");
+                        break;
+                    }
+                }
+                Err(e) => {
+                    error!("Error receiving message from hierophant: {e}");
+                    break;
+                }
             }
         }
     });
+
+    // Spawns a task that sends a Heartbeat message every <heartbeat_interval_seconds> to the
+    // Hierophant
+    let response_sender_clone = response_sender.clone();
+    let mut heartbeat_task = tokio::spawn(async move {
+        let mut interval =
+            tokio::time::interval(Duration::from_secs(config.heartbeat_interval_seconds));
+        loop {
+            interval.tick().await;
+            let heartbeat = FromContemplantMessage::Heartbeat;
+            if response_sender_clone.send(heartbeat).await.is_err() {
+                // Channel closed, exit
+                break;
+            }
+        }
+    });
+
+    //wait for either task to finish and kill the other task
+    tokio::select! {
+        _ = (&mut send_task) => {
+            info!("send task exited");
+            recv_task.abort();
+            heartbeat_task.abort();
+        },
+        _ = (&mut recv_task) => {
+            info!("recv task exited");
+            send_task.abort();
+            heartbeat_task.abort();
+        }
+        _ = (&mut heartbeat_task) => {
+            info!("heartbeat task exited");
+            recv_task.abort();
+            send_task.abort();
+        }
+    }
+
+    info!("Shutting down");
+    Ok(())
+}
+
+async fn handle_message_from_hierophant(
+    state: WorkerState,
+    msg: Message,
+    response_sender: mpsc::Sender<FromContemplantMessage>,
+) -> ControlFlow<(), ()> {
+    if let Message::Close(_) = msg {
+        info!("Received WebSocket close message from hierophant");
+        return ControlFlow::Break(());
+    }
+
+    // parse message into FromHierophantMessage
+    let msg: FromHierophantMessage = match msg {
+        Message::Binary(bytes) => match bincode::deserialize(&bytes) {
+            Ok(ws_msg) => ws_msg,
+            Err(e) => {
+                error!("Error deserializing message: {e}");
+                return ControlFlow::Continue(());
+            }
+        },
+        _ => {
+            error!("Unsupported message type {:?}", msg);
+            return ControlFlow::Continue(());
+        }
+    };
+
+    trace!("Handling FromHierophantMessage {msg}");
+
+    match msg {
+        FromHierophantMessage::ProofRequest(proof_request) => {
+            request_proof(state, proof_request).await
+        }
+        FromHierophantMessage::ProofStatusRequest(request_id) => {
+            let proof_status = get_proof_request_status(state, request_id).await;
+            if let Err(e) = response_sender
+                .send(FromContemplantMessage::ProofStatusResponse(
+                    request_id,
+                    proof_status,
+                ))
+                .await
+            {
+                error!("Error sending proof status response to hierophant: {e}");
+                return ControlFlow::Break(());
+            }
+        }
+    };
+
+    ControlFlow::Continue(())
 }
 
 // uses the CudaProver or MockProver to execute proofs given the elf, ProofMode, and SP1Stdin
 // provided by the Hierophant
-async fn request_proof(
-    State(state): State<WorkerState>,
-    Json(payload): Json<ContemplantProofRequest>,
-) -> Result<StatusCode, AppError> {
-    info!("Received proof request {payload}");
+async fn request_proof(state: WorkerState, proof_request: ContemplantProofRequest) {
+    info!("Received proof request {proof_request}");
 
     // proof starts as unexecuted
     let initial_status = ContemplantProofStatus::unexecuted();
@@ -158,25 +279,25 @@ async fn request_proof(
         .proof_store
         .write()
         .await
-        .insert(payload.request_id, initial_status);
+        .insert(proof_request.request_id, initial_status);
 
     tokio::spawn(async move {
         let start_time = Instant::now();
 
-        let mock = payload.mock;
-        let stdin = &payload.sp1_stdin;
+        let mock = proof_request.mock;
+        let stdin = &proof_request.sp1_stdin;
 
         let (pk, _) = if mock {
-            state.mock_prover.setup(&payload.elf)
+            state.mock_prover.setup(&proof_request.elf)
         } else {
             // the cuda prover keeps state of the last `setup()` that was called on it.
             // You must call `setup()` then `prove` *each* time you intend to
             // prove a certain program
-            state.cuda_prover.setup(&payload.elf)
+            state.cuda_prover.setup(&proof_request.elf)
         };
 
         // construct proving function based on ProofMode and if it's a CUDA or mock proof
-        let proof_res = match payload.mode {
+        let proof_res = match proof_request.mode {
             ProofMode::UnspecifiedProofMode => Err(anyhow!("UnspecifiedProofMode")),
             ProofMode::Core => {
                 if mock {
@@ -218,11 +339,11 @@ async fn request_proof(
         // Create new proof status based on success or error
         let updated_proof_status = match proof_bytes_res {
             Ok(proof_bytes) => {
-                info!("Completed proof {} in {} minutes", payload, minutes);
+                info!("Completed proof {} in {} minutes", proof_request, minutes);
                 ContemplantProofStatus::executed(proof_bytes)
             }
             Err(e) => {
-                error!("Error proving {} at minute {}: {e}", payload, minutes);
+                error!("Error proving {} at minute {}: {e}", proof_request, minutes);
                 ContemplantProofStatus::unexecutable()
             }
         };
@@ -232,41 +353,17 @@ async fn request_proof(
             .proof_store
             .write()
             .await
-            .insert(payload.request_id, updated_proof_status);
+            .insert(proof_request.request_id, updated_proof_status);
     });
-
-    Ok(StatusCode::OK)
 }
 
 async fn get_proof_request_status(
-    State(state): State<WorkerState>,
-    Path(request_id): Path<String>,
-) -> Result<Json<ContemplantProofStatus>, AppError> {
-    let request_id = match B256::from_str(&request_id) {
-        Ok(r) => r,
-        Err(e) => {
-            let error_msg = format!(
-                "Couldn't parse request_id {request_id} as B256 in get_proof_request_status. Error {e}"
-            );
-            error!("{error_msg}");
-            return Err(anyhow!("{error_msg}").into());
-        }
-    };
-
+    state: WorkerState,
+    request_id: B256,
+) -> Option<ContemplantProofStatus> {
     info!("Received proof status request: {:?}", request_id);
 
     let proof_store = state.proof_store.read().await;
 
-    let proof_status: ContemplantProofStatus = match proof_store.get(&request_id) {
-        Some(status) => {
-            info!("Proof status of {request_id}: {}", status);
-            status.clone()
-        }
-        None => {
-            error!("Proof {} not found", request_id);
-            ContemplantProofStatus::unexecutable()
-        }
-    };
-
-    Ok(Json(proof_status))
+    proof_store.get(&request_id).cloned()
 }
