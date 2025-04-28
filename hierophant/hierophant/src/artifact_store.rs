@@ -85,6 +85,16 @@ impl ArtifactStoreClient {
 
         receiver.await?
     }
+
+    pub async fn delete_artifact(&self, artifact_uri: ArtifactUri) -> Result<()> {
+        let command = ArtifactStoreCommand::DeleteArtifact { artifact_uri };
+        self.command_sender
+            .send(command)
+            .await
+            .context("Send DeleteArtifact command")?;
+
+        Ok(())
+    }
 }
 
 struct ArtifactStore {
@@ -143,6 +153,9 @@ impl ArtifactStore {
                 } => {
                     let res = self.handle_get_artifact_bytes(artifact_uri);
                     artifact_sender.send(res).unwrap();
+                }
+                ArtifactStoreCommand::DeleteArtifact { artifact_uri } => {
+                    let _ = self.handle_delete_artifact(artifact_uri);
                 }
             };
 
@@ -209,6 +222,20 @@ impl ArtifactStore {
             Ok(None)
         }
     }
+
+    fn handle_delete_artifact(&mut self, artifact_uri: ArtifactUri) {
+        let artifact_path = artifact_uri.file_path(&self.artifact_directory);
+        let path = Path::new(&artifact_path);
+
+        match fs::remove_file(path) {
+            Ok(_) => {
+                info!("Deleted artifact {artifact_uri}");
+            }
+            Err(e) => {
+                warn!("Error trying to delete artifact {artifact_uri}: {e}");
+            }
+        };
+    }
 }
 
 #[derive(Debug)]
@@ -226,6 +253,9 @@ enum ArtifactStoreCommand {
         artifact_uri: ArtifactUri,
         artifact_sender: oneshot::Sender<Result<Option<Vec<u8>>>>,
     },
+    DeleteArtifact {
+        artifact_uri: ArtifactUri,
+    },
 }
 
 impl fmt::Display for ArtifactStoreCommand {
@@ -239,6 +269,9 @@ impl fmt::Display for ArtifactStoreCommand {
             }
             Self::GetArtifactBytes { artifact_uri, .. } => {
                 format!("GetArtifactBytes {}", artifact_uri)
+            }
+            Self::DeleteArtifact { artifact_uri, .. } => {
+                format!("DeleteArtifact {}", artifact_uri)
             }
         };
 

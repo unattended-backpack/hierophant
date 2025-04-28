@@ -100,6 +100,14 @@ async fn handle_artifact_download(
                 bytes.len(),
                 display_artifact_hex(&bytes)
             );
+
+            // TODO: maybe we should periodically trim artifacts instead of deleting after download
+            // also delete the artifact after it's been downloaded by the client for storage saving
+            let _ = state
+                .artifact_store_client
+                .delete_artifact(uri.clone())
+                .await;
+
             bytes
         }
         Ok(None) => {
