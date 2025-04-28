@@ -11,7 +11,7 @@ use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use crate::config::Config;
 use crate::types::ProofStore;
 use anyhow::{Context, Result, anyhow};
-use log::{error, info, warn};
+use log::{error, info, trace, warn};
 use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromContemplantMessage,
     FromHierophantMessage, WorkerRegisterInfo,
@@ -145,6 +145,7 @@ async fn main() -> Result<()> {
     let response_sender_clone = response_sender.clone();
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = ws_receiver.next().await {
+            trace!("Got ws message from hierophant");
             // got some message from hierophant
             if let Err(e) = handle_message_from_hierophant(
                 worker_state.clone(),
@@ -178,19 +179,23 @@ async fn main() -> Result<()> {
     //wait for either task to finish and kill the other task
     tokio::select! {
         _ = (&mut send_task) => {
+            info!("send task exited");
             recv_task.abort();
             heartbeat_task.abort();
         },
         _ = (&mut recv_task) => {
+            info!("recv task exited");
             send_task.abort();
             heartbeat_task.abort();
         }
         _ = (&mut heartbeat_task) => {
+            info!("heartbeat task exited");
             recv_task.abort();
             send_task.abort();
         }
     }
 
+    info!("Shutting down");
     Ok(())
 }
 
@@ -213,6 +218,8 @@ async fn handle_message_from_hierophant(
             return Ok(());
         }
     };
+
+    trace!("Handling FromHierophantMessage {msg}");
 
     match msg {
         FromHierophantMessage::ProofRequest(proof_request) => {
