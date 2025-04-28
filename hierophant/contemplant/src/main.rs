@@ -6,7 +6,10 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::{sync::mpsc, time::Instant};
 use types::ProofFromNetwork;
 
-use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::{
+    connect_async_with_config,
+    tungstenite::protocol::{Message, WebSocketConfig},
+};
 
 use crate::config::Config;
 use crate::types::ProofStore;
@@ -70,7 +73,13 @@ async fn main() -> Result<()> {
         proof_store: proof_store.clone(),
     };
 
-    let ws_stream = match connect_async(config.hierophant_ws_address.clone()).await {
+    let ws_config = Some(WebSocketConfig {
+        max_message_size: Some(100 * 1024 * 1024), // 100MB limit
+        max_frame_size: Some(100 * 1024 * 1024),   // 100MB limit
+        ..WebSocketConfig::default()
+    });
+    let hierophant_ws_address = config.hierophant_ws_address.clone();
+    let ws_stream = match connect_async_with_config(hierophant_ws_address, ws_config, false).await {
         Ok((stream, response)) => {
             info!("Handshake to Hierophant has been completed");
             // This will be the HTTP response, same as with server this is the last moment we

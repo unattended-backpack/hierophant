@@ -50,15 +50,19 @@ async fn ws_handler(
 ) -> impl IntoResponse {
     info!("Received ws connection request from {addr}");
 
+    let one_hundred_mb: usize = 100 * 1024 * 1024; // 100MB
+
     // finalize the upgrade process by returning upgrade callback.
     // we can customize the callback by sending additional info such as address.
-    ws.on_upgrade(move |socket| {
-        crate::ws_handler::handle_socket(
-            socket,
-            addr,
-            state.proof_router.worker_registry_client.clone(),
-        )
-    })
+    ws.max_message_size(one_hundred_mb)
+        .max_frame_size(one_hundred_mb)
+        .on_upgrade(move |socket| {
+            crate::ws_handler::handle_socket(
+                socket,
+                addr,
+                state.proof_router.worker_registry_client.clone(),
+            )
+        })
 }
 
 async fn contemplants(
