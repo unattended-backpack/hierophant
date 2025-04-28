@@ -28,7 +28,6 @@ pub struct Config {
     )]
     pub worker_response_timeout_secs: Duration,
     // publicly reachable address of this Hierophant for artifact uploads
-    // TODO: remove, should discover this
     pub this_hierophant_ip: String,
     // key pair used for signing messages to the client and retreiving nonces
     pub pub_key: Address,

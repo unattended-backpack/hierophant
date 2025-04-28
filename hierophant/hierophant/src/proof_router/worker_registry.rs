@@ -6,7 +6,6 @@ use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromHierophantMessage,
     WorkerRegisterInfo,
 };
-use reqwest::Client;
 use sp1_sdk::network::proto::network::ProofMode;
 use std::ops::ControlFlow;
 use std::{
@@ -29,7 +28,6 @@ impl WorkerRegistryClient {
         cfg_max_worker_heartbeat_interval_secs: Duration,
     ) -> Self {
         let workers = HashMap::new();
-        let reqwest_client = Client::new();
 
         let (sender, receiver) = mpsc::channel(100);
 
@@ -39,7 +37,6 @@ impl WorkerRegistryClient {
             cfg_max_worker_heartbeat_interval_secs,
             cfg_max_worker_strikes,
             workers,
-            reqwest_client,
             receiver,
             awaiting_proof_status_responses,
         };
@@ -157,6 +154,8 @@ impl WorkerRegistryClient {
         response_timeout: Duration,
     ) -> Result<Option<ProofStatus>> {
         let (resp_sender, receiver) = oneshot::channel::<Option<ContemplantProofStatus>>();
+        // Under the hood, ProofStatusRequest prompts a request/ response pattern with the
+        // contemplant
         self.sender
             .send(WorkerRegistryCommand::ProofStatusRequest {
                 target_request_id: request_id,
@@ -219,7 +218,6 @@ pub struct WorkerRegistry {
     // Using a HashMap is a fine complexity tradeoff because we'll never have >20 workers, so
     // iterating isn't horrible in reality.
     pub workers: HashMap<String, WorkerState>,
-    pub reqwest_client: Client,
     pub receiver: mpsc::Receiver<WorkerRegistryCommand>,
     // mapping for currently outbound proof status requests that are being awaited in a thread
     pub awaiting_proof_status_responses:
@@ -346,95 +344,68 @@ impl WorkerRegistry {
     }
 
     async fn handle_assign_proof(&mut self, proof_request: &ContemplantProofRequest) {
+        let request_id = proof_request.request_id;
         // remove any dead workers
         self.trim_workers();
-        let request_id = proof_request.request_id;
-
-        // first check if there's already a worker working on this proof
-        if let Some((worker_addr, _)) = self.workers.iter().find(|(_, worker_state)| {
-            if let WorkerStatus::Busy {
-                request_id: workers_request_id,
-                ..
-            } = worker_state.status
-            {
-                workers_request_id == request_id
-            } else {
-                false
-            }
-        }) {
-            info!(
-                "Received proof request for {} proof {} but worker {} is already busy with it",
-                proof_request.mode.as_str_name(),
-                request_id,
-                worker_addr
-            );
-            // there's already a worker proving this.  We can return
-            // early
-            return;
-        }
-        // TODO: combine the two loops
 
         // iterate over all idle workers
         for (worker_addr, worker_state) in self.workers.iter_mut() {
             debug!("Worker {} state {}", worker_addr, worker_state);
 
-            // if this worker isn't idle, skip
-            if worker_state.is_busy() {
-                continue;
-            }
-
-            info!("Attemping to assign proof request {request_id} to worker {worker_addr}");
-
-            // TODO: this blocks up things for AWHILE
-            let worker_response = self
-                .reqwest_client
-                .post(format!("{}/request_proof", worker_addr))
-                .json(&proof_request)
-                .send()
-                .await;
-
-            let response = match worker_response {
-                Ok(response) => response,
-                Err(err) => {
-                    // TODO: could make a StrikeWorker command then make handling
-                    // reqwest responses more async by moving them to a tokio task
-                    worker_state.add_strike();
-                    error!(
-                        "Failed to send request for proof {} to worker {}. Error: {}",
-                        request_id, worker_addr, err
+            // skip a worker if it's busy or return early if there's already a worker proving this
+            if let WorkerStatus::Busy {
+                request_id: workers_request_id,
+                ..
+            } = worker_state.status
+            {
+                if workers_request_id == request_id {
+                    info!(
+                        "Received proof request for {} proof {} but worker {} is already busy with it",
+                        proof_request.mode.as_str_name(),
+                        request_id,
+                        worker_addr
                     );
-                    // go to next loop iteration
+                    // there's already a worker proving this.  We can return
+                    // early
+                    return;
+                } else {
+                    // can skip workers who are already working on a proof
                     continue;
                 }
-            };
+            }
 
-            if response.status().is_success() {
-                info!(
-                    "Successfully assigned proof {} to worker {}",
-                    request_id, worker_addr
-                );
+            info!(
+                "Attemping to assign proof request {request_id} to worker {} at {worker_addr}",
+                worker_state.name
+            );
 
-                // successfully assigned proof, can exit
-                worker_state.assigned_proof(request_id, proof_request.mode);
-                return;
-            } else {
-                // TODO: could make a StrikeWorker command then make handling
-                // reqwest responses more async by moving them to a tokio task
-                worker_state.add_strike();
-                error!(
-                    "Failed to assign proof {} to worker {}. Status code {}: {:?}",
-                    request_id,
-                    worker_addr,
-                    response.status().as_u16(),
-                    response.status().canonical_reason()
-                );
+            let from_hierophant_message =
+                FromHierophantMessage::ProofRequest(proof_request.clone());
+            match worker_state
+                .from_hierophant_sender
+                .send(from_hierophant_message)
+                .await
+            {
+                Err(e) => {
+                    error!("Error sending proof request {request_id} to worker {worker_addr}: {e}");
+                    worker_state.add_strike();
+                }
+                Ok(_) => {
+                    info!(
+                        "Proof request {request_id} assigned to worker {} at {worker_addr}",
+                        worker_state.name
+                    );
+                    worker_state.assigned_proof(request_id, proof_request.mode);
+                    // assigned to a worker successfully, return
+                    return;
+                }
             }
         }
         // We iterated through all the workers and couldn't find an idle one who could
         // receive the request.
         //
         // This doesn't result in deadlock because the proposer will call `/status/request_id`
-        // which will trigger another AssignProof request here
+        // which will trigger another AssignProof request here TODO: don't drive on this
 
         warn!("No workers available for proof {request_id}");
     }

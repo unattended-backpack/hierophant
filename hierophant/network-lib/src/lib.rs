@@ -37,7 +37,12 @@ pub enum FromContemplantMessage {
 
 impl Display for FromContemplantMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "FromContemplantMessage display TODO")
+        let msg = match self {
+            Self::Register(_) => "Register",
+            Self::ProofStatusResponse(_, _) => "ProofStatusResponse",
+            Self::Heartbeat => "Heartbeat",
+        };
+        write!(f, "{msg}")
     }
 }
 
@@ -51,12 +56,16 @@ pub enum FromHierophantMessage {
 
 impl Display for FromHierophantMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "FromHierophantMessage display TODO")
+        let msg = match self {
+            Self::ProofRequest(_) => "ProofRequest",
+            Self::ProofStatusRequest(_) => "ProofStatusRequest",
+        };
+        write!(f, "{msg}")
     }
 }
 
 // TODO: (maybe) Gas limit and cycle limit
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ContemplantProofRequest {
     pub request_id: B256,
     pub elf: Vec<u8>,
