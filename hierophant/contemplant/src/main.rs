@@ -74,8 +74,8 @@ async fn main() -> Result<()> {
     };
 
     let ws_config = Some(WebSocketConfig {
-        max_message_size: Some(100 * 1024 * 1024), // 100MB limit
-        max_frame_size: Some(100 * 1024 * 1024),   // 100MB limit
+        max_message_size: None,
+        max_frame_size: None,
         ..WebSocketConfig::default()
     });
     let hierophant_ws_address = config.hierophant_ws_address.clone();
