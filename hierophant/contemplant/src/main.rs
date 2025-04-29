@@ -47,6 +47,18 @@ async fn main() -> Result<()> {
     let cuda_prover = match &config.moongate_endpoint {
         // build with undockerized moongate server
         Some(moongate_endpoint) => {
+            // make sure the `native-gnark` feature is enabled.  Otherwise the contemplant will
+            // error when it tries to finish a GROTH16 proof
+            #[cfg(not(feature = "enable-native-gnark"))]
+            {
+                eprintln!(
+                    "Error: Using an undockerized moongate CUDA prover requires the enable-native-gnark feature."
+                );
+                eprintln!("Please rebuild with: cargo build --features enable-native-gnark");
+                panic!(
+                    "Build with feature `enable-native-gnark` or use dockerized moongate CUDA prover"
+                );
+            }
             info!("Building CudaProver with moongate endpoint {moongate_endpoint}...");
             Arc::new(
                 ProverClient::builder()
