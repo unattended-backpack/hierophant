@@ -44,6 +44,8 @@ async fn main() -> Result<()> {
     utils::setup_logger();
     info!("Starting contemplant {}", config.contemplant_name);
 
+    // compiler will always complain about one of these branches being unreachable, depending on if
+    // you compiled with `features enable-native-gnark` or not
     let cuda_prover = match &config.moongate_endpoint {
         // build with undockerized moongate server
         Some(moongate_endpoint) => {
