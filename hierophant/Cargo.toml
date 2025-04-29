@@ -142,7 +142,3 @@ alloy-primitives = { version = "1.0.0", default-features = false, features = [
 # k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-4.1.0" }
 # By default uses sp1-sdk that assumes docker.  `RUSTFLAGS="--cfg enable_native_gnark" cargo build` when running undockerized moongate
 sp1-sdk = { version = "4.2.0" }
-
-# use `cargo build --features enable-native-gnark` when building a binary that uses undockerized cudaProver
-[features]
-enable-native-gnark = ["sp1-sdk/native-gnark"]

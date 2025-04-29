@@ -37,3 +37,7 @@ log.workspace = true
 base64.workspace = true
 tower-http.workspace = true
 serde_repr = "0.1.19"
+
+# use `cargo build --features enable-native-gnark` when building a binary that uses undockerized cudaProver
+[features]
+enable-native-gnark = ["sp1-sdk/native-gnark"]
