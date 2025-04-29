@@ -122,7 +122,6 @@ alloy-primitives = { version = "1.0.0", default-features = false, features = [
 # revm = { version = "19.5.0", default-features = false, features = ["kzg-rs"] }
 #
 # # SP1
-sp1-sdk = { version = "4.2.0" }
 # sp1-lib = { version = "4.1.3", features = ["verify"] }
 # sp1-zkvm = { version = "4.1.3", features = ["verify"] }
 # sp1-build = { version = "4.1.3" }
@@ -141,3 +140,9 @@ sp1-sdk = { version = "4.2.0" }
 # sha3 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha3", tag = "patch-sha3-0.10.8-sp1-4.0.0" }
 # p256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-p256-13.2-sp1-4.1.0" }
 # k256 = { git = "https://github.com/sp1-patches/elliptic-curves", tag = "patch-k256-13.4-sp1-4.1.0" }
+# By default uses sp1-sdk that assumes docker.  `RUSTFLAGS="--cfg enable_native_gnark" cargo build` when running undockerized moongate
+sp1-sdk = { version = "4.2.0" }
+
+# use `cargo build --features enable-native-gnark` when building a binary that uses undockerized cudaProver
+[features]
+enable-native-gnark = ["sp1-sdk/native-gnark"]
