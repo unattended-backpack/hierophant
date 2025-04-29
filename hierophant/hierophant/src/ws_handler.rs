@@ -133,7 +133,11 @@ async fn handle_message_from_contemplant(
         }
     };
 
-    let worker_addr = socket_addr.ip().to_string();
+    let worker_addr = format!(
+        "{}:{}",
+        socket_addr.ip().to_string(),
+        socket_addr.port().to_string()
+    );
 
     // handle it appropriately
     match msg {
