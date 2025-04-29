@@ -44,9 +44,19 @@ async fn main() -> Result<()> {
     utils::setup_logger();
     info!("Starting contemplant {}", config.contemplant_name);
 
+    // compiler will always complain about one of these branches being unreachable, depending on if
+    // you compiled with `features enable-native-gnark` or not
     let cuda_prover = match &config.moongate_endpoint {
         // build with undockerized moongate server
         Some(moongate_endpoint) => {
+            // make sure the `native-gnark` feature is enabled.  Otherwise the contemplant will
+            // error when it tries to finish a GROTH16 proof
+            #[cfg(not(feature = "enable-native-gnark"))]
+            {
+                let error_msg = "Please rebuild with: `--features enable-native-gnark` or remove moongate_endpoint in cargo.toml to use the dockerized CUDA prover";
+                error!("{error_msg}");
+                panic!("{error_msg}");
+            }
             info!("Building CudaProver with moongate endpoint {moongate_endpoint}...");
             Arc::new(
                 ProverClient::builder()
@@ -57,6 +67,13 @@ async fn main() -> Result<()> {
         }
         // spin up cuda prover docker container
         None => {
+            // build using dockerized CUDA prover
+            #[cfg(feature = "enable-native-gnark")]
+            {
+                let error_msg = "Please rebuild without `--features enable-native-gnark` to use the dockerized CUDA prover or supply a moongate_endpoint to contemplant.toml";
+                error!("{error_msg}");
+                panic!("{error_msg}");
+            }
             info!("Starting CudaProver docker container...");
             Arc::new(ProverClient::builder().cuda().build())
         }

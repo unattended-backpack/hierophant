@@ -6,6 +6,7 @@ use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromHierophantMessage,
     WorkerRegisterInfo,
 };
+use serde::{Serialize, Serializer};
 use sp1_sdk::network::proto::network::ProofMode;
 use std::ops::ControlFlow;
 use std::{
@@ -477,6 +478,7 @@ impl WorkerRegistry {
                     // move worker from "busy" to "idle"
                     debug!("Worker {} completed a proof and is now Idle.", worker_addr);
                     worker_state.status = WorkerStatus::Idle;
+                    worker_state.increment_num_completed_proofs();
                 }
             }
         } else {
@@ -634,12 +636,15 @@ impl fmt::Debug for WorkerRegistryCommand {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct WorkerState {
     name: String,
     status: WorkerStatus,
     strikes: usize,
+    num_completed_proofs: usize,
+    #[serde(skip_serializing)]
     last_heartbeat: Instant,
+    #[serde(skip_serializing)]
     from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
 }
 
@@ -649,12 +654,17 @@ impl WorkerState {
             name,
             status: WorkerStatus::Idle,
             strikes: 0,
+            num_completed_proofs: 0,
             last_heartbeat: Instant::now(),
             from_hierophant_sender,
         }
     }
     fn is_busy(&self) -> bool {
         self.status != WorkerStatus::Idle
+    }
+
+    fn increment_num_completed_proofs(&mut self) {
+        self.num_completed_proofs += 1;
     }
 
     fn add_strike(&mut self) {
@@ -724,14 +734,24 @@ impl Display for WorkerState {
     }
 }
 
-#[derive(Eq, PartialEq, Debug, Clone)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize)]
 pub enum WorkerStatus {
     Idle,
     Busy {
         request_id: B256,
         proof_mode: ProofMode,
+        #[serde(serialize_with = "serialize_instant_as_minutes")]
         start_time: Instant,
     },
+}
+
+pub fn serialize_instant_as_minutes<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let minutes_elapsed = (instant.elapsed().as_secs_f64() / 60.0).round() as u32;
+    let minutes_elapsed = format!("{minutes_elapsed} minutes ago");
+    serializer.serialize_str(&minutes_elapsed)
 }
 
 impl Display for WorkerStatus {

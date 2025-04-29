@@ -23,6 +23,12 @@ Install `protoc`: [https://protobuf.dev/installation/](https://protobuf.dev/inst
 
 `cargo build`
 
+If you're building a contemplant that uses an undockerized CudaProver (setting a moongate_endpoint in contemplant.toml), build with the feature `enable-native-gnark`:
+
+```
+cargo build --release --bin contemplant --features enable-native-gnark
+```
+
 ## `old_testament.txt`
 
 List of biblical names to randomly draw from if a contemplant is started without a name.
