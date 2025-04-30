@@ -16,6 +16,14 @@ pub struct Config {
     // How often to tell Hierophant that the contemplant is still alive
     #[serde(default = "default_heartbeat_interval_seconds")]
     pub heartbeat_interval_seconds: u64,
+    // max number of finished proofs stored in memory
+    #[serde(default = "default_max_proofs_stored")]
+    pub max_proofs_stored: usize,
+}
+
+// realistically we shouldn't need more than 1, but some edge cases require us to store more
+fn default_max_proofs_stored() -> usize {
+    2
 }
 
 fn default_moongate_endpoint() -> Option<String> {
