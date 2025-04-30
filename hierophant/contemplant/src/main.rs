@@ -22,7 +22,7 @@ use network_lib::{
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
 };
-use std::{collections::HashMap, ops::ControlFlow, sync::Arc};
+use std::{ops::ControlFlow, sync::Arc};
 use tokio::{sync::RwLock, time::Duration};
 
 #[derive(Clone)]
@@ -30,7 +30,7 @@ pub struct WorkerState {
     // config: Config,
     cuda_prover: Arc<CudaProver>,
     mock_prover: Arc<CpuProver>,
-    proof_store: Arc<ProofStore>,
+    proof_store: Arc<RwLock<ProofStore>>,
 }
 
 #[tokio::main]
@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
     let mock_prover = Arc::new(ProverClient::builder().mock().build());
     info!("Prover built");
 
-    let proof_store = Arc::new(RwLock::new(HashMap::new()));
+    let proof_store = Arc::new(RwLock::new(ProofStore::new(config.max_proofs_stored)));
 
     let worker_state = WorkerState {
         cuda_prover,

@@ -88,7 +88,7 @@ impl Display for ContemplantProofRequest {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Eq, PartialEq, Serialize, Deserialize, Clone)]
 pub struct ContemplantProofStatus {
     pub execution_status: i32,
     pub proof: Option<Vec<u8>>,
