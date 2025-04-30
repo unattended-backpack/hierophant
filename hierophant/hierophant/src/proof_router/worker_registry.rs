@@ -7,6 +7,7 @@ use network_lib::{
     WorkerRegisterInfo,
 };
 use serde::{Serialize, Serializer};
+use serde_json::Number;
 use sp1_sdk::network::proto::network::ProofMode;
 use std::ops::ControlFlow;
 use std::{
@@ -475,10 +476,11 @@ impl WorkerRegistry {
                     // We know the worker is done with this proof because it just
                     // returned us an executed proof.
 
-                    // move worker from "busy" to "idle"
-                    debug!("Worker {} completed a proof and is now Idle.", worker_addr);
-                    worker_state.status = WorkerStatus::Idle;
-                    worker_state.increment_num_completed_proofs();
+                    worker_state.completed_proof();
+                    info!(
+                        "Worker {} at {} completed a proof and is now Idle.",
+                        worker_state.name, worker_addr
+                    );
                 }
             }
         } else {
@@ -641,7 +643,8 @@ pub struct WorkerState {
     name: String,
     status: WorkerStatus,
     strikes: usize,
-    num_completed_proofs: usize,
+    num_completed_span_proofs: usize,
+    average_span_proof_time: f32,
     #[serde(skip_serializing)]
     last_heartbeat: Instant,
     #[serde(skip_serializing)]
@@ -654,7 +657,8 @@ impl WorkerState {
             name,
             status: WorkerStatus::Idle,
             strikes: 0,
-            num_completed_proofs: 0,
+            num_completed_span_proofs: 0,
+            average_span_proof_time: 0.0,
             last_heartbeat: Instant::now(),
             from_hierophant_sender,
         }
@@ -663,8 +667,35 @@ impl WorkerState {
         self.status != WorkerStatus::Idle
     }
 
-    fn increment_num_completed_proofs(&mut self) {
-        self.num_completed_proofs += 1;
+    fn completed_proof(&mut self) {
+        match self.status {
+            // it is never idle if we get here
+            WorkerStatus::Idle => (),
+            WorkerStatus::Busy {
+                proof_mode,
+                start_time,
+                ..
+            } => {
+                // if it was a span proof, add it to the average
+                if let ProofMode::Compressed = proof_mode {
+                    let time_to_complete = start_time.elapsed().as_secs_f32() / 60.0;
+
+                    let n = self.num_completed_span_proofs as f32 + 1.0;
+                    let old_average = self.average_span_proof_time;
+                    let new_element = time_to_complete;
+
+                    let new_average = add_to_average(n, old_average, new_element);
+
+                    self.average_span_proof_time = new_average;
+                    self.num_completed_span_proofs += 1;
+                }
+            }
+        };
+
+        // set them to idle
+        self.status = WorkerStatus::Idle;
+        // they've been good, reset their proofs
+        self.strikes = 0;
     }
 
     fn add_strike(&mut self) {
@@ -771,5 +802,27 @@ impl Display for WorkerStatus {
                 )
             }
         }
+    }
+}
+
+// where n is the new number of elements
+fn add_to_average(n: f32, old_average: f32, new_element: f32) -> f32 {
+    old_average + ((new_element - old_average) / n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add_to_average() {
+        let a = add_to_average(3.0, 5.0, 5.0);
+        assert_eq!(a, 5.0);
+
+        let a = add_to_average(2.0, 1.0, 0.0);
+        assert_eq!(a, 0.5);
+
+        let a = add_to_average(4.0, 6.0, 4.0);
+        assert_eq!(a, 5.5);
     }
 }
