@@ -1,5 +1,6 @@
 use crate::artifact_store::ArtifactUri;
 use crate::hierophant_state::HierophantState;
+use crate::proof_router::WorkerState;
 use axum::{
     Json, Router,
     body::Bytes,
@@ -67,17 +68,9 @@ async fn ws_handler(
 
 async fn contemplants(
     State(state): State<Arc<HierophantState>>,
-) -> Result<Json<Vec<String>>, StatusCode> {
+) -> Result<Json<Vec<(String, WorkerState)>>, StatusCode> {
     match state.proof_router.worker_registry_client.workers().await {
-        Ok(workers) => {
-            let workers: Vec<String> = workers
-                .iter()
-                .map(|(addr, state)| format!("addr: {addr}, {state}"))
-                .collect();
-
-            Ok(Json(workers))
-        }
-        //Ok(Json(workers)),
+        Ok(workers) => Ok(Json(workers)),
         Err(e) => {
             let error_msg = format!("Error sending workers command: {e}");
             error!("{error_msg}");
