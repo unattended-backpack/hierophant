@@ -79,6 +79,13 @@ fn main() {
     .expect("failed to generate proof");
 
     create_proof_fixture(&proof, &vk, args.system);
+
+    match client.verify(&proof, &vk) {
+        Ok(_) => println!("verified!!!"),
+        Err(e) => {
+            println!("error verifying: {e}")
+        }
+    }
 }
 
 /// Create a fixture for the given proof.
