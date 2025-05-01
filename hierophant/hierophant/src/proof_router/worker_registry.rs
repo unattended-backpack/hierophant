@@ -35,12 +35,15 @@ impl WorkerRegistryClient {
 
         let awaiting_proof_status_responses = HashMap::new();
 
+        let proof_history = Vec::new();
+
         let worker_registry = WorkerRegistry {
             cfg_max_worker_heartbeat_interval_secs,
             cfg_max_worker_strikes,
             workers,
             receiver,
             awaiting_proof_status_responses,
+            proof_history,
         };
 
         tokio::task::spawn(async move { worker_registry.background_event_loop().await });
@@ -221,6 +224,15 @@ impl WorkerRegistryClient {
 
         receiver.await.map_err(|e| anyhow!(e))
     }
+
+    pub async fn proof_history(&self) -> Result<Vec<CompletedProofInfo>> {
+        let (resp_sender, receiver) = oneshot::channel();
+        self.sender
+            .send(WorkerRegistryCommand::ProofHistory { resp_sender })
+            .await?;
+
+        receiver.await.map_err(|e| anyhow!(e))
+    }
 }
 
 pub struct WorkerRegistry {
@@ -233,6 +245,8 @@ pub struct WorkerRegistry {
     // mapping for currently outbound proof status requests that are being awaited in a thread
     pub awaiting_proof_status_responses:
         HashMap<B256, Vec<oneshot::Sender<Option<ContemplantProofStatus>>>>,
+    // history of compelted proofs and information about the contemplant who completed it
+    pub proof_history: Vec<CompletedProofInfo>,
 }
 
 impl WorkerRegistry {
@@ -275,6 +289,9 @@ impl WorkerRegistry {
                 }
                 WorkerRegistryCommand::Workers { resp_sender } => {
                     self.handle_workers(resp_sender);
+                }
+                WorkerRegistryCommand::ProofHistory { resp_sender } => {
+                    self.handle_proof_history(resp_sender);
                 }
                 WorkerRegistryCommand::Heartbeat {
                     worker_addr,
@@ -480,7 +497,8 @@ impl WorkerRegistry {
         {
             if let WorkerStatus::Busy {
                 request_id: busy_request_id,
-                ..
+                proof_mode,
+                start_time,
             } = worker_state.status
             {
                 // if they're marked as busy with the proof we just saw completed
@@ -488,11 +506,25 @@ impl WorkerRegistry {
                     // We know the worker is done with this proof because it just
                     // returned us an executed proof.
 
-                    worker_state.completed_proof();
+                    let minutes_to_complete = start_time.elapsed().as_secs_f32() / 60.0;
+                    worker_state.completed_proof(minutes_to_complete);
                     info!(
-                        "Worker {} at {} completed a proof and is now Idle.",
-                        worker_state.name, worker_addr
+                        "Worker {} at {} completed a {} proof in {} minutes and is now Idle.",
+                        worker_state.name,
+                        worker_addr,
+                        proof_mode.as_str_name(),
+                        minutes_to_complete
                     );
+
+                    // record this completed proof
+                    let completed_proof_info = CompletedProofInfo::new(
+                        request_id,
+                        proof_mode,
+                        minutes_to_complete,
+                        worker_addr.clone(),
+                        worker_state.name.clone(),
+                    );
+                    self.proof_history.push(completed_proof_info);
                 }
             }
         } else {
@@ -615,6 +647,11 @@ impl WorkerRegistry {
             .collect();
         resp_sender.send(workers).unwrap();
     }
+
+    fn handle_proof_history(&self, resp_sender: oneshot::Sender<Vec<CompletedProofInfo>>) {
+        let completed_proof_info = self.proof_history.iter().map(|x| x.clone()).collect();
+        resp_sender.send(completed_proof_info).unwrap();
+    }
 }
 
 pub enum WorkerRegistryCommand {
@@ -641,6 +678,9 @@ pub enum WorkerRegistryCommand {
     },
     Workers {
         resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>,
+    },
+    ProofHistory {
+        resp_sender: oneshot::Sender<Vec<CompletedProofInfo>>,
     },
     Heartbeat {
         worker_addr: String,
@@ -673,6 +713,9 @@ impl fmt::Debug for WorkerRegistryCommand {
             }
             WorkerRegistryCommand::Workers { .. } => {
                 format!("Workers")
+            }
+            WorkerRegistryCommand::ProofHistory { .. } => {
+                format!("ProofHistory")
             }
             WorkerRegistryCommand::Heartbeat { .. } => {
                 format!("Heartbeat")
@@ -714,22 +757,16 @@ impl WorkerState {
         self.status != WorkerStatus::Idle
     }
 
-    fn completed_proof(&mut self) {
+    fn completed_proof(&mut self, minutes_to_complete: f32) {
         match self.status {
             // it is never idle if we get here
             WorkerStatus::Idle => (),
-            WorkerStatus::Busy {
-                proof_mode,
-                start_time,
-                ..
-            } => {
+            WorkerStatus::Busy { proof_mode, .. } => {
                 // if it was a span proof, add it to the average
                 if let ProofMode::Compressed = proof_mode {
-                    let time_to_complete = start_time.elapsed().as_secs_f32() / 60.0;
-
                     let n = self.num_completed_span_proofs as f32 + 1.0;
                     let old_average = self.average_span_proof_time;
-                    let new_element = time_to_complete;
+                    let new_element = minutes_to_complete;
 
                     let new_average = add_to_average(n, old_average, new_element);
 
@@ -857,6 +894,32 @@ fn add_to_average(n: f32, old_average: f32, new_element: f32) -> f32 {
     old_average + ((new_element - old_average) / n)
 }
 
+#[derive(Serialize, Debug, Clone)]
+pub struct CompletedProofInfo {
+    proof_request_id: B256,
+    proof_mode: String,
+    worker_addr: String,
+    worker_name: String,
+    minutes_to_complete: f32,
+}
+
+impl CompletedProofInfo {
+    pub fn new(
+        proof_request_id: B256,
+        proof_mode: ProofMode,
+        minutes_to_complete: f32,
+        worker_addr: String,
+        worker_name: String,
+    ) -> Self {
+        Self {
+            proof_request_id,
+            proof_mode: proof_mode.as_str_name().into(),
+            minutes_to_complete,
+            worker_name,
+            worker_addr,
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,7 +10,7 @@ use log::warn;
 use network_lib::ContemplantProofRequest;
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use tokio::time::Duration;
-pub use worker_registry::{WorkerRegistryClient, WorkerState};
+pub use worker_registry::{CompletedProofInfo, WorkerRegistryClient, WorkerState};
 
 use crate::config::Config;
 
