@@ -174,6 +174,15 @@ impl WorkerRegistryClient {
                     response_timeout.as_secs_f32(),
                     request_id
                 );
+
+                // add strike to the worker working on this request
+                self.sender
+                    .send(WorkerRegistryCommand::StrikeWorkerOfRequest { request_id })
+                    .await
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to send command StrikeWorkerOfRequest: {}", e)
+                    })?;
+
                 Ok(None)
             }
             Ok(Err(e)) => {
@@ -272,6 +281,9 @@ impl WorkerRegistry {
                     should_drop_sender,
                 } => {
                     self.handle_heartbeat(worker_addr, should_drop_sender);
+                }
+                WorkerRegistryCommand::StrikeWorkerOfRequest { request_id } => {
+                    self.handle_strike_worker_of_request(request_id);
                 }
             };
 
@@ -510,6 +522,33 @@ impl WorkerRegistry {
         }
     }
 
+    fn handle_strike_worker_of_request(&mut self, target_request_id: B256) {
+        // get worker assigned to this proof, if any
+        let (_, worker_state) =
+            match self
+                .workers
+                .iter_mut()
+                .find(|(_, worker_state)| match worker_state.status {
+                    WorkerStatus::Idle => false,
+                    WorkerStatus::Busy { request_id, .. } => request_id == target_request_id,
+                }) {
+                Some(worker_assigned) => worker_assigned,
+                None => {
+                    // This proof wasn't assigned to any worker, return none
+                    info!(
+                        "Can't strike worker because no worker is assigned to proof {}",
+                        target_request_id
+                    );
+                    return;
+                }
+            };
+
+        worker_state.add_strike();
+
+        // remove any dead workers
+        self.trim_workers();
+    }
+
     // sends a command to get proof status to a contemplant over ws
     async fn handle_proof_status_request(
         &mut self,
@@ -607,6 +646,11 @@ pub enum WorkerRegistryCommand {
         worker_addr: String,
         should_drop_sender: oneshot::Sender<bool>,
     },
+    // only used in external (external to workerRegistry state) functions like
+    // WorkerRegistryClient.proof_status_request
+    StrikeWorkerOfRequest {
+        request_id: B256,
+    },
 }
 
 impl fmt::Debug for WorkerRegistryCommand {
@@ -632,6 +676,9 @@ impl fmt::Debug for WorkerRegistryCommand {
             }
             WorkerRegistryCommand::Heartbeat { .. } => {
                 format!("Heartbeat")
+            }
+            WorkerRegistryCommand::StrikeWorkerOfRequest { .. } => {
+                format!("StrikeWorkerOfRequest")
             }
         };
         write!(f, "{command}")
