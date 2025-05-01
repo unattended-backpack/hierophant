@@ -1,6 +1,6 @@
-use crate::artifact_store::ArtifactUri;
 use crate::hierophant_state::HierophantState;
 use crate::proof_router::WorkerState;
+use crate::{artifact_store::ArtifactUri, proof_router::CompletedProofInfo};
 use axum::{
     Json, Router,
     body::Bytes,
@@ -36,6 +36,8 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         .route("/:uri", get(handle_artifact_download))
         // Get all healthy contemplants
         .route("/contemplants", get(contemplants))
+        // get a history of all completed proofs and the contemplant who finished it
+        .route("/proof-history", get(handle_proof_history))
         .with_state(state)
 }
 
@@ -73,6 +75,24 @@ async fn contemplants(
         Ok(workers) => Ok(Json(workers)),
         Err(e) => {
             let error_msg = format!("Error sending workers command: {e}");
+            error!("{error_msg}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn handle_proof_history(
+    State(state): State<Arc<HierophantState>>,
+) -> Result<Json<Vec<CompletedProofInfo>>, StatusCode> {
+    match state
+        .proof_router
+        .worker_registry_client
+        .proof_history()
+        .await
+    {
+        Ok(completed_proofs) => Ok(Json(completed_proofs)),
+        Err(e) => {
+            let error_msg = format!("Error sending completed_proofs command: {e}");
             error!("{error_msg}");
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
