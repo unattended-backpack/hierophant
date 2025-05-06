@@ -25,10 +25,10 @@ pub struct ArtifactStoreClient {
 }
 
 impl ArtifactStoreClient {
-    pub fn new(artifact_directory: &str) -> Self {
+    pub fn new(artifact_directory: &str, max_proofs_stored: usize) -> Self {
         let (command_sender, receiver) = mpsc::channel(100);
 
-        let artifact_store = ArtifactStore::new(receiver, artifact_directory);
+        let artifact_store = ArtifactStore::new(receiver, artifact_directory, max_proofs_stored);
 
         // start the artifact_store db
         tokio::task::spawn(async move { artifact_store.background_event_loop().await });
@@ -85,16 +85,6 @@ impl ArtifactStoreClient {
 
         receiver.await?
     }
-
-    pub async fn delete_artifact(&self, artifact_uri: ArtifactUri) -> Result<()> {
-        let command = ArtifactStoreCommand::DeleteArtifact { artifact_uri };
-        self.command_sender
-            .send(command)
-            .await
-            .context("Send DeleteArtifact command")?;
-
-        Ok(())
-    }
 }
 
 struct ArtifactStore {
@@ -103,27 +93,46 @@ struct ArtifactStore {
     artifact_directory: String,
     // uris that can be uploaded
     upload_uris: HashSet<ArtifactUri>,
+    // below if for trimming old proofs:
+    max_proofs_stored: usize,
+    proofs: Vec<ArtifactUri>,
+    current_proof_index: usize,
 }
 
 impl ArtifactStore {
-    fn new(receiver: mpsc::Receiver<ArtifactStoreCommand>, artifact_directory: &str) -> Self {
+    fn new(
+        receiver: mpsc::Receiver<ArtifactStoreCommand>,
+        artifact_directory: &str,
+        max_proofs_stored: usize,
+    ) -> Self {
         // Create `artifact_directory` if it doesn't already exist
         let path = Path::new(&artifact_directory);
-        if !path.exists() {
-            info!(
-                "{artifact_directory} directory doesn't exist.  Creating it for saving artifacts."
-            );
-            fs::create_dir(path)
-                .context("Create {artifact_directory} directory")
+
+        // if it exists from a previous run, delete it and all files inside
+        if path.exists() {
+            info!("Found old {artifact_directory} directory, deleting it.");
+            // remove the entire directory
+            fs::remove_dir_all(path)
+                .context(format!("Remove {artifact_directory} directory"))
                 .unwrap();
-        } else {
-            info!("Found {artifact_directory} directory.");
         }
+
+        fs::create_dir(path)
+            .context("Create {artifact_directory} directory")
+            .unwrap();
+        info!("Created new directory {artifact_directory}.");
+
+        // initialize proofs as an array of default values
+        let default_proof = ArtifactUri::default_proof();
+        let proofs = vec![default_proof; max_proofs_stored];
 
         Self {
             receiver,
             artifact_directory: artifact_directory.to_string(),
             upload_uris: HashSet::new(),
+            max_proofs_stored,
+            proofs,
+            current_proof_index: 0,
         }
     }
 
@@ -153,9 +162,6 @@ impl ArtifactStore {
                 } => {
                     let res = self.handle_get_artifact_bytes(artifact_uri);
                     artifact_sender.send(res).unwrap();
-                }
-                ArtifactStoreCommand::DeleteArtifact { artifact_uri } => {
-                    let _ = self.handle_delete_artifact(artifact_uri);
                 }
             };
 
@@ -197,6 +203,21 @@ impl ArtifactStore {
             return Ok(());
         }
 
+        // trimming old proofs
+        if let ArtifactType::Proof = artifact_uri.artifact_type {
+            let index_to_insert = self.current_proof_index;
+            // if theres a proof at this index, delete it to make room for this new proof
+            if let Some(old_proof_uri) = self.proofs.get(index_to_insert) {
+                // don't try to delete a default entry
+                if old_proof_uri != &ArtifactUri::default_proof() {
+                    self.handle_delete_artifact(old_proof_uri.clone());
+                }
+            }
+            // force insert the uri into this index now that the old artifact has been deleted
+            self.proofs[index_to_insert] = artifact_uri.clone();
+            self.increment_current_proof_index();
+        }
+
         info!(
             "Writing artifact {} to disk.  Num bytes: {}",
             artifact_uri,
@@ -236,6 +257,15 @@ impl ArtifactStore {
             }
         };
     }
+
+    // For trimming old proofs:
+    // increments the next index to insert a proof by 1, looping back to the start of the vector if
+    // we're at the end
+    fn increment_current_proof_index(&mut self) {
+        // increment by 1, looping to the start if its at capacity (proof_size)
+        let new_proof_index = (self.current_proof_index + 1) % self.max_proofs_stored;
+        self.current_proof_index = new_proof_index;
+    }
 }
 
 #[derive(Debug)]
@@ -253,9 +283,6 @@ enum ArtifactStoreCommand {
         artifact_uri: ArtifactUri,
         artifact_sender: oneshot::Sender<Result<Option<Vec<u8>>>>,
     },
-    DeleteArtifact {
-        artifact_uri: ArtifactUri,
-    },
 }
 
 impl fmt::Display for ArtifactStoreCommand {
@@ -269,9 +296,6 @@ impl fmt::Display for ArtifactStoreCommand {
             }
             Self::GetArtifactBytes { artifact_uri, .. } => {
                 format!("GetArtifactBytes {}", artifact_uri)
-            }
-            Self::DeleteArtifact { artifact_uri, .. } => {
-                format!("DeleteArtifact {}", artifact_uri)
             }
         };
 
@@ -290,6 +314,12 @@ impl ArtifactUri {
     fn new(artifact_type: ArtifactType) -> Self {
         let id = Uuid::new_v4();
 
+        Self { id, artifact_type }
+    }
+
+    fn default_proof() -> Self {
+        let id = Uuid::nil();
+        let artifact_type = ArtifactType::Proof;
         Self { id, artifact_type }
     }
 

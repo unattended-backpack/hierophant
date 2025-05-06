@@ -38,12 +38,13 @@ pub struct Config {
     // Keeps most recently completed proofs.
     #[serde(default = "default_proof_cache_size")]
     pub proof_cache_size: usize,
-    // Where to store cached proofs on-disk
-    #[serde(default = "default_proof_cache_directory")]
-    pub proof_cache_directory: String,
     // Where artifacts are stored on-disk
     #[serde(default = "default_artifact_store_directory")]
     pub artifact_store_directory: String,
+    // Proofs can be quite large so we need to limit how many we store on-disk inside the
+    // artifact_store_directory
+    #[serde(default = "default_max_proofs_stored")]
+    pub max_proofs_stored: usize,
 }
 
 fn default_worker_response_timeout_secs() -> Duration {
@@ -56,12 +57,12 @@ fn default_max_worker_heartbeat_interval_secs() -> Duration {
     Duration::from_secs(3 * 60)
 }
 
-fn default_proof_cache_directory() -> String {
-    "proofs".into()
-}
-
 fn default_artifact_store_directory() -> String {
     "artifacts".into()
+}
+
+fn default_max_proofs_stored() -> usize {
+    10
 }
 
 fn default_proof_cache_size() -> usize {

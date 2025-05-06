@@ -7,7 +7,6 @@ use network_lib::{
     WorkerRegisterInfo,
 };
 use serde::{Serialize, Serializer};
-use serde_json::Number;
 use sp1_sdk::network::proto::network::ProofMode;
 use std::ops::ControlFlow;
 use std::{

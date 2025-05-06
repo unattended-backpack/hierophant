@@ -95,7 +95,7 @@ impl ProofStore {
     }
 
     // yes I know, this is O(n) when it could be O(1) with a hash map BUT in practice
-    // it is much faster because self.proofs.length is single didgets, and we don't
+    // it is much faster because self.proofs.length is <10 and we don't
     // have to hash anything
     pub fn get(&self, request_id: &B256) -> Option<&ContemplantProofStatus> {
         match self
