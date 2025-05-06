@@ -3,8 +3,8 @@ mod types;
 
 use alloy_primitives::B256;
 use futures_util::{SinkExt, StreamExt};
+use network_lib::ProofFromNetwork;
 use tokio::{sync::mpsc, time::Instant};
-use types::ProofFromNetwork;
 
 use tokio_tungstenite::{
     connect_async_with_config,

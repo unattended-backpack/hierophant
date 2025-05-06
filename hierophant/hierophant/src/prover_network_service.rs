@@ -10,15 +10,16 @@ use crate::network::{
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::{error, info, warn};
+use network_lib::ProofFromNetwork;
 use sp1_sdk::network::proto::network::ExecutionStatus;
 use sp1_sdk::network::proto::{artifact::ArtifactType, network::ProofMode};
+use sp1_sdk::{Prover, SP1ProofWithPublicValues};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{str::FromStr, sync::Arc};
 use tokio::time::Instant;
 use tonic::{Request, Response, Status};
 
 // Our ProverNetwork service implementation
-#[derive(Debug)]
 pub struct ProverNetworkService {
     state: Arc<HierophantState>,
 }
@@ -439,6 +440,51 @@ impl ProverNetwork for ProverNetworkService {
         // if proof is complete, save it to disk as an artifact and mark the worker
         // as idle
         if !proof_status.proof.is_empty() {
+            // fn verify(
+            //     &self,
+            //     bundle: &SP1ProofWithPublicValues,
+            //     vkey: &SP1VerifyingKey,
+            // ) -> Result<(), SP1VerificationError> {
+            let proof: SP1ProofWithPublicValues =
+                match bincode::deserialize::<ProofFromNetwork>(&proof_status.proof) {
+                    Ok(p) => p.into(),
+                    Err(e) => {
+                        // TODO: we should probably drop the contemplant in this scenario.  Most likely
+                        // the contemplant didn't serialize the proof correctly
+                        error!("{e}");
+                        let response = lost_proof_response();
+                        return Ok(Response::new(response));
+                    }
+                };
+
+            let vkey = match self.state.get_vk(&request_id).await {
+                Ok(vkey) => vkey,
+                Err(e) => {
+                    error!("{e}");
+                    let response = lost_proof_response();
+                    return Ok(Response::new(response));
+                }
+            };
+
+            if let Err(e) = self.state.cpu_prover.verify(&proof, &vkey) {
+                warn!(
+                    "Error verifying proof {request_id}: {e}.  Dropping worker and returning lost proof status"
+                );
+
+                // Drop worker who was assigned to this proof
+                // TODO: this is ugly
+                self.state
+                    .proof_router
+                    .worker_registry_client
+                    .drop_worker_of_request(request_id)
+                    .await;
+
+                let response = lost_proof_response();
+                return Ok(Response::new(response));
+            }
+
+            info!("Verified proof {request_id}!!");
+
             // mark that worker who returned a completed proof as idle
             if let Err(e) = self
                 .state
@@ -448,7 +494,6 @@ impl ProverNetwork for ProverNetworkService {
                 .await
             {
                 error!("{e}");
-
                 let response = lost_proof_response();
                 return Ok(Response::new(response));
             }

@@ -3,12 +3,14 @@ use crate::config::Config;
 use crate::network::{ExecutionStatus, FulfillmentStatus, Program, RequestProofRequestBody};
 use crate::proof_router::ProofRouter;
 use alloy_primitives::{Address, B256};
+use anyhow::anyhow;
 use network_lib::ContemplantProofStatus;
 use serde::{Deserialize, Serialize};
+use sp1_sdk::{CpuProver, SP1VerifyingKey};
 use std::{collections::HashMap, fmt::Display, hash::Hash, sync::Arc};
 use tokio::sync::Mutex;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HierophantState {
     pub config: Config,
     // mapping id -> (proof_uri, ProofRequestBody)
@@ -21,6 +23,8 @@ pub struct HierophantState {
     pub artifact_store_client: ArtifactStoreClient,
     // handles delegating proof requests to contemplants and monitoring their progress
     pub proof_router: ProofRouter,
+    // solely used for verifying proofs returned from contemplant
+    pub cpu_prover: Arc<CpuProver>,
     // TODO: use (lol)
     pub nonces: Arc<Mutex<HashMap<Address, u64>>>,
 }
@@ -30,6 +34,7 @@ impl HierophantState {
         let proof_router = ProofRouter::new(&config);
         let artifact_store_client =
             ArtifactStoreClient::new(&config.artifact_store_directory, config.max_proofs_stored);
+        let cpu_prover = Arc::new(CpuProver::new());
         Self {
             config,
             proof_requests: Arc::new(Mutex::new(HashMap::new())),
@@ -37,7 +42,34 @@ impl HierophantState {
             nonces: Arc::new(Mutex::new(HashMap::new())),
             artifact_store_client,
             proof_router,
+            cpu_prover,
         }
+    }
+
+    // convenience function used in prover_network_service.get_proof_request_status.
+    // Needed to verify proof
+    pub async fn get_vk(&self, request_id: &B256) -> anyhow::Result<SP1VerifyingKey> {
+        // we have the proof request_id and we need to get to the vkey
+        let vk_hash: VkHash = match self.proof_requests.lock().await.get(request_id) {
+            Some((_, request_body)) => request_body.vk_hash.clone().into(),
+            None => {
+                return Err(anyhow!(
+                    "Can't find proof request {request_id} when looking up vk_hash"
+                ));
+            }
+        };
+
+        let vk_bytes = match self.program_store.lock().await.get(&vk_hash) {
+            Some(program) => program.vk.clone(),
+            None => {
+                return Err(anyhow!(
+                    "Can't find program with vk_hash {}",
+                    vk_hash.to_hex_string()
+                ));
+            }
+        };
+
+        bincode::deserialize(&vk_bytes).map_err(|e| anyhow!(e))
     }
 }
 
