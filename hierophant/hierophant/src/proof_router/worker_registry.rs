@@ -149,6 +149,16 @@ impl WorkerRegistryClient {
         }
     }
 
+    pub async fn drop_worker_of_request(&self, request_id: B256) {
+        if let Err(e) = self
+            .sender
+            .send(WorkerRegistryCommand::DropWorkerOfRequest { request_id })
+            .await
+        {
+            error!("{e}");
+        }
+    }
+
     // None (no worker has this proof) or Some(ProofStatus)
     // Initiates a request/response pattern with the contemplant over ws (via
     // WorkerRegistryCommand::ProofStatusRequest)
@@ -300,6 +310,9 @@ impl WorkerRegistry {
                 }
                 WorkerRegistryCommand::StrikeWorkerOfRequest { request_id } => {
                     self.handle_strike_worker_of_request(request_id);
+                }
+                WorkerRegistryCommand::DropWorkerOfRequest { request_id } => {
+                    self.handle_drop_worker_of_request(request_id);
                 }
             };
 
@@ -553,6 +566,34 @@ impl WorkerRegistry {
         }
     }
 
+    fn handle_drop_worker_of_request(&mut self, target_request_id: B256) {
+        // get worker assigned to this proof, if any
+        let (_, worker_state) =
+            match self
+                .workers
+                .iter_mut()
+                .find(|(_, worker_state)| match worker_state.status {
+                    WorkerStatus::Idle => false,
+                    WorkerStatus::Busy { request_id, .. } => request_id == target_request_id,
+                }) {
+                Some(worker_assigned) => worker_assigned,
+                None => {
+                    // This proof wasn't assigned to any worker, return none
+                    info!(
+                        "Can't strike worker because no worker is assigned to proof {}",
+                        target_request_id
+                    );
+                    return;
+                }
+            };
+
+        // set their strikes to the max. This will trigger a drop
+        worker_state.strikes = self.cfg_max_worker_strikes;
+
+        // remove this and any other dead workers
+        self.trim_workers();
+    }
+
     fn handle_strike_worker_of_request(&mut self, target_request_id: B256) {
         // get worker assigned to this proof, if any
         let (_, worker_state) =
@@ -690,6 +731,11 @@ pub enum WorkerRegistryCommand {
     StrikeWorkerOfRequest {
         request_id: B256,
     },
+    // only used in external (external to workerRegistry state) functions like
+    // prover_network_service.get_proof_status (drop worker when they return an invalid proof)
+    DropWorkerOfRequest {
+        request_id: B256,
+    },
 }
 
 impl fmt::Debug for WorkerRegistryCommand {
@@ -721,6 +767,9 @@ impl fmt::Debug for WorkerRegistryCommand {
             }
             WorkerRegistryCommand::StrikeWorkerOfRequest { .. } => {
                 format!("StrikeWorkerOfRequest")
+            }
+            WorkerRegistryCommand::DropWorkerOfRequest { .. } => {
+                format!("DropWorkerOfRequest")
             }
         };
         write!(f, "{command}")

@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
 // Our CreateArtifact service implementation
-#[derive(Debug)]
 pub struct ArtifactStoreService {
     state: Arc<HierophantState>,
 }
