@@ -440,17 +440,10 @@ impl ProverNetwork for ProverNetworkService {
         // if proof is complete, save it to disk as an artifact and mark the worker
         // as idle
         if !proof_status.proof.is_empty() {
-            // fn verify(
-            //     &self,
-            //     bundle: &SP1ProofWithPublicValues,
-            //     vkey: &SP1VerifyingKey,
-            // ) -> Result<(), SP1VerificationError> {
             let proof: SP1ProofWithPublicValues =
                 match bincode::deserialize::<ProofFromNetwork>(&proof_status.proof) {
                     Ok(p) => p.into(),
                     Err(e) => {
-                        // TODO: we should probably drop the contemplant in this scenario.  Most likely
-                        // the contemplant didn't serialize the proof correctly
                         error!("{e}");
                         let response = lost_proof_response();
                         return Ok(Response::new(response));
