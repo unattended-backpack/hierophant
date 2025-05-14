@@ -1,6 +1,6 @@
 use crate::proof_router::WorkerRegistryClient;
 use futures_util::{SinkExt, StreamExt};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use network_lib::{FromContemplantMessage, FromHierophantMessage};
 use std::net::SocketAddr;
 use std::ops::ControlFlow;
@@ -88,7 +88,7 @@ pub async fn handle_socket(
                 Ok(_) => info!("Send task completed normally"),
                 Err(e) => error!("Send task failed with error: {e}"),
             }
-            info!("Send task exited, aborting recv task");
+            debug!("Send task exited, aborting recv task");
             recv_task.abort();
         },
         result = (&mut recv_task) => {
@@ -96,7 +96,7 @@ pub async fn handle_socket(
                 Ok(_) => info!("Recv task completed normally"),
                 Err(e) => error!("Recv task failed with error: {e}"),
             }
-            info!("Recv task exited, aborting send task");
+            debug!("Recv task exited, aborting send task");
             send_task.abort();
         }
     }
