@@ -34,10 +34,6 @@ pub struct Config {
     // Make mock proofs instead of real proofs.  Witnessgen still happens.
     #[serde(default = "default_mock_mode")]
     pub mock_mode: bool,
-    // The amount of proofs to cache on-disk for persistence.
-    // Keeps most recently completed proofs.
-    #[serde(default = "default_proof_cache_size")]
-    pub proof_cache_size: usize,
     // Where artifacts are stored on-disk
     #[serde(default = "default_artifact_store_directory")]
     pub artifact_store_directory: String,
@@ -48,8 +44,7 @@ pub struct Config {
 }
 
 fn default_worker_response_timeout_secs() -> Duration {
-    // If the worker doesn't response within 20 seconds they're likely dead
-    Duration::from_secs(20)
+    Duration::from_secs(30)
 }
 
 fn default_max_worker_heartbeat_interval_secs() -> Duration {
@@ -62,10 +57,6 @@ fn default_artifact_store_directory() -> String {
 }
 
 fn default_max_proofs_stored() -> usize {
-    10
-}
-
-fn default_proof_cache_size() -> usize {
     10
 }
 

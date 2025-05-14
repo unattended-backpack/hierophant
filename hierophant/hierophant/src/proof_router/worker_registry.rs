@@ -29,6 +29,7 @@ impl WorkerRegistryClient {
         cfg_max_worker_heartbeat_interval_secs: Duration,
     ) -> Self {
         let workers = HashMap::new();
+        let dead_workers = Vec::new();
 
         let (sender, receiver) = mpsc::channel(100);
 
@@ -40,6 +41,7 @@ impl WorkerRegistryClient {
             cfg_max_worker_heartbeat_interval_secs,
             cfg_max_worker_strikes,
             workers,
+            dead_workers,
             receiver,
             awaiting_proof_status_responses,
             proof_history,
@@ -241,6 +243,15 @@ impl WorkerRegistryClient {
         receiver.await.map_err(|e| anyhow!(e))
     }
 
+    pub async fn dead_workers(&self) -> Result<Vec<(String, WorkerState)>> {
+        let (resp_sender, receiver) = oneshot::channel();
+        self.sender
+            .send(WorkerRegistryCommand::DeadWorkers { resp_sender })
+            .await?;
+
+        receiver.await.map_err(|e| anyhow!(e))
+    }
+
     pub async fn proof_history(&self) -> Result<Vec<CompletedProofInfo>> {
         let (resp_sender, receiver) = oneshot::channel();
         self.sender
@@ -257,6 +268,8 @@ pub struct WorkerRegistry {
     // Using a HashMap is a fine complexity tradeoff because we'll never have >20 workers, so
     // iterating isn't horrible in reality.
     pub workers: HashMap<String, WorkerState>,
+    // (ip, state when died)
+    pub dead_workers: Vec<(String, WorkerState)>,
     pub receiver: mpsc::Receiver<WorkerRegistryCommand>,
     // mapping for currently outbound proof status requests that are being awaited in a thread
     pub awaiting_proof_status_responses:
@@ -306,6 +319,9 @@ impl WorkerRegistry {
                 WorkerRegistryCommand::Workers { resp_sender } => {
                     self.handle_workers(resp_sender);
                 }
+                WorkerRegistryCommand::DeadWorkers { resp_sender } => {
+                    self.handle_dead_workers(resp_sender);
+                }
                 WorkerRegistryCommand::ProofHistory { resp_sender } => {
                     self.handle_proof_history(resp_sender);
                 }
@@ -337,7 +353,7 @@ impl WorkerRegistry {
 
     // iterate through workers and remove any who have > MAX_STRIKES strikes
     fn trim_workers(&mut self) {
-        let dead_workers: Vec<String> = self
+        let new_dead_workers: Vec<String> = self
             .workers
             .iter_mut()
             .filter_map(|(worker_addr, worker_state)| {
@@ -352,10 +368,14 @@ impl WorkerRegistry {
             })
             .collect();
 
-        for dead_worker_addr in dead_workers {
+        for dead_worker_addr in new_dead_workers {
             // remove them from the mapping
             if let Some(dead_worker_state) = self.workers.remove(&dead_worker_addr) {
-                info!("Removing worker {dead_worker_addr} from worker registry");
+                info!(
+                    "Removing worker {} at {dead_worker_addr} from worker registry",
+                    dead_worker_state.name
+                );
+
                 if let Some((dangling_proof, dangling_proof_mode)) =
                     dead_worker_state.current_proof()
                 {
@@ -371,6 +391,10 @@ impl WorkerRegistry {
                         dead_worker_state.name
                     );
                 }
+
+                // add them to the list of dead workers
+                self.dead_workers
+                    .push((dead_worker_addr, dead_worker_state));
             }
         }
     }
@@ -587,7 +611,7 @@ impl WorkerRegistry {
                 None => {
                     // This proof wasn't assigned to any worker, return none
                     info!(
-                        "Can't strike worker because no worker is assigned to proof {}",
+                        "Can't drop worker because no worker is assigned to proof {}",
                         target_request_id
                     );
                     return;
@@ -695,6 +719,11 @@ impl WorkerRegistry {
         resp_sender.send(workers).unwrap();
     }
 
+    fn handle_dead_workers(&self, resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>) {
+        let dead_workers = self.dead_workers.clone();
+        resp_sender.send(dead_workers).unwrap();
+    }
+
     fn handle_proof_history(&self, resp_sender: oneshot::Sender<Vec<CompletedProofInfo>>) {
         let completed_proof_info = self.proof_history.iter().map(|x| x.clone()).collect();
         resp_sender.send(completed_proof_info).unwrap();
@@ -724,6 +753,9 @@ pub enum WorkerRegistryCommand {
         request_id: B256,
     },
     Workers {
+        resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>,
+    },
+    DeadWorkers {
         resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>,
     },
     ProofHistory {
@@ -765,6 +797,9 @@ impl fmt::Debug for WorkerRegistryCommand {
             }
             WorkerRegistryCommand::Workers { .. } => {
                 format!("Workers")
+            }
+            WorkerRegistryCommand::DeadWorkers { .. } => {
+                format!("DeadWorkers")
             }
             WorkerRegistryCommand::ProofHistory { .. } => {
                 format!("ProofHistory")
