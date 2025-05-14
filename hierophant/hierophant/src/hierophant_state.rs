@@ -188,6 +188,14 @@ impl ProofStatus {
             proof: vec![],
         }
     }
+
+    pub fn assigned() -> Self {
+        Self {
+            fulfillment_status: FulfillmentStatus::Assigned.into(),
+            execution_status: ExecutionStatus::Unexecuted.into(),
+            proof: vec![],
+        }
+    }
 }
 
 impl Display for ProofStatus {

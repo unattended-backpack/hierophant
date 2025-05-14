@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
-use log::warn;
+use log::{error, warn};
 use network_lib::ContemplantProofRequest;
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use tokio::time::Duration;
@@ -94,17 +94,20 @@ impl ProofRouter {
             .proof_status_request(proof_request_id, self.proof_status_timeout)
             .await
         {
+            // we got a proof status from the contemplant assigned to this proof
+            // or we timed out when trying to contact the worker assigned to this proof,
+            // in which case the client should re-request the proof_status at a later time
             Ok(Some(status)) => Ok(status),
+            // No worker is assigned to this proof (will be hit eventually if a worker
+            // continues to time out after multiple proof_status request)
             Ok(None) => {
                 warn!("Can't find proof request {proof_request_id}");
                 Ok(ProofStatus::lost())
             }
             Err(e) => {
-                // There's a worker assigned to this proof but we can't contact them
-                // The worker likely went offline before they finished the proof
-                warn!("Can't get proof status of request {proof_request_id} from worker: {e}");
-                // TODO: is this the proper fulfil/exec status?  How does the client respond to
-                // this
+                // We didn't reach the timeout but the sender was dropped
+                // This most likely means our worker_registry service shut down and is unrecoverable
+                error!("Can't get proof status of request {proof_request_id} from worker: {e}");
                 Ok(ProofStatus::lost())
             }
         }

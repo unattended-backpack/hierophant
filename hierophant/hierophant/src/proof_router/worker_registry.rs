@@ -181,6 +181,8 @@ impl WorkerRegistryClient {
         // wait for the response or for the worker timeout
         match timeout(response_timeout, receiver).await {
             Err(_) => {
+                // Transient network errors occur when using outsourced gpus, and we
+                // should tolerate a few misses
                 warn!(
                     "Reached timeout of {} seconds while waiting for a proof_status response for request {}",
                     response_timeout.as_secs_f32(),
@@ -195,13 +197,18 @@ impl WorkerRegistryClient {
                         anyhow::anyhow!("Failed to send command StrikeWorkerOfRequest: {}", e)
                     })?;
 
-                Ok(None)
+                // If we returned a ProofStatus::lost here it would prompt the client
+                // to re-request the proof.  We want the client to instead re-request
+                // the proof_status request, and only re-request the proof when this
+                // worker is removed.
+                let proof_status = ProofStatus::assigned();
+                Ok(Some(proof_status))
             }
             Ok(Err(e)) => {
                 // We didn't reach the timeout but the sender was dropped
                 // This most likely means our worker_registry service shut down and is unrecoverable
                 error!("Worker_registry service might be down. {e}");
-                Ok(None)
+                Err(e.into())
             }
             Ok(Ok(maybe_contemplant_proof_status)) => {
                 match maybe_contemplant_proof_status {
