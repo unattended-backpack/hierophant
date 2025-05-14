@@ -592,7 +592,9 @@ impl WorkerRegistry {
         // send the proof status to all tasks waiting for it
         for sender in tasks_awaiting {
             if let Err(_) = sender.send(maybe_proof_status.clone()) {
-                error!("Receiver for proof status request {request_id} dropped");
+                // if the receiver is dropped, it means we reached the timeout before
+                // this contemplant responded.  The contemplant was already given
+                // a strike for this, so nothing to do here
             }
         }
     }
@@ -692,7 +694,7 @@ impl WorkerRegistry {
             // The receiving end of this was dropped because the ws was dropped.
             // This means we're no longer connected to this contemplant.  It'll get cleaned up by
             // the `trim_workers()` task.
-            worker_state.add_strike();
+            worker_state.strikes = self.cfg_max_worker_strikes;
             // TODO: proof re-assignment if this worker was in the middle of the proof
             warn!(
                 "No longer connected to worker {} at {} who was working on proof {target_request_id} (error {e})",
