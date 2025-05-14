@@ -36,6 +36,8 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         .route("/:uri", get(handle_artifact_download))
         // Get all healthy contemplants
         .route("/contemplants", get(contemplants))
+        // Get all dead contemplants
+        .route("/dead-contemplants", get(dead_contemplants))
         // get a history of all completed proofs and the contemplant who finished it
         .route("/proof-history", get(handle_proof_history))
         .with_state(state)
@@ -66,6 +68,24 @@ async fn ws_handler(
                 state.proof_router.worker_registry_client.clone(),
             )
         })
+}
+
+async fn dead_contemplants(
+    State(state): State<Arc<HierophantState>>,
+) -> Result<Json<Vec<(String, WorkerState)>>, StatusCode> {
+    match state
+        .proof_router
+        .worker_registry_client
+        .dead_workers()
+        .await
+    {
+        Ok(workers) => Ok(Json(workers)),
+        Err(e) => {
+            let error_msg = format!("Error sending dead_workers command: {e}");
+            error!("{error_msg}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 async fn contemplants(
