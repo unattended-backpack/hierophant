@@ -133,6 +133,18 @@ async fn main() -> Result<()> {
         .await
         .context("Send contemplant register info to hierophant")?;
 
+    // Spawns a task that waits for an "exit" message from any thread currently proving.
+    // When a thread hits an error in `cuda_prover.prove(...)` it will send a message
+    // here to gracefully seppuku.
+    let (exit_sender, mut exit_receiver): (mpsc::Sender<String>, mpsc::Receiver<String>) =
+        mpsc::channel(10);
+    let mut exit_task = tokio::spawn(async move {
+        while let Some(error_msg) = exit_receiver.recv().await {
+            error!("{error_msg}");
+            break;
+        }
+    });
+
     // Channel for inter-contemplant use.  Sends messages from the thread that receives tasks from the
     // hierophant ws conntection to the thread that sends ws messages back to the hierophant
     let (response_sender, mut response_receiver) = mpsc::channel(100);
@@ -179,6 +191,7 @@ async fn main() -> Result<()> {
                         worker_state.clone(),
                         msg,
                         response_sender_clone.clone(),
+                        exit_sender.clone(),
                     )
                     .await
                     .is_break()
@@ -217,16 +230,25 @@ async fn main() -> Result<()> {
             info!("send task exited");
             recv_task.abort();
             heartbeat_task.abort();
+            exit_task.abort();
         },
         _ = (&mut recv_task) => {
             info!("recv task exited");
             send_task.abort();
             heartbeat_task.abort();
+            exit_task.abort();
         }
         _ = (&mut heartbeat_task) => {
             info!("heartbeat task exited");
             recv_task.abort();
             send_task.abort();
+            exit_task.abort();
+        }
+        _ = (&mut exit_task) => {
+            info!("Got an error from proving thread.  Exiting");
+            recv_task.abort();
+            send_task.abort();
+            heartbeat_task.abort();
         }
     }
 
@@ -238,6 +260,7 @@ async fn handle_message_from_hierophant(
     state: WorkerState,
     msg: Message,
     response_sender: mpsc::Sender<FromContemplantMessage>,
+    exit_sender: mpsc::Sender<String>,
 ) -> ControlFlow<(), ()> {
     if let Message::Close(_) = msg {
         info!("Received WebSocket close message from hierophant");
@@ -263,7 +286,7 @@ async fn handle_message_from_hierophant(
 
     match msg {
         FromHierophantMessage::ProofRequest(proof_request) => {
-            request_proof(state, proof_request).await
+            request_proof(state, proof_request, exit_sender).await
         }
         FromHierophantMessage::ProofStatusRequest(request_id) => {
             let proof_status = get_proof_request_status(state, request_id).await;
@@ -285,7 +308,11 @@ async fn handle_message_from_hierophant(
 
 // uses the CudaProver or MockProver to execute proofs given the elf, ProofMode, and SP1Stdin
 // provided by the Hierophant
-async fn request_proof(state: WorkerState, proof_request: ContemplantProofRequest) {
+async fn request_proof(
+    state: WorkerState,
+    proof_request: ContemplantProofRequest,
+    exit_sender: mpsc::Sender<String>,
+) {
     info!("Received proof request {proof_request}");
 
     // proof starts as unexecuted
@@ -360,7 +387,17 @@ async fn request_proof(state: WorkerState, proof_request: ContemplantProofReques
                 ContemplantProofStatus::executed(proof_bytes)
             }
             Err(e) => {
-                error!("Error proving {} at minute {}: {e}", proof_request, minutes);
+                let error_msg =
+                    format!("Error proving {} at minute {}: {e}", proof_request, minutes);
+
+                // If a contemplant errors while making a proof it should seppuku.
+                // This message will force the program to exit gracefully.
+                exit_sender
+                    .send(error_msg)
+                    .await
+                    .context("Send exit error message to main thread")
+                    .unwrap();
+
                 ContemplantProofStatus::unexecutable()
             }
         };
