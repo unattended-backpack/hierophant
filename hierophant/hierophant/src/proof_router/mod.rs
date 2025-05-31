@@ -27,6 +27,7 @@ impl ProofRouter {
         let worker_registry_client = WorkerRegistryClient::new(
             config.max_worker_strikes,
             config.max_worker_heartbeat_interval_secs,
+            config.proof_timeout_mins,
         );
 
         Self {
