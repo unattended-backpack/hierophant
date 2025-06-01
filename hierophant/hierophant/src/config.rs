@@ -27,6 +27,10 @@ pub struct Config {
         deserialize_with = "deserialize_duration_from_secs"
     )]
     pub worker_response_timeout_secs: Duration,
+    // Maximum time a contemplant can be working on a proof before they're declared
+    // probably dead and kicked
+    #[serde(default = "proof_timeout_mins")]
+    pub proof_timeout_mins: u64,
     // publicly reachable address of this Hierophant for artifact uploads
     pub this_hierophant_ip: String,
     // key pair used for signing messages to the client and retreiving nonces
@@ -58,6 +62,11 @@ fn default_artifact_store_directory() -> String {
 
 fn default_max_proofs_stored() -> usize {
     10
+}
+
+fn proof_timeout_mins() -> u64 {
+    // 2 hours
+    60 * 2
 }
 
 fn default_mock_mode() -> bool {

@@ -27,6 +27,7 @@ impl WorkerRegistryClient {
     pub fn new(
         cfg_max_worker_strikes: usize,
         cfg_max_worker_heartbeat_interval_secs: Duration,
+        cfg_proof_timeout_mins: u64,
     ) -> Self {
         let workers = HashMap::new();
         let dead_workers = Vec::new();
@@ -40,6 +41,7 @@ impl WorkerRegistryClient {
         let worker_registry = WorkerRegistry {
             cfg_max_worker_heartbeat_interval_secs,
             cfg_max_worker_strikes,
+            cfg_proof_timeout_mins,
             workers,
             dead_workers,
             receiver,
@@ -265,6 +267,7 @@ impl WorkerRegistryClient {
 pub struct WorkerRegistry {
     pub cfg_max_worker_strikes: usize,
     pub cfg_max_worker_heartbeat_interval_secs: Duration,
+    pub cfg_proof_timeout_mins: u64,
     // Using a HashMap is a fine complexity tradeoff because we'll never have >20 workers, so
     // iterating isn't horrible in reality.
     pub workers: HashMap<String, WorkerState>,
@@ -351,7 +354,10 @@ impl WorkerRegistry {
         }
     }
 
-    // iterate through workers and remove any who have > MAX_STRIKES strikes
+    // iterate through workers and remove any who have
+    // strikes > cfg_max_worker_strikes,
+    // last_hearbeat > cfg_max_worker_heartbeat_interval_secs,
+    // or proof_time > proof_timeout_mins
     fn trim_workers(&mut self) {
         let new_dead_workers: Vec<String> = self
             .workers
@@ -360,6 +366,7 @@ impl WorkerRegistry {
                 if worker_state.should_drop(
                     self.cfg_max_worker_strikes,
                     self.cfg_max_worker_heartbeat_interval_secs,
+                    self.cfg_proof_timeout_mins,
                 ) {
                     Some(worker_addr.clone())
                 } else {
@@ -501,6 +508,7 @@ impl WorkerRegistry {
                     && !old_state.should_drop(
                         self.cfg_max_worker_strikes,
                         self.cfg_max_worker_heartbeat_interval_secs,
+                        self.cfg_proof_timeout_mins,
                     )
                 {
                     // TODO: re-assign this proof request
@@ -894,11 +902,13 @@ impl WorkerState {
     }
 
     // drop worker if they have too many strikes OR
-    // if it's been too long since their last heartbeat
+    // if it's been too long since their last heartbeat OR
+    // if they've been working on a proof for too long
     fn should_drop(
         &self,
         cfg_max_worker_strikes: usize,
         cfg_max_worker_heartbeat_interval_secs: Duration,
+        cfg_proof_timeout_mins: u64,
     ) -> bool {
         if self.strikes >= cfg_max_worker_strikes {
             warn!(
@@ -913,6 +923,22 @@ impl WorkerState {
                 self.last_heartbeat.elapsed().as_secs_f32()
             );
             true
+        } else if let WorkerStatus::Busy {
+            request_id,
+            start_time,
+            ..
+        } = self.status
+        {
+            let mins_on_this_proof = (start_time.elapsed().as_secs_f32() / 60.0).round() as u64;
+            if mins_on_this_proof > cfg_proof_timeout_mins {
+                warn!(
+                    "Dropping contemplant {} because they have been working on proof request {} for {} mins.  Max proof time is set to {} mins.",
+                    self.name, request_id, mins_on_this_proof, cfg_proof_timeout_mins
+                );
+                true
+            } else {
+                false
+            }
         } else {
             false
         }
