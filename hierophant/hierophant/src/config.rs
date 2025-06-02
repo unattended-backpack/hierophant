@@ -41,10 +41,10 @@ pub struct Config {
     // Where artifacts are stored on-disk
     #[serde(default = "default_artifact_store_directory")]
     pub artifact_store_directory: String,
-    // Proofs can be quite large so we need to limit how many we store on-disk inside the
+    // Artifacts can be quite large so we need to limit how many we store on-disk inside the
     // artifact_store_directory
-    #[serde(default = "default_max_proofs_stored")]
-    pub max_proofs_stored: usize,
+    #[serde(default = "default_max_artifacts_stored")]
+    pub max_artifacts_stored: usize,
 }
 
 fn default_worker_response_timeout_secs() -> Duration {
@@ -60,8 +60,10 @@ fn default_artifact_store_directory() -> String {
     "artifacts".into()
 }
 
-fn default_max_proofs_stored() -> usize {
-    10
+// We need to give a default to have SOME upper limit to how big the `artifact_store_directory`
+// can grow
+fn default_max_artifacts_stored() -> usize {
+    50
 }
 
 fn proof_timeout_mins() -> u64 {
