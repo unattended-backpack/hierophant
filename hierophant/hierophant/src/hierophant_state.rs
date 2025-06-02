@@ -32,8 +32,10 @@ pub struct HierophantState {
 impl HierophantState {
     pub fn new(config: Config) -> Self {
         let proof_router = ProofRouter::new(&config);
-        let artifact_store_client =
-            ArtifactStoreClient::new(&config.artifact_store_directory, config.max_proofs_stored);
+        let artifact_store_client = ArtifactStoreClient::new(
+            &config.artifact_store_directory,
+            config.max_artifacts_stored,
+        );
         let cpu_prover = Arc::new(CpuProver::new());
         Self {
             config,

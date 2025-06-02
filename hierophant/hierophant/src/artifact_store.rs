@@ -25,10 +25,10 @@ pub struct ArtifactStoreClient {
 }
 
 impl ArtifactStoreClient {
-    pub fn new(artifact_directory: &str, max_proofs_stored: usize) -> Self {
+    pub fn new(artifact_directory: &str, max_artifacts_stored: usize) -> Self {
         let (command_sender, receiver) = mpsc::channel(100);
 
-        let artifact_store = ArtifactStore::new(receiver, artifact_directory, max_proofs_stored);
+        let artifact_store = ArtifactStore::new(receiver, artifact_directory, max_artifacts_stored);
 
         // start the artifact_store db
         tokio::task::spawn(async move { artifact_store.background_event_loop().await });
@@ -94,16 +94,16 @@ struct ArtifactStore {
     // uris that can be uploaded
     upload_uris: HashSet<ArtifactUri>,
     // below if for trimming old proofs:
-    max_proofs_stored: usize,
-    proofs: Vec<ArtifactUri>,
-    current_proof_index: usize,
+    max_artifacts_stored: usize,
+    artifacts: Vec<ArtifactUri>,
+    current_artifact_index: usize,
 }
 
 impl ArtifactStore {
     fn new(
         receiver: mpsc::Receiver<ArtifactStoreCommand>,
         artifact_directory: &str,
-        max_proofs_stored: usize,
+        max_artifacts_stored: usize,
     ) -> Self {
         // Create `artifact_directory` if it doesn't already exist
         let path = Path::new(&artifact_directory);
@@ -122,17 +122,17 @@ impl ArtifactStore {
             .unwrap();
         info!("Created new directory {artifact_directory}.");
 
-        // initialize proofs as an array of default values
+        // initialize artifacts as an array of default values
         let default_proof = ArtifactUri::default_proof();
-        let proofs = vec![default_proof; max_proofs_stored];
+        let artifacts = vec![default_proof; max_artifacts_stored];
 
         Self {
             receiver,
             artifact_directory: artifact_directory.to_string(),
             upload_uris: HashSet::new(),
-            max_proofs_stored,
-            proofs,
-            current_proof_index: 0,
+            max_artifacts_stored,
+            artifacts,
+            current_artifact_index: 0,
         }
     }
 
@@ -203,20 +203,18 @@ impl ArtifactStore {
             return Ok(());
         }
 
-        // trimming old proofs
-        if let ArtifactType::Proof = artifact_uri.artifact_type {
-            let index_to_insert = self.current_proof_index;
-            // if theres a proof at this index, delete it to make room for this new proof
-            if let Some(old_proof_uri) = self.proofs.get(index_to_insert) {
-                // don't try to delete a default entry
-                if old_proof_uri != &ArtifactUri::default_proof() {
-                    self.handle_delete_artifact(old_proof_uri.clone());
-                }
+        // trimming old artifacts
+        let index_to_insert = self.current_artifact_index;
+        // if theres an artifact at this index, delete it to make room for this new artifact
+        if let Some(old_artifact_uri) = self.artifacts.get(index_to_insert) {
+            // don't try to delete a default entry
+            if old_artifact_uri != &ArtifactUri::default_proof() {
+                self.handle_delete_artifact(old_artifact_uri.clone());
             }
-            // force insert the uri into this index now that the old artifact has been deleted
-            self.proofs[index_to_insert] = artifact_uri.clone();
-            self.increment_current_proof_index();
         }
+        // force insert the uri into this index now that the old artifact has been deleted
+        self.artifacts[index_to_insert] = artifact_uri.clone();
+        self.increment_current_artifact_index();
 
         info!(
             "Writing artifact {} to disk.  Num bytes: {}",
@@ -258,13 +256,13 @@ impl ArtifactStore {
         };
     }
 
-    // For trimming old proofs:
-    // increments the next index to insert a proof by 1, looping back to the start of the vector if
+    // For trimming old artifacts:
+    // increments the next index to insert an artifact by 1, looping back to the start of the vector if
     // we're at the end
-    fn increment_current_proof_index(&mut self) {
+    fn increment_current_artifact_index(&mut self) {
         // increment by 1, looping to the start if its at capacity (proof_size)
-        let new_proof_index = (self.current_proof_index + 1) % self.max_proofs_stored;
-        self.current_proof_index = new_proof_index;
+        let new_artifact_index = (self.current_artifact_index + 1) % self.max_artifacts_stored;
+        self.current_artifact_index = new_artifact_index;
     }
 }
 
