@@ -34,7 +34,8 @@ impl HierophantState {
         let proof_router = ProofRouter::new(&config);
         let artifact_store_client = ArtifactStoreClient::new(
             &config.artifact_store_directory,
-            config.max_artifacts_stored,
+            config.max_stdin_artifacts_stored,
+            config.max_proof_artifacts_stored,
         );
         let cpu_prover = Arc::new(CpuProver::new());
         Self {

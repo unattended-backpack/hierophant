@@ -25,10 +25,19 @@ pub struct ArtifactStoreClient {
 }
 
 impl ArtifactStoreClient {
-    pub fn new(artifact_directory: &str, max_artifacts_stored: usize) -> Self {
+    pub fn new(
+        artifact_directory: &str,
+        max_stdin_artifacts_stored: usize,
+        max_proof_artifacts_stored: usize,
+    ) -> Self {
         let (command_sender, receiver) = mpsc::channel(100);
 
-        let artifact_store = ArtifactStore::new(receiver, artifact_directory, max_artifacts_stored);
+        let artifact_store = ArtifactStore::new(
+            receiver,
+            artifact_directory,
+            max_stdin_artifacts_stored,
+            max_proof_artifacts_stored,
+        );
 
         // start the artifact_store db
         tokio::task::spawn(async move { artifact_store.background_event_loop().await });
@@ -93,17 +102,21 @@ struct ArtifactStore {
     artifact_directory: String,
     // uris that can be uploaded
     upload_uris: HashSet<ArtifactUri>,
-    // below if for trimming old proofs:
-    max_artifacts_stored: usize,
-    artifacts: Vec<ArtifactUri>,
-    current_artifact_index: usize,
+    // below if for trimming old artifacts:
+    max_stdin_artifacts_stored: usize,
+    stdin_artifacts: Vec<ArtifactUri>,
+    current_stdin_artifact_index: usize,
+    max_proof_artifacts_stored: usize,
+    proof_artifacts: Vec<ArtifactUri>,
+    current_proof_artifact_index: usize,
 }
 
 impl ArtifactStore {
     fn new(
         receiver: mpsc::Receiver<ArtifactStoreCommand>,
         artifact_directory: &str,
-        max_artifacts_stored: usize,
+        max_stdin_artifacts_stored: usize,
+        max_proof_artifacts_stored: usize,
     ) -> Self {
         // Create `artifact_directory` if it doesn't already exist
         let path = Path::new(&artifact_directory);
@@ -124,15 +137,19 @@ impl ArtifactStore {
 
         // initialize artifacts as an array of default values
         let default_proof = ArtifactUri::default_proof();
-        let artifacts = vec![default_proof; max_artifacts_stored];
+        let stdin_artifacts = vec![default_proof.clone(); max_stdin_artifacts_stored];
+        let proof_artifacts = vec![default_proof; max_proof_artifacts_stored];
 
         Self {
             receiver,
             artifact_directory: artifact_directory.to_string(),
             upload_uris: HashSet::new(),
-            max_artifacts_stored,
-            artifacts,
-            current_artifact_index: 0,
+            max_stdin_artifacts_stored,
+            stdin_artifacts,
+            current_stdin_artifact_index: 0,
+            max_proof_artifacts_stored,
+            proof_artifacts,
+            current_proof_artifact_index: 0,
         }
     }
 
@@ -204,17 +221,35 @@ impl ArtifactStore {
         }
 
         // trimming old artifacts
-        let index_to_insert = self.current_artifact_index;
-        // if theres an artifact at this index, delete it to make room for this new artifact
-        if let Some(old_artifact_uri) = self.artifacts.get(index_to_insert) {
-            // don't try to delete a default entry
-            if old_artifact_uri != &ArtifactUri::default_proof() {
-                self.handle_delete_artifact(old_artifact_uri.clone());
+        match artifact_uri.artifact_type {
+            ArtifactType::Proof => {
+                let index_to_insert = self.current_proof_artifact_index;
+                // if theres an artifact at this index, delete it to make room for this new artifact
+                if let Some(old_artifact_uri) = self.proof_artifacts.get(index_to_insert) {
+                    // don't try to delete a default entry
+                    if old_artifact_uri != &ArtifactUri::default_proof() {
+                        self.handle_delete_artifact(old_artifact_uri.clone());
+                    }
+                }
+                // force insert the uri into this index now that the old artifact has been deleted
+                self.proof_artifacts[index_to_insert] = artifact_uri.clone();
+                self.increment_current_proof_artifact_index();
             }
-        }
-        // force insert the uri into this index now that the old artifact has been deleted
-        self.artifacts[index_to_insert] = artifact_uri.clone();
-        self.increment_current_artifact_index();
+            ArtifactType::Stdin => {
+                let index_to_insert = self.current_stdin_artifact_index;
+                // if theres an artifact at this index, delete it to make room for this new artifact
+                if let Some(old_artifact_uri) = self.stdin_artifacts.get(index_to_insert) {
+                    // don't try to delete a default entry
+                    if old_artifact_uri != &ArtifactUri::default_proof() {
+                        self.handle_delete_artifact(old_artifact_uri.clone());
+                    }
+                }
+                // force insert the uri into this index now that the old artifact has been deleted
+                self.stdin_artifacts[index_to_insert] = artifact_uri.clone();
+                self.increment_current_stdin_artifact_index();
+            }
+            _ => (),
+        };
 
         info!(
             "Writing artifact {} to disk.  Num bytes: {}",
@@ -259,10 +294,17 @@ impl ArtifactStore {
     // For trimming old artifacts:
     // increments the next index to insert an artifact by 1, looping back to the start of the vector if
     // we're at the end
-    fn increment_current_artifact_index(&mut self) {
-        // increment by 1, looping to the start if its at capacity (proof_size)
-        let new_artifact_index = (self.current_artifact_index + 1) % self.max_artifacts_stored;
-        self.current_artifact_index = new_artifact_index;
+    fn increment_current_proof_artifact_index(&mut self) {
+        // increment by 1, looping to the start if its at capacity
+        let new_artifact_index =
+            (self.current_proof_artifact_index + 1) % self.max_proof_artifacts_stored;
+        self.current_proof_artifact_index = new_artifact_index;
+    }
+    fn increment_current_stdin_artifact_index(&mut self) {
+        // increment by 1, looping to the start if its at capacity
+        let new_artifact_index =
+            (self.current_stdin_artifact_index + 1) % self.max_stdin_artifacts_stored;
+        self.current_stdin_artifact_index = new_artifact_index;
     }
 }
 
