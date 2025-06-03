@@ -109,6 +109,7 @@ impl WorkerRegistryClient {
             .send(WorkerRegistryCommand::WorkerReady {
                 worker_addr,
                 worker_name: worker_register_info.name,
+                manager: worker_register_info.manager,
                 from_hierophant_sender,
             })
             .await
@@ -297,10 +298,16 @@ impl WorkerRegistry {
                 WorkerRegistryCommand::WorkerReady {
                     worker_addr,
                     worker_name,
+                    manager,
                     from_hierophant_sender,
                 } => {
-                    self.handle_worker_ready(worker_addr, worker_name, from_hierophant_sender)
-                        .await;
+                    self.handle_worker_ready(
+                        worker_addr,
+                        worker_name,
+                        manager,
+                        from_hierophant_sender,
+                    )
+                    .await;
                 }
                 WorkerRegistryCommand::ProofComplete { request_id } => {
                     self.handle_proof_complete(request_id).await;
@@ -382,6 +389,10 @@ impl WorkerRegistry {
                     "Removing worker {} at {dead_worker_addr} from worker registry",
                     dead_worker_state.name
                 );
+
+                if let Some(manager_addr) = dead_worker_state.manager {
+                    // TODO: reqwest call to manager to tell them to kill this instance
+                }
 
                 if let Some((dangling_proof, dangling_proof_mode)) =
                     dead_worker_state.current_proof()
@@ -495,9 +506,10 @@ impl WorkerRegistry {
         &mut self,
         worker_addr: String,
         worker_name: String,
+        manager: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) {
-        let default_state = WorkerState::new(worker_name.clone(), from_hierophant_sender);
+        let default_state = WorkerState::new(worker_name.clone(), from_hierophant_sender, manager);
         match self
             .workers
             .insert(worker_addr.clone(), default_state.clone())
@@ -747,6 +759,7 @@ pub enum WorkerRegistryCommand {
     WorkerReady {
         worker_addr: String,
         worker_name: String,
+        manager: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     },
     // sp1_sdk requests the status of a proof
@@ -839,10 +852,15 @@ pub struct WorkerState {
     last_heartbeat: Instant,
     #[serde(skip_serializing)]
     from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
+    manager: Option<String>,
 }
 
 impl WorkerState {
-    fn new(name: String, from_hierophant_sender: mpsc::Sender<FromHierophantMessage>) -> Self {
+    fn new(
+        name: String,
+        from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
+        manager: Option<String>,
+    ) -> Self {
         Self {
             name,
             status: WorkerStatus::Idle,
@@ -851,6 +869,7 @@ impl WorkerState {
             average_span_proof_time: 0.0,
             last_heartbeat: Instant::now(),
             from_hierophant_sender,
+            manager,
         }
     }
     fn is_busy(&self) -> bool {

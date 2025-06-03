@@ -11,12 +11,14 @@ pub const REGISTER_CONTEMPLANT_ENDPOINT: &str = "register_contemplant";
 // Increment this whenever there is a breaking change in the contemplant
 // This is to ensure the contemplant is on the same version as the Hierophant it's
 // connecting to
-pub const CONTEMPLANT_VERSION: &str = "2.0.0";
+pub const CONTEMPLANT_VERSION: &str = "3.0.0";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerRegisterInfo {
     pub name: String,
     pub contemplant_version: String,
+    // Address of the magister managing this contemplant, if any
+    pub manager: Option<String>,
 }
 
 impl Display for WorkerRegisterInfo {
