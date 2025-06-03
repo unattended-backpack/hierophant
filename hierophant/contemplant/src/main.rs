@@ -43,6 +43,9 @@ async fn main() -> Result<()> {
     // Set up the SP1 SDK logger.
     utils::setup_logger();
     info!("Starting contemplant {}", config.contemplant_name);
+    if let Some(magister_addr) = &config.manager {
+        info!("Contemplant is being managed by the magister at {magister_addr}");
+    }
 
     // compiler will always complain about one of these branches being unreachable, depending on if
     // you compiled with `features enable-native-gnark` or not
@@ -116,6 +119,7 @@ async fn main() -> Result<()> {
     let worker_register_info = WorkerRegisterInfo {
         contemplant_version: CONTEMPLANT_VERSION.into(),
         name: config.contemplant_name.clone(),
+        manager: config.manager,
     };
 
     info!(

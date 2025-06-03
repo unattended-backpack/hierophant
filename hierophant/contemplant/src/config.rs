@@ -19,6 +19,13 @@ pub struct Config {
     // max number of finished proofs stored in memory
     #[serde(default = "default_max_proofs_stored")]
     pub max_proofs_stored: usize,
+    // address of the Magister managing this contemplant, if any
+    #[serde(default = "default_manager")]
+    pub manager: Option<String>,
+}
+
+fn default_manager() -> Option<String> {
+    None
 }
 
 // realistically we shouldn't need more than 1, but some edge cases require us to store more
