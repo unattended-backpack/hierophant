@@ -4,7 +4,10 @@ mod types;
 use alloy_primitives::B256;
 use futures_util::{SinkExt, StreamExt};
 use network_lib::ProofFromNetwork;
-use tokio::{sync::mpsc, time::Instant};
+use tokio::{
+    sync::{Mutex, mpsc},
+    time::Instant,
+};
 
 use tokio_tungstenite::{
     connect_async_with_config,
@@ -23,14 +26,14 @@ use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
 };
 use std::{ops::ControlFlow, sync::Arc};
-use tokio::{sync::RwLock, time::Duration};
+use tokio::time::Duration;
 
 #[derive(Clone)]
 pub struct WorkerState {
     // config: Config,
     cuda_prover: Arc<CudaProver>,
     mock_prover: Arc<CpuProver>,
-    proof_store: Arc<RwLock<ProofStore>>,
+    proof_store: Arc<Mutex<ProofStore>>,
 }
 
 #[tokio::main]
@@ -81,7 +84,7 @@ async fn main() -> Result<()> {
     let mock_prover = Arc::new(ProverClient::builder().mock().build());
     info!("Prover built");
 
-    let proof_store = Arc::new(RwLock::new(ProofStore::new(config.max_proofs_stored)));
+    let proof_store = Arc::new(Mutex::new(ProofStore::new(config.max_proofs_stored)));
 
     let worker_state = WorkerState {
         cuda_prover,
@@ -321,7 +324,7 @@ async fn request_proof(
     // It is assumed that the Hierophant won't request the same proof twice
     state
         .proof_store
-        .write()
+        .lock()
         .await
         .insert(proof_request.request_id, initial_status);
 
@@ -380,11 +383,18 @@ async fn request_proof(
             bincode::serialize(&network_proof).map_err(|e| anyhow!("Error serializing proof {e}"))
         });
 
-        // Create new proof status based on success or error
-        let updated_proof_status = match proof_bytes_res {
+        // Update new proof status based on success or error
+        match proof_bytes_res {
             Ok(proof_bytes) => {
                 info!("Completed proof {} in {} minutes", proof_request, minutes);
-                ContemplantProofStatus::executed(proof_bytes)
+                if let Some(proof_status) = state
+                    .proof_store
+                    .lock()
+                    .await
+                    .get_mut(&proof_request.request_id)
+                {
+                    proof_status.proof_complete(proof_bytes);
+                };
             }
             Err(e) => {
                 let error_msg =
@@ -398,16 +408,16 @@ async fn request_proof(
                     .context("Send exit error message to main thread")
                     .unwrap();
 
-                ContemplantProofStatus::unexecutable()
+                if let Some(proof_status) = state
+                    .proof_store
+                    .lock()
+                    .await
+                    .get_mut(&proof_request.request_id)
+                {
+                    proof_status.unexecutable();
+                };
             }
         };
-
-        // record new proof status, overwriting initial status of `unexecuted`
-        state
-            .proof_store
-            .write()
-            .await
-            .insert(proof_request.request_id, updated_proof_status);
     });
 }
 
@@ -417,7 +427,7 @@ async fn get_proof_request_status(
 ) -> Option<ContemplantProofStatus> {
     info!("Received proof status request: {:?}", request_id);
 
-    let proof_store = state.proof_store.read().await;
+    let proof_store = state.proof_store.lock().await;
 
     proof_store.get(&request_id).cloned()
 }
