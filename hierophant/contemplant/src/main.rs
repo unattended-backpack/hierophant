@@ -1,11 +1,14 @@
+mod assessor;
 mod config;
 mod types;
 
 use alloy_primitives::B256;
+use assessor::start_assessor;
+use config::AssessorConfig;
 use futures_util::{SinkExt, StreamExt};
 use network_lib::ProofFromNetwork;
 use tokio::{
-    sync::{Mutex, mpsc},
+    sync::{Mutex, mpsc, watch},
     time::Instant,
 };
 
@@ -34,6 +37,7 @@ pub struct WorkerState {
     cuda_prover: Arc<CudaProver>,
     mock_prover: Arc<CpuProver>,
     proof_store: Arc<Mutex<ProofStore>>,
+    assessor_config: AssessorConfig,
 }
 
 #[tokio::main]
@@ -89,8 +93,8 @@ async fn main() -> Result<()> {
     let worker_state = WorkerState {
         cuda_prover,
         mock_prover,
-        // config: config.clone(),
         proof_store: proof_store.clone(),
+        assessor_config: config.assessor,
     };
 
     let ws_config = Some(WebSocketConfig {
@@ -328,9 +332,21 @@ async fn request_proof(
         .await
         .insert(proof_request.request_id, initial_status);
 
+    let (assessor_shutdown_tx, assessor_shutdown_rx) = watch::channel(false);
+    if let Err(e) = start_assessor(
+        state.mock_prover.clone(),
+        &proof_request.elf,
+        &proof_request.sp1_stdin,
+        state.assessor_config,
+        assessor_shutdown_rx,
+    )
+    .await
+    {
+        error!("Assessor error: {e}");
+    };
+
     tokio::spawn(async move {
         let start_time = Instant::now();
-
         let mock = proof_request.mock;
         let stdin = &proof_request.sp1_stdin;
 
@@ -418,6 +434,9 @@ async fn request_proof(
                 };
             }
         };
+
+        // send message to stop assessor
+        assessor_shutdown_tx.send(true);
     });
 }
 

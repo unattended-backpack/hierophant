@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
+use std::path::PathBuf;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -19,6 +20,7 @@ pub struct Config {
     // max number of finished proofs stored in memory
     #[serde(default = "default_max_proofs_stored")]
     pub max_proofs_stored: usize,
+    pub assessor: AssessorConfig,
 }
 
 // realistically we shouldn't need more than 1, but some edge cases require us to store more
@@ -61,4 +63,38 @@ fn default_contemplant_name() -> String {
         Some(name) => name.into(),
         None => default_error_name,
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AssessorConfig {
+    // The path to the moongate log file to watch for progress.
+    #[serde(default = "default_moongate_log_path")]
+    pub moongate_log_path: String,
+    // The frequency in milliseconds with which the moongate log watcher should report progress.
+    #[serde(default = "default_watcher_reporting_inteval_ms")]
+    pub watcher_reporting_interval_ms: u64,
+    // The frequency in milliseconds with which the moongate log watcher should poll the moongate
+    // log file.
+    #[serde(default = "default_watcher_polling_interval_ms")]
+    pub watcher_polling_interval_ms: u64,
+    // The contemplant must make at least 1% progress every contemplant_required_progress_interval_mins
+    // or it will be dropped
+    #[serde(default = "contemplant_required_progress_interval_mins")]
+    pub contemplant_required_progress_interval_mins: u64,
+}
+
+fn contemplant_required_progress_interval_mins() -> u64 {
+    8
+}
+
+fn default_moongate_log_path() -> String {
+    "moongate.log".into()
+}
+
+fn default_watcher_reporting_inteval_ms() -> u64 {
+    1000
+}
+
+fn default_watcher_polling_interval_ms() -> u64 {
+    100
 }
