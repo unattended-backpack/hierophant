@@ -1,5 +1,7 @@
 use network_lib::ProgressUpdate;
 
+use crate::types::ProofStore;
+use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
@@ -85,6 +87,8 @@ pub async fn start_assessor(
     sp1_stdin: &SP1Stdin,
     config: AssessorConfig,
     shutdown_rx: watch::Receiver<bool>,
+    proof_store: Arc<tokio::sync::Mutex<ProofStore>>,
+    request_id: B256,
 ) -> Result<()> {
     // Create progress bar
     let multi = MultiProgress::new();
@@ -169,7 +173,6 @@ pub async fn start_assessor(
                             info!("... execution {}%", execution_progress );
                             execution_bar.inc(execution_diff);
                             total_bar.inc((execution_diff as f64 * 0.6).floor() as u64);
-
                         },
                         ProgressUpdate::Serialization(p) => {
                             if !first_serialization {
@@ -210,9 +213,11 @@ pub async fn start_assessor(
                         }
                     }
 
-                    // TODO: update progress in contemplant state
-                }
+                    if let Some(proof_status) = proof_store.lock().await.get_mut(&request_id){
+                        proof_status.progress_update(&update)
+                    }
 
+                }
 
                 else => {
                     break;

@@ -339,6 +339,8 @@ async fn request_proof(
         &proof_request.sp1_stdin,
         state.assessor_config,
         assessor_shutdown_rx,
+        state.proof_store.clone(),
+        proof_request.request_id,
     )
     .await
     {
@@ -436,7 +438,9 @@ async fn request_proof(
         };
 
         // send message to stop assessor
-        assessor_shutdown_tx.send(true);
+        if let Err(err) = assessor_shutdown_tx.send(true) {
+            error!("Error sending shutdown signal to assessor: {err}");
+        }
     });
 }
 
