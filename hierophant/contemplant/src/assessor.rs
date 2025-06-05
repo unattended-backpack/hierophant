@@ -8,7 +8,7 @@ use indicatif_log_bridge::LogWrapper;
 use lazy_static::lazy_static;
 use log::{Log, Metadata, Record, info};
 use sp1_sdk::CpuProver;
-use sp1_sdk::{Prover, ProverClient, SP1Stdin};
+use sp1_sdk::{Prover, SP1Stdin};
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
@@ -17,7 +17,7 @@ use tokio::{
     fs::File,
     io::{AsyncBufReadExt, AsyncSeekExt, BufReader},
     sync::{mpsc, watch},
-    time::{Duration, Instant, interval, sleep},
+    time::{Duration, interval, sleep},
 };
 
 use crate::config::AssessorConfig;
