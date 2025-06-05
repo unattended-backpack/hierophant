@@ -47,6 +47,14 @@ pub struct Config {
     pub max_stdin_artifacts_stored: usize,
     #[serde(default = "default_max_proof_artifacts_stored")]
     pub max_proof_artifacts_stored: usize,
+    // The contemplant must make at least 1% progress every contemplant_required_progress_interval_mins
+    // or it will be dropped
+    #[serde(default = "contemplant_required_progress_interval_mins")]
+    pub contemplant_required_progress_interval_mins: u64,
+}
+
+fn contemplant_required_progress_interval_mins() -> u64 {
+    8
 }
 
 fn default_worker_response_timeout_secs() -> Duration {

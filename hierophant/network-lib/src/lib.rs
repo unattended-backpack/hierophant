@@ -164,6 +164,30 @@ pub enum ProgressUpdate {
     Done,               // Finished with a count of serialization shards.
 }
 
+impl Display for ProgressUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            ProgressUpdate::Execution(x) => {
+                format!("{x}% executed")
+            }
+            ProgressUpdate::Serialization(x) => {
+                format!("{x}% serialized")
+            }
+            ProgressUpdate::Done => {
+                format!("done")
+            }
+        };
+
+        write!(f, "progress: {}", msg)
+    }
+}
+
+impl Default for ProgressUpdate {
+    fn default() -> Self {
+        Self::Execution(0)
+    }
+}
+
 impl ProgressUpdate {
     pub fn max(&self, other: &ProgressUpdate) -> ProgressUpdate {
         match other {

@@ -77,14 +77,6 @@ pub struct AssessorConfig {
     // log file.
     #[serde(default = "default_watcher_polling_interval_ms")]
     pub watcher_polling_interval_ms: u64,
-    // The contemplant must make at least 1% progress every contemplant_required_progress_interval_mins
-    // or it will be dropped
-    #[serde(default = "contemplant_required_progress_interval_mins")]
-    pub contemplant_required_progress_interval_mins: u64,
-}
-
-fn contemplant_required_progress_interval_mins() -> u64 {
-    8
 }
 
 fn default_moongate_log_path() -> String {

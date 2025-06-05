@@ -4,11 +4,12 @@ use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
 use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromHierophantMessage,
-    WorkerRegisterInfo,
+    ProgressUpdate, WorkerRegisterInfo,
 };
 use serde::{Serialize, Serializer};
 use sp1_sdk::network::proto::network::ProofMode;
 use std::ops::ControlFlow;
+use std::time::SystemTime;
 use std::{
     collections::HashMap,
     fmt::{self, Display},
@@ -28,6 +29,7 @@ impl WorkerRegistryClient {
         cfg_max_worker_strikes: usize,
         cfg_max_worker_heartbeat_interval_secs: Duration,
         cfg_proof_timeout_mins: u64,
+        cfg_contemplant_required_progress_interval_mins: u64,
     ) -> Self {
         let workers = HashMap::new();
         let dead_workers = Vec::new();
@@ -42,6 +44,7 @@ impl WorkerRegistryClient {
             cfg_max_worker_heartbeat_interval_secs,
             cfg_max_worker_strikes,
             cfg_proof_timeout_mins,
+            cfg_contemplant_required_progress_interval_mins,
             workers,
             dead_workers,
             receiver,
@@ -220,6 +223,16 @@ impl WorkerRegistryClient {
                     None => Ok(None),
                     // got proof status
                     Some(contemplant_proof_status) => {
+                        self.sender
+                            .send(WorkerRegistryCommand::ProofProgressUpdate {
+                                request_id,
+                                progress_update: contemplant_proof_status.progress,
+                            })
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("Failed to send command ProofProgressUpdate: {}", e)
+                            })?;
+
                         let proof_status = contemplant_proof_status.into();
                         Ok(Some(proof_status))
                     }
@@ -268,6 +281,7 @@ pub struct WorkerRegistry {
     pub cfg_max_worker_strikes: usize,
     pub cfg_max_worker_heartbeat_interval_secs: Duration,
     pub cfg_proof_timeout_mins: u64,
+    pub cfg_contemplant_required_progress_interval_mins: u64,
     // Using a HashMap is a fine complexity tradeoff because we'll never have >20 workers, so
     // iterating isn't horrible in reality.
     pub workers: HashMap<String, WorkerState>,
@@ -304,6 +318,13 @@ impl WorkerRegistry {
                 }
                 WorkerRegistryCommand::ProofComplete { request_id } => {
                     self.handle_proof_complete(request_id).await;
+                }
+                WorkerRegistryCommand::ProofProgressUpdate {
+                    request_id,
+                    progress_update,
+                } => {
+                    self.handle_proof_progress_update(request_id, progress_update)
+                        .await;
                 }
                 WorkerRegistryCommand::ProofStatusResponse {
                     request_id,
@@ -536,6 +557,41 @@ impl WorkerRegistry {
         }
     }
 
+    async fn handle_proof_progress_update(
+        &mut self,
+        request_id: B256,
+        progress_update: ProgressUpdate,
+    ) {
+        if let Some((_, worker_state)) = self.workers.iter_mut().find(|(_, worker_state)| {
+            if let Some((id, _)) = worker_state.current_proof() {
+                id == request_id
+            } else {
+                false
+            }
+        }) {
+            // update the worker's state with the progress
+            if let WorkerStatus::Busy {
+                progress,
+                time_of_last_update,
+                ..
+            } = &mut worker_state.status
+            {
+                // TODO: cut if it's been too long
+                // if let Ok(since_last_update) = SystemTime::now().duration_since(time_of_last_update)
+                // {
+                //     let mins_since_last_update = since_last_update.as_secs_f64() / 60.0;
+                //     if mins_since_last_update > self.cfg_contemplant_required_progress_interval_mins {
+                //
+                //     }
+                // }
+                *progress = progress_update;
+                *time_of_last_update = SystemTime::now();
+            }
+        } else {
+            warn!("Worker registry couldn't find worker who was assigned proof {request_id}");
+        }
+    }
+
     async fn handle_proof_complete(&mut self, request_id: B256) {
         if let Some((worker_addr, worker_state)) =
             self.workers.iter_mut().find(|(_, worker_state)| {
@@ -550,6 +606,7 @@ impl WorkerRegistry {
                 request_id: busy_request_id,
                 proof_mode,
                 start_time,
+                ..
             } = worker_state.status
             {
                 // if they're marked as busy with the proof we just saw completed
@@ -579,7 +636,7 @@ impl WorkerRegistry {
                 }
             }
         } else {
-            error!("Worker registry couldn't find worker who was assigned proof {request_id}");
+            warn!("Worker registry couldn't find worker who was assigned proof {request_id}");
         }
     }
 
@@ -762,6 +819,10 @@ pub enum WorkerRegistryCommand {
     ProofComplete {
         request_id: B256,
     },
+    ProofProgressUpdate {
+        request_id: B256,
+        progress_update: ProgressUpdate,
+    },
     Workers {
         resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>,
     },
@@ -798,6 +859,9 @@ impl fmt::Debug for WorkerRegistryCommand {
             }
             WorkerRegistryCommand::ProofComplete { .. } => {
                 format!("ProofComplete")
+            }
+            WorkerRegistryCommand::ProofProgressUpdate { .. } => {
+                format!("ProofProgressUpdate")
             }
             WorkerRegistryCommand::ProofStatusRequest { .. } => {
                 format!("ProofStatusRequest")
@@ -892,6 +956,8 @@ impl WorkerState {
             request_id,
             proof_mode,
             start_time: Instant::now(),
+            progress: ProgressUpdate::default(),
+            time_of_last_update: SystemTime::now(),
         };
         // This worker has been good.  Reset their strikes
         self.strikes = 0;
@@ -975,6 +1041,8 @@ pub enum WorkerStatus {
         proof_mode: ProofMode,
         #[serde(serialize_with = "serialize_instant_as_minutes")]
         start_time: Instant,
+        progress: ProgressUpdate,
+        time_of_last_update: SystemTime,
     },
 }
 
@@ -995,11 +1063,14 @@ impl Display for WorkerStatus {
                 request_id,
                 proof_mode,
                 start_time,
+                progress,
+                ..
             } => {
                 let minutes = (start_time.elapsed().as_secs_f32() / 60.0).round() as u32;
                 write!(
                     f,
-                    "busy with {} proof {request_id} for {minutes} minutes",
+                    "{} with {} proof {request_id}. Computing for {minutes} minutes",
+                    progress,
                     proof_mode.as_str_name()
                 )
             }
