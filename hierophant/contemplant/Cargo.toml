@@ -15,7 +15,11 @@ alloy-primitives = { workspace = true, features = [
 ] } #alloy-primitives.workspace = true
 reqwest.workspace = true
 env_logger.workspace = true
+lazy_static = "1.4"
 rand = "0.9.1"
+indicatif = "0.17"
+regex = "1"
+indicatif-log-bridge = "0.2"
 futures-util.workspace = true
 tokio-tungstenite.workspace = true
 

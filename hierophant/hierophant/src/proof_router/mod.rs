@@ -28,6 +28,7 @@ impl ProofRouter {
             config.max_worker_strikes,
             config.max_worker_heartbeat_interval_secs,
             config.proof_timeout_mins,
+            config.contemplant_required_progress_interval_mins,
         );
 
         Self {

@@ -11,7 +11,7 @@ pub const REGISTER_CONTEMPLANT_ENDPOINT: &str = "register_contemplant";
 // Increment this whenever there is a breaking change in the contemplant
 // This is to ensure the contemplant is on the same version as the Hierophant it's
 // connecting to
-pub const CONTEMPLANT_VERSION: &str = "2.0.0";
+pub const CONTEMPLANT_VERSION: &str = "4.0.0";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerRegisterInfo {
@@ -67,7 +67,6 @@ impl Display for FromHierophantMessage {
     }
 }
 
-// TODO: (maybe) Gas limit and cycle limit
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ContemplantProofRequest {
     pub request_id: B256,
@@ -95,6 +94,7 @@ impl Display for ContemplantProofRequest {
 pub struct ContemplantProofStatus {
     pub execution_status: i32,
     pub proof: Option<Vec<u8>>,
+    pub progress: ProgressUpdate,
 }
 
 impl ContemplantProofStatus {
@@ -102,20 +102,30 @@ impl ContemplantProofStatus {
         Self {
             execution_status: ExecutionStatus::Unexecuted.into(),
             proof: None,
+            progress: ProgressUpdate::Execution(0),
         }
     }
 
-    pub fn executed(proof_bytes: Vec<u8>) -> Self {
-        Self {
-            execution_status: ExecutionStatus::Executed.into(),
-            proof: Some(proof_bytes),
-        }
+    pub fn proof_complete(&mut self, proof_bytes: Vec<u8>) {
+        self.execution_status = ExecutionStatus::Executed.into();
+        self.proof = Some(proof_bytes);
+        self.progress = ProgressUpdate::Done;
     }
 
-    pub fn unexecutable() -> Self {
+    pub fn unexecutable(&mut self) {
+        self.execution_status = ExecutionStatus::Unexecutable.into();
+        self.proof = None;
+    }
+
+    pub fn progress_update(&mut self, new: &ProgressUpdate) {
+        self.progress = self.progress.max(new);
+    }
+
+    pub fn default() -> Self {
         Self {
             execution_status: ExecutionStatus::Unexecutable.into(),
             proof: None,
+            progress: ProgressUpdate::Execution(0),
         }
     }
 }
@@ -130,12 +140,86 @@ impl Display for ContemplantProofStatus {
             None => "none",
         };
 
+        let progress_update = match self.progress {
+            ProgressUpdate::Execution(x) => format!("{x}% executed"),
+            ProgressUpdate::Serialization(x) => format!("{x}% serialized"),
+            ProgressUpdate::Done => format!("Done"),
+        };
+
         write!(
             f,
-            "ExecutionStatus: {}, Proof: {}",
+            "ExecutionStatus: {}, Progress: {}, Proof: {}",
             execution_status.as_str_name(),
+            progress_update,
             proof
         )
+    }
+}
+
+// contemplant's progress on their current proof
+#[derive(Copy, Debug, Eq, PartialEq, Serialize, Deserialize, Clone)]
+pub enum ProgressUpdate {
+    Execution(u64),     // 0 to 100
+    Serialization(u64), // 0 to 100
+    Done,               // Finished with a count of serialization shards.
+}
+
+impl Display for ProgressUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            ProgressUpdate::Execution(x) => {
+                format!("{x}% executed")
+            }
+            ProgressUpdate::Serialization(x) => {
+                format!("{x}% serialized")
+            }
+            ProgressUpdate::Done => {
+                format!("done")
+            }
+        };
+
+        write!(f, "progress: {}", msg)
+    }
+}
+
+impl Default for ProgressUpdate {
+    fn default() -> Self {
+        Self::Execution(0)
+    }
+}
+
+impl ProgressUpdate {
+    pub fn max(&self, other: &ProgressUpdate) -> ProgressUpdate {
+        match other {
+            ProgressUpdate::Execution(y) => {
+                match self {
+                    ProgressUpdate::Execution(x) => {
+                        // both are during Execution, take the update with more progress
+                        if x > y { *self } else { *other }
+                    }
+                    ProgressUpdate::Serialization(_) => {
+                        // serializing is > execution
+                        *self
+                    }
+                    ProgressUpdate::Done => *self,
+                }
+            }
+            ProgressUpdate::Serialization(y) => {
+                match self {
+                    ProgressUpdate::Execution(_) => {
+                        // serializing is > execution
+                        *other
+                    }
+                    ProgressUpdate::Serialization(x) => {
+                        // both are during Serialization, take the update with more progress
+                        if x > y { *self } else { *other }
+                    }
+                    ProgressUpdate::Done => *self,
+                }
+            }
+            // Done is greater than all other status
+            ProgressUpdate::Done => *other,
+        }
     }
 }
 
