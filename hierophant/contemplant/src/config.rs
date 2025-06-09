@@ -19,6 +19,7 @@ pub struct Config {
     // max number of finished proofs stored in memory
     #[serde(default = "default_max_proofs_stored")]
     pub max_proofs_stored: usize,
+    #[serde(default)]
     pub assessor: AssessorConfig,
 }
 
@@ -64,7 +65,7 @@ fn default_contemplant_name() -> String {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct AssessorConfig {
     // The path to the moongate log file to watch for progress.
     #[serde(default = "default_moongate_log_path")]
