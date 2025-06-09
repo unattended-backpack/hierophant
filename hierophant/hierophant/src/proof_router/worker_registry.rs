@@ -388,6 +388,7 @@ impl WorkerRegistry {
                     self.cfg_max_worker_strikes,
                     self.cfg_max_worker_heartbeat_interval_secs,
                     self.cfg_proof_timeout_mins,
+                    self.cfg_contemplant_required_progress_interval_mins,
                 ) {
                     Some(worker_addr.clone())
                 } else {
@@ -530,6 +531,7 @@ impl WorkerRegistry {
                         self.cfg_max_worker_strikes,
                         self.cfg_max_worker_heartbeat_interval_secs,
                         self.cfg_proof_timeout_mins,
+                        self.cfg_contemplant_required_progress_interval_mins,
                     )
                 {
                     // TODO: re-assign this proof request
@@ -576,16 +578,11 @@ impl WorkerRegistry {
                 ..
             } = &mut worker_state.status
             {
-                // TODO: cut if it's been too long
-                // if let Ok(since_last_update) = SystemTime::now().duration_since(time_of_last_update)
-                // {
-                //     let mins_since_last_update = since_last_update.as_secs_f64() / 60.0;
-                //     if mins_since_last_update > self.cfg_contemplant_required_progress_interval_mins {
-                //
-                //     }
-                // }
+                // if progress has been made, update time_of_last_update
+                if progress_update > *progress {
+                    *time_of_last_update = SystemTime::now();
+                }
                 *progress = progress_update;
-                *time_of_last_update = SystemTime::now();
             }
         } else {
             warn!("Worker registry couldn't find worker who was assigned proof {request_id}");
@@ -969,12 +966,14 @@ impl WorkerState {
 
     // drop worker if they have too many strikes OR
     // if it's been too long since their last heartbeat OR
-    // if they've been working on a proof for too long
+    // if they've been working on a proof for too long OR
+    // if it's been too long since their proof made progress
     fn should_drop(
         &self,
         cfg_max_worker_strikes: usize,
         cfg_max_worker_heartbeat_interval_secs: Duration,
         cfg_proof_timeout_mins: u64,
+        cfg_contemplant_required_progress_interval_mins: u64,
     ) -> bool {
         if self.strikes >= cfg_max_worker_strikes {
             warn!(
@@ -992,16 +991,33 @@ impl WorkerState {
         } else if let WorkerStatus::Busy {
             request_id,
             start_time,
+            time_of_last_update,
             ..
         } = self.status
         {
-            let mins_on_this_proof = (start_time.elapsed().as_secs_f32() / 60.0).round() as u64;
+            let mins_on_this_proof = (start_time.elapsed().as_secs_f32() / 60.0) as u64;
+            // if they've been working on this proof for too long
             if mins_on_this_proof > cfg_proof_timeout_mins {
                 warn!(
                     "Dropping contemplant {} because they have been working on proof request {} for {} mins.  Max proof time is set to {} mins.",
                     self.name, request_id, mins_on_this_proof, cfg_proof_timeout_mins
                 );
                 true
+            } else if let Ok(duration_since_last_update) =
+                SystemTime::now().duration_since(time_of_last_update)
+            {
+                let mins_since_last_update =
+                    (duration_since_last_update.as_secs_f64() / 60.0) as u64;
+                // if it's been too long since this contemplant has reported progress on this proof
+                if mins_since_last_update > cfg_contemplant_required_progress_interval_mins {
+                    warn!(
+                        "Dropping contemplant {} because they haven't made progress on proof {} in {} mins.",
+                        self.name, request_id, mins_since_last_update
+                    );
+                    true
+                } else {
+                    false
+                }
             } else {
                 false
             }

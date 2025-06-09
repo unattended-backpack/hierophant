@@ -54,7 +54,7 @@ pub struct Config {
 }
 
 fn contemplant_required_progress_interval_mins() -> u64 {
-    8
+    10
 }
 
 fn default_worker_response_timeout_secs() -> Duration {

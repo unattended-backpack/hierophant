@@ -101,15 +101,6 @@ impl ProverNetwork for ProverNetworkService {
         request: Request<CreateProgramRequest>,
     ) -> Result<Response<CreateProgramResponse>, Status> {
         info!("\n=== create_program called ===");
-        // TODO: might have to handle differently based on request.format
-        // or does tonic handle this for us?
-        /*
-        pub enum MessageFormat {
-            UnspecifiedFormat = 0,
-            Json = 1,
-            Binary = 2,
-        }
-        */
 
         let req = request.into_inner();
 

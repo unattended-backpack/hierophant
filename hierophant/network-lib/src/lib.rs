@@ -5,7 +5,7 @@ use sp1_sdk::{
     SP1Proof, SP1ProofWithPublicValues, SP1PublicValues, SP1Stdin,
     network::proto::network::ProofMode,
 };
-use std::fmt::Display;
+use std::{cmp::Ordering, fmt::Display};
 
 pub const REGISTER_CONTEMPLANT_ENDPOINT: &str = "register_contemplant";
 // Increment this whenever there is a breaking change in the contemplant
@@ -117,7 +117,7 @@ impl ContemplantProofStatus {
         self.proof = None;
     }
 
-    pub fn progress_update(&mut self, new: &ProgressUpdate) {
+    pub fn progress_update(&mut self, new: ProgressUpdate) {
         self.progress = self.progress.max(new);
     }
 
@@ -188,37 +188,27 @@ impl Default for ProgressUpdate {
     }
 }
 
-impl ProgressUpdate {
-    pub fn max(&self, other: &ProgressUpdate) -> ProgressUpdate {
-        match other {
-            ProgressUpdate::Execution(y) => {
-                match self {
-                    ProgressUpdate::Execution(x) => {
-                        // both are during Execution, take the update with more progress
-                        if x > y { *self } else { *other }
-                    }
-                    ProgressUpdate::Serialization(_) => {
-                        // serializing is > execution
-                        *self
-                    }
-                    ProgressUpdate::Done => *self,
-                }
-            }
-            ProgressUpdate::Serialization(y) => {
-                match self {
-                    ProgressUpdate::Execution(_) => {
-                        // serializing is > execution
-                        *other
-                    }
-                    ProgressUpdate::Serialization(x) => {
-                        // both are during Serialization, take the update with more progress
-                        if x > y { *self } else { *other }
-                    }
-                    ProgressUpdate::Done => *self,
-                }
-            }
-            // Done is greater than all other status
-            ProgressUpdate::Done => *other,
+impl PartialOrd for ProgressUpdate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ProgressUpdate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            // Done is always greatest
+            (ProgressUpdate::Done, ProgressUpdate::Done) => Ordering::Equal,
+            (ProgressUpdate::Done, _) => Ordering::Greater,
+            (_, ProgressUpdate::Done) => Ordering::Less,
+
+            // Serialization > Execution
+            (ProgressUpdate::Serialization(_), ProgressUpdate::Execution(_)) => Ordering::Greater,
+            (ProgressUpdate::Execution(_), ProgressUpdate::Serialization(_)) => Ordering::Less,
+
+            // Same variant - compare by value
+            (ProgressUpdate::Execution(x), ProgressUpdate::Execution(y)) => x.cmp(y),
+            (ProgressUpdate::Serialization(x), ProgressUpdate::Serialization(y)) => x.cmp(y),
         }
     }
 }

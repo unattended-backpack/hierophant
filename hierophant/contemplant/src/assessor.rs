@@ -214,7 +214,7 @@ pub async fn start_assessor(
                     }
 
                     if let Some(proof_status) = proof_store.lock().await.get_mut(&request_id){
-                        proof_status.progress_update(&update)
+                        proof_status.progress_update(update)
                     }
 
                 }
