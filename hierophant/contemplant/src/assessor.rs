@@ -1,11 +1,10 @@
 use network_lib::ProgressUpdate;
 
-use crate::types::{LogCapturingWrapper, ProofStore};
+use crate::config::AssessorConfig;
+use crate::types::ProofStore;
 use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use indicatif_log_bridge::LogWrapper;
-use lazy_static::lazy_static;
 use log::info;
 use sp1_sdk::CpuProver;
 use sp1_sdk::{Prover, SP1Stdin};
@@ -16,12 +15,13 @@ use tokio::{
     sync::{mpsc, watch},
     time::{Duration, interval, sleep},
 };
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::{
+    prelude::__tracing_subscriber_SubscriberExt,
+    {EnvFilter, Registry},
+};
 
-use crate::config::AssessorConfig;
-
-lazy_static! {
-    pub static ref LOG_CAPTURER: LogCapturingWrapper = LogCapturingWrapper::new();
-}
+const LOG_DIR: &str = "./execution-reports";
 
 pub async fn start_assessor(
     mock_prover: Arc<CpuProver>,
@@ -35,9 +35,15 @@ pub async fn start_assessor(
     // Create progress bar
     let multi = MultiProgress::new();
 
-    // Initialize the logger with indicatif bridge
-    log::set_boxed_logger(Box::new(LogWrapper::new(multi.clone(), &*LOG_CAPTURER)))?;
-    log::set_max_level(log::LevelFilter::Info);
+    // Set up file appender for this specific proof execution
+    let log_dir = std::path::Path::new(LOG_DIR);
+    tokio::fs::create_dir_all(log_dir)
+        .await
+        .context("Failed to create logs directory")?;
+
+    let file_name = format!("proof_execution_{}.log", request_id);
+    let file_appender = tracing_appender::rolling::never(log_dir, &file_name);
+    let (file_writer, _guard) = tracing_appender::non_blocking(file_appender);
 
     // Determine a cycle count.
     let _ = mock_prover.setup(elf);
@@ -50,11 +56,17 @@ pub async fn start_assessor(
         );
     proof_cycle_spinner.enable_steady_tick(Duration::from_millis(100));
     multi.add(proof_cycle_spinner.clone());
-    LOG_CAPTURER.enable_capture();
-    let (_, report) = mock_prover.execute(elf, sp1_stdin).run().unwrap();
-    LOG_CAPTURER.disable_capture();
-    let captured_logs = LOG_CAPTURER.get_captured_logs();
-    let max_clk = find_max_clk_sync(captured_logs).unwrap();
+    // Execute with file logging
+    let (report, max_clk) = execution_report_with_file_logging(
+        mock_prover.clone(),
+        elf,
+        sp1_stdin,
+        file_writer,
+        request_id,
+        _guard,
+    )
+    .await?;
+
     info!("... proof details {:?} ...", report);
     info!("... proof cycles {} ...", max_clk);
     proof_cycle_spinner.finish_with_message("... complete!");
@@ -171,6 +183,55 @@ pub async fn start_assessor(
     Ok(())
 }
 
+async fn execution_report_with_file_logging<W>(
+    mock_prover: Arc<CpuProver>,
+    elf: &[u8],
+    sp1_stdin: &SP1Stdin,
+    file_writer: W,
+    request_id: B256,
+    _guard: WorkerGuard,
+) -> Result<(sp1_sdk::ExecutionReport, u64)>
+where
+    W: for<'writer> tracing_subscriber::fmt::writer::MakeWriter<'writer> + Send + Sync + 'static,
+{
+    // Create a temporary subscriber that writes to the file
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_writer(file_writer)
+        .with_ansi(false)
+        .with_target(false)
+        .with_thread_names(false);
+
+    // Set up environment filter for the file logging
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"))
+        .add_directive("hyper=off".parse().unwrap())
+        .add_directive("p3_keccak_air=off".parse().unwrap())
+        .add_directive("p3_fri=off".parse().unwrap())
+        .add_directive("p3_dft=off".parse().unwrap())
+        .add_directive("p3_challenger=off".parse().unwrap())
+        .add_directive("sp1_cuda=info".parse().unwrap()); // Keep sp1 logs for clk parsing
+
+    // Create a scoped subscriber for this execution
+    let subscriber = Registry::default().with(env_filter).with(file_layer);
+
+    // Execute within the tracing context
+    let result =
+        tracing::subscriber::with_default(subscriber, || mock_prover.execute(elf, sp1_stdin).run());
+
+    let (_, report) = result.context("Failed to execute proof")?;
+
+    // Read the log file to find max_clk
+    let log_file_path = format!("{LOG_DIR}/proof_execution_{}.log", request_id);
+    let max_clk = tokio::task::spawn_blocking(move || read_max_clk_from_file(&log_file_path))
+        .await
+        .context("Failed to read max clk from log file")??;
+
+    // Keep the guard alive until we're done
+    drop(_guard);
+
+    Ok((report, max_clk))
+}
+
 pub async fn follow_log_slice(
     config: AssessorConfig,
     start_offset: u64,
@@ -256,11 +317,18 @@ fn extract_clk(line: &str) -> Option<u64> {
         .ok()
 }
 
-// Function to find max clk value from logs
-fn find_max_clk_sync(logs: Vec<String>) -> Option<u64> {
+fn read_max_clk_from_file(file_path: &str) -> Result<u64> {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+
+    let file = File::open(file_path).context("Failed to open log file")?;
+    let reader = BufReader::new(file);
+
     let clk_regex = regex::Regex::new(r"clk\s*=\s*(\d+)").unwrap();
     let mut max_clk: Option<u64> = None;
-    for line in logs {
+
+    for line in reader.lines() {
+        let line = line.context("Failed to read line from log file")?;
         if let Some(captures) = clk_regex.captures(&line) {
             if let Some(number_str) = captures.get(1) {
                 if let Ok(clk_value) = number_str.as_str().parse::<u64>() {
@@ -272,5 +340,6 @@ fn find_max_clk_sync(logs: Vec<String>) -> Option<u64> {
             }
         }
     }
-    max_clk
+
+    max_clk.ok_or_else(|| anyhow::anyhow!("No clk values found in log file"))
 }

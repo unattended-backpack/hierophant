@@ -1,11 +1,6 @@
 use alloy_primitives::B256;
 use log::error;
-use log::{Log, Metadata, Record, info};
 use network_lib::ContemplantProofStatus;
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
 
 // datastructure to store only <max_proofs_stored> proofs because they can be very big an expensive
 // to store in memory.  In most cases, we only need to stored the most recent proof in memory, but
@@ -83,61 +78,6 @@ impl ProofStore {
             None => None,
         }
     }
-}
-
-// Custom logger wrapper
-pub struct LogCapturingWrapper {
-    buffer: Arc<Mutex<VecDeque<String>>>,
-    capture_enabled: Arc<Mutex<bool>>,
-}
-
-impl LogCapturingWrapper {
-    pub fn new() -> Self {
-        Self {
-            buffer: Arc::new(Mutex::new(VecDeque::new())),
-            capture_enabled: Arc::new(Mutex::new(false)),
-        }
-    }
-
-    pub fn enable_capture(&self) {
-        *self.capture_enabled.lock().unwrap() = true;
-    }
-
-    pub fn disable_capture(&self) {
-        *self.capture_enabled.lock().unwrap() = false;
-    }
-
-    pub fn get_captured_logs(&self) -> Vec<String> {
-        let mut buffer = self.buffer.lock().unwrap();
-        buffer.drain(..).collect()
-    }
-}
-
-impl Log for LogCapturingWrapper {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        if *self.capture_enabled.lock().unwrap() {
-            // When capturing, enable info+ logs regardless of RUST_LOG
-            metadata.level() <= log::Level::Info
-        } else {
-            // When not capturing, respect env_logger settings
-            let temp_logger = env_logger::Builder::from_default_env().build();
-            temp_logger.enabled(metadata)
-        }
-    }
-
-    fn log(&self, record: &Record) {
-        // Always send to env_logger for normal console output (respects RUST_LOG)
-        let temp_logger = env_logger::Builder::from_default_env().build();
-        temp_logger.log(record);
-
-        // Capture when enabled, regardless of RUST_LOG
-        if *self.capture_enabled.lock().unwrap() && record.level() <= log::Level::Info {
-            let formatted = format!("{} - {}", record.level(), record.args());
-            self.buffer.lock().unwrap().push_back(formatted);
-        }
-    }
-
-    fn flush(&self) {}
 }
 
 #[cfg(test)]

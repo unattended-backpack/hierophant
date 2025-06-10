@@ -6,7 +6,6 @@ use alloy_primitives::B256;
 use assessor::start_assessor;
 use config::AssessorConfig;
 use futures_util::{SinkExt, StreamExt};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use network_lib::ProofFromNetwork;
 use tokio::{
     sync::{Mutex, mpsc, watch},

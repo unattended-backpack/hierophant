@@ -42,6 +42,9 @@ base64.workspace = true
 tower-http.workspace = true
 serde_repr = "0.1.19"
 tempfile = "3.20.0"
+tracing-appender = "0.2.3"
+tracing-subscriber.workspace = true
+tracing.workspace = true
 
 # use `cargo build --features enable-native-gnark` when building a binary that uses undockerized cudaProver
 [features]

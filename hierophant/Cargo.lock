@@ -1240,6 +1240,9 @@ dependencies = [
  "tokio-tungstenite",
  "toml",
  "tower-http",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
