@@ -9,7 +9,7 @@ use axum::{
     response::IntoResponse,
     routing::{any, get, post, put},
 };
-use log::{error, info};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::hash_map::DefaultHasher,

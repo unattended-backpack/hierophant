@@ -19,7 +19,7 @@ pub struct Config {
     // max number of finished proofs stored in memory
     #[serde(default = "default_max_proofs_stored")]
     pub max_proofs_stored: usize,
-    #[serde(default)]
+    #[serde(default = "default_assessor_config")]
     pub assessor: AssessorConfig,
 }
 
@@ -65,7 +65,15 @@ fn default_contemplant_name() -> String {
     }
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
+fn default_assessor_config() -> AssessorConfig {
+    AssessorConfig {
+        moongate_log_path: default_moongate_log_path(),
+        watcher_reporting_interval_ms: default_watcher_reporting_inteval_ms(),
+        watcher_polling_interval_ms: default_watcher_polling_interval_ms(),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AssessorConfig {
     // The path to the moongate log file to watch for progress.
     #[serde(default = "default_moongate_log_path")]

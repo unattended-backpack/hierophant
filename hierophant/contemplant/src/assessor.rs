@@ -120,13 +120,13 @@ pub async fn start_assessor(
     tokio::spawn(async move {
         loop {
             tokio::select! {
-
                 // Only poll progress channel if not complete.
                 Some(update) = progress_rx.recv(), if !progress_complete => {
                     match update {
                         ProgressUpdate::Execution(p) => {
                             let execution_diff = p - execution_progress;
                             execution_progress = p.max(execution_progress);
+                            // TODO: don't print this every time
                             info!("... execution {}%", execution_progress );
                             execution_bar.inc(execution_diff);
                             total_bar.inc((execution_diff as f64 * 0.6).floor() as u64);
