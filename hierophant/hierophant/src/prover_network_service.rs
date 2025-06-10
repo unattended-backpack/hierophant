@@ -426,7 +426,12 @@ impl ProverNetwork for ProverNetworkService {
             }
         };
 
-        info!("Proof request {request_id} with uri {proof_uri} status: {proof_status}");
+        let assigned_status: i32 = FulfillmentStatus::Assigned.into();
+        if proof_status.fulfillment_status != assigned_status {
+            info!(
+                "Proof request {request_id} with uri {proof_uri} not yet assigned: {proof_status}"
+            );
+        }
 
         // if proof is complete, save it to disk as an artifact and mark the worker
         // as idle
