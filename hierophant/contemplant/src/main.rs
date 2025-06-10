@@ -448,9 +448,22 @@ async fn get_proof_request_status(
     state: WorkerState,
     request_id: B256,
 ) -> Option<ContemplantProofStatus> {
-    info!("Received proof status request: {:?}", request_id);
-
     let proof_store = state.proof_store.lock().await;
 
-    proof_store.get(&request_id).cloned()
+    match proof_store.get(&request_id).cloned() {
+        Some(proof_status) => {
+            info!(
+                "Received proof status request: {:?}.  Proof is {}",
+                request_id, proof_status.progress
+            );
+            Some(proof_status)
+        }
+        None => {
+            warn!(
+                "Received proof status request: {:?} but this proof cannot be found",
+                request_id
+            );
+            None
+        }
+    }
 }

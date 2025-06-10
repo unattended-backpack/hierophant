@@ -68,7 +68,6 @@ fn default_contemplant_name() -> String {
 fn default_assessor_config() -> AssessorConfig {
     AssessorConfig {
         moongate_log_path: default_moongate_log_path(),
-        watcher_reporting_interval_ms: default_watcher_reporting_inteval_ms(),
         watcher_polling_interval_ms: default_watcher_polling_interval_ms(),
     }
 }
@@ -78,9 +77,6 @@ pub struct AssessorConfig {
     // The path to the moongate log file to watch for progress.
     #[serde(default = "default_moongate_log_path")]
     pub moongate_log_path: String,
-    // The frequency in milliseconds with which the moongate log watcher should report progress.
-    #[serde(default = "default_watcher_reporting_inteval_ms")]
-    pub watcher_reporting_interval_ms: u64,
     // The frequency in milliseconds with which the moongate log watcher should poll the moongate
     // log file.
     #[serde(default = "default_watcher_polling_interval_ms")]
@@ -91,10 +87,6 @@ fn default_moongate_log_path() -> String {
     "./moongate.log".into()
 }
 
-fn default_watcher_reporting_inteval_ms() -> u64 {
-    1000
-}
-
 fn default_watcher_polling_interval_ms() -> u64 {
-    100
+    2000
 }

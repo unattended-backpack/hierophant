@@ -4,7 +4,6 @@ use crate::config::AssessorConfig;
 use crate::types::ProofStore;
 use alloy_primitives::B256;
 use anyhow::{Context, Result};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::info;
 use sp1_sdk::CpuProver;
 use sp1_sdk::{Prover, SP1Stdin};
@@ -13,7 +12,7 @@ use tokio::{
     fs::File,
     io::{AsyncBufReadExt, AsyncSeekExt, BufReader},
     sync::{mpsc, watch},
-    time::{Duration, interval, sleep},
+    time::{Duration, interval},
 };
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
@@ -32,9 +31,6 @@ pub async fn start_assessor(
     proof_store: Arc<tokio::sync::Mutex<ProofStore>>,
     request_id: B256,
 ) -> Result<()> {
-    // Create progress bar
-    let multi = MultiProgress::new();
-
     // Set up file appender for this specific proof execution
     let log_dir = std::path::Path::new(LOG_DIR);
     tokio::fs::create_dir_all(log_dir)
@@ -47,15 +43,6 @@ pub async fn start_assessor(
 
     // Determine a cycle count.
     let _ = mock_prover.setup(elf);
-    let proof_cycle_spinner = ProgressBar::new_spinner()
-        .with_message("Calculating proof cycles ...")
-        .with_style(
-            ProgressStyle::with_template("[{spinner:1.green}] [{elapsed_precise}] {msg}")
-                .unwrap()
-                .tick_strings(&["⢄", "⢂", "⢁", "⡁", "⡈", "⡐", "⡠"]),
-        );
-    proof_cycle_spinner.enable_steady_tick(Duration::from_millis(100));
-    multi.add(proof_cycle_spinner.clone());
     // Execute with file logging
     let (report, max_clk) = execution_report_with_file_logging(
         mock_prover.clone(),
@@ -69,7 +56,6 @@ pub async fn start_assessor(
 
     info!("... proof details {:?} ...", report);
     info!("... proof cycles {} ...", max_clk);
-    proof_cycle_spinner.finish_with_message("... complete!");
 
     // Prepare a moongate watcher to estimate proof progress from logs.
     let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
@@ -85,95 +71,20 @@ pub async fn start_assessor(
         progress_tx,
     ));
 
-    // Add a total estimated progress bar.
-    let total_bar = ProgressBar::new(10_000)
-        .with_message("Proving ...")
-        .with_style(
-            ProgressStyle::with_template(
-                "[{elapsed_precise}] {msg:<16} {bar:<40.green} [~{eta_precise}]",
-            )
-            .unwrap()
-            .progress_chars("=>-"),
-        );
-    total_bar.enable_steady_tick(Duration::from_millis(100));
-    multi.add(total_bar.clone());
-
-    // Add a proof execution progress bar.
-    let execution_bar = ProgressBar::new(10_000)
-        .with_message("Executing ...")
-        .with_style(
-            ProgressStyle::with_template(
-                "[{elapsed_precise}] {msg:<16} {bar:<40.green} [~{eta_precise}]",
-            )?
-            .progress_chars("=>-"),
-        );
-    multi.add(execution_bar.clone());
-
-    // Add a proof serialization progress bar.
-    let mut serialization_bar_ref = None;
-
     // Allow proving to finish while handling progress updates.
     let mut progress_complete = false;
-    let mut execution_progress = 0;
-    let mut first_serialization = false;
-    let mut serialization_progress = 0;
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 // Only poll progress channel if not complete.
                 Some(update) = progress_rx.recv(), if !progress_complete => {
-                    match update {
-                        ProgressUpdate::Execution(p) => {
-                            let execution_diff = p - execution_progress;
-                            execution_progress = p.max(execution_progress);
-                            // TODO: don't print this every time
-                            info!("... execution {}%", execution_progress );
-                            execution_bar.inc(execution_diff);
-                            total_bar.inc((execution_diff as f64 * 0.6).floor() as u64);
-                        },
-                        ProgressUpdate::Serialization(p) => {
-                            if !first_serialization {
-                                let serialization_bar = ProgressBar::new(10_000)
-                                    .with_message("Serializing ...")
-                                    .with_style(
-                                        ProgressStyle::with_template(
-                                            "[{elapsed_precise}] {msg:<16} {bar:<40.green} [~{eta_precise}]",
-                                        )
-                                        .unwrap()
-                                        .progress_chars("=>-"),
-                                    );
-                                multi.add(serialization_bar.clone());
-                                serialization_bar_ref = Some(serialization_bar);
-                            }
-                            first_serialization = true;
-
-                            let serialization_diff = p - serialization_progress;
-                            serialization_progress = p.max(serialization_progress);
-                            info!("... serialization {}%", serialization_progress);
-                            if let Some(serialization_bar) = &serialization_bar_ref {
-                                serialization_bar.inc(serialization_diff);
-                                total_bar.inc((serialization_diff as f64 * 0.4).floor() as u64);
-                            }
-                        },
-                        ProgressUpdate::Done => {
-                            info!("proof done executing");
-
-                            let serialization_diff = 100 - serialization_progress;
-                            serialization_progress = 100;
-                            info!("... serialization {}%", serialization_progress );
-                            if let Some(serialization_bar) = &serialization_bar_ref {
-                                serialization_bar.inc(serialization_diff);
-                                total_bar.inc((serialization_diff as f64 * 0.4).floor() as u64);
-                            }
-
-                            progress_complete = true;
-                        }
+                    if let ProgressUpdate::Done = update {
+                        progress_complete = true;
                     }
 
                     if let Some(proof_status) = proof_store.lock().await.get_mut(&request_id){
                         proof_status.progress_update(update)
                     }
-
                 }
 
                 else => {
@@ -250,18 +161,34 @@ pub async fn follow_log_slice(
         ))?;
     let mut reader = BufReader::new(file);
     reader.seek(std::io::SeekFrom::Start(start_offset)).await?;
-    let mut buffer = String::new();
 
     let mut final_clk_seen = false;
     let mut clk_shard_count = 0;
     let mut shard_count = 0;
     let mut last_clk = 0;
 
-    let mut report_tick = interval(Duration::from_millis(config.watcher_reporting_interval_ms));
+    let mut poll_tick = interval(Duration::from_millis(config.watcher_polling_interval_ms));
 
     loop {
         tokio::select! {
-            _ = report_tick.tick() => {
+
+            _ = poll_tick.tick() => {
+                // Read all available lines in one batch
+                let lines_processed = process_available_lines(
+                    &mut reader,
+                    &mut final_clk_seen,
+                    &mut clk_shard_count,
+                    &mut shard_count,
+                    &mut last_clk,
+                    max_clk,
+                    &progress_tx,
+                ).await?;
+
+                // If no lines were read, the file hasn't grown yet
+                if lines_processed == 0 {
+                    continue;
+                }
+
                 if !final_clk_seen {
                     // 0 to 100
                     let progress = ((last_clk as f64 / max_clk as f64).min(1.0) * 100.0).round() as u64;
@@ -274,34 +201,6 @@ pub async fn follow_log_slice(
                 }
             }
 
-            read = reader.read_line(&mut buffer) => {
-                let bytes = read?;
-                if bytes == 0 {
-                    sleep(Duration::from_millis(config.watcher_polling_interval_ms)).await;
-                    continue;
-                }
-
-                if let Some(line) = buffer.strip_suffix('\n') {
-                    if !final_clk_seen && line.contains("clk =") {
-                        if let Some(clk_val) = extract_clk(line) {
-                            if clk_val > last_clk {
-                                last_clk = clk_val;
-                            }
-                            if clk_val >= max_clk {
-                                final_clk_seen = true;
-                                last_clk = max_clk;
-                                progress_tx.send(ProgressUpdate::Execution(100)).ok();
-                            }
-                        }
-                    } else if !final_clk_seen && line.contains("Shard: [") {
-                        clk_shard_count += 1;
-                    } else if final_clk_seen && line.contains("Shard: [") {
-                        shard_count += 1;
-                    }
-                }
-
-                buffer.clear();
-            }
 
             _ = shutdown_rx.changed() => {
                 progress_tx.send(ProgressUpdate::Done).ok();
@@ -309,6 +208,52 @@ pub async fn follow_log_slice(
             }
         }
     }
+}
+
+async fn process_available_lines(
+    reader: &mut BufReader<File>,
+    final_clk_seen: &mut bool,
+    clk_shard_count: &mut u64,
+    shard_count: &mut u64,
+    last_clk: &mut u64,
+    max_clk: u64,
+    progress_tx: &mpsc::UnboundedSender<ProgressUpdate>,
+) -> Result<usize> {
+    let mut buffer = String::new();
+    let mut lines_processed = 0;
+
+    loop {
+        buffer.clear();
+        let bytes = reader.read_line(&mut buffer).await?;
+
+        // No more data available
+        if bytes == 0 {
+            break;
+        }
+
+        lines_processed += 1;
+
+        if let Some(line) = buffer.strip_suffix('\n') {
+            if !*final_clk_seen && line.contains("clk =") {
+                if let Some(clk_val) = extract_clk(line) {
+                    if clk_val > *last_clk {
+                        *last_clk = clk_val;
+                    }
+                    if clk_val >= max_clk {
+                        *final_clk_seen = true;
+                        *last_clk = max_clk;
+                        progress_tx.send(ProgressUpdate::Execution(100)).ok();
+                    }
+                }
+            } else if !*final_clk_seen && line.contains("Shard: [") {
+                *clk_shard_count += 1;
+            } else if *final_clk_seen && line.contains("Shard: [") {
+                *shard_count += 1;
+            }
+        }
+    }
+
+    Ok(lines_processed)
 }
 
 fn extract_clk(line: &str) -> Option<u64> {
