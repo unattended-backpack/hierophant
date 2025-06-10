@@ -178,7 +178,7 @@ impl Display for ProgressUpdate {
             }
         };
 
-        write!(f, "progress: {}", msg)
+        write!(f, "{}", msg)
     }
 }
 

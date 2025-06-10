@@ -1,18 +1,15 @@
 use network_lib::ProgressUpdate;
 
-use crate::types::ProofStore;
+use crate::types::{LogCapturingWrapper, ProofStore};
 use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
 use lazy_static::lazy_static;
-use log::{Log, Metadata, Record, info};
+use log::info;
 use sp1_sdk::CpuProver;
 use sp1_sdk::{Prover, SP1Stdin};
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
+use std::sync::Arc;
 use tokio::{
     fs::File,
     io::{AsyncBufReadExt, AsyncSeekExt, BufReader},
@@ -22,63 +19,8 @@ use tokio::{
 
 use crate::config::AssessorConfig;
 
-// Custom logger wrapper
-struct LogCapturingWrapper {
-    buffer: Arc<Mutex<VecDeque<String>>>,
-    capture_enabled: Arc<Mutex<bool>>,
-}
-
-impl LogCapturingWrapper {
-    fn new() -> Self {
-        Self {
-            buffer: Arc::new(Mutex::new(VecDeque::new())),
-            capture_enabled: Arc::new(Mutex::new(false)),
-        }
-    }
-
-    fn enable_capture(&self) {
-        *self.capture_enabled.lock().unwrap() = true;
-    }
-
-    fn disable_capture(&self) {
-        *self.capture_enabled.lock().unwrap() = false;
-    }
-
-    fn get_captured_logs(&self) -> Vec<String> {
-        let mut buffer = self.buffer.lock().unwrap();
-        buffer.drain(..).collect()
-    }
-}
-
-impl Log for LogCapturingWrapper {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        if *self.capture_enabled.lock().unwrap() {
-            // When capturing, enable info+ logs regardless of RUST_LOG
-            metadata.level() <= log::Level::Info
-        } else {
-            // When not capturing, respect env_logger settings
-            let temp_logger = env_logger::Builder::from_default_env().build();
-            temp_logger.enabled(metadata)
-        }
-    }
-
-    fn log(&self, record: &Record) {
-        // Always send to env_logger for normal console output (respects RUST_LOG)
-        let temp_logger = env_logger::Builder::from_default_env().build();
-        temp_logger.log(record);
-
-        // Capture when enabled, regardless of RUST_LOG
-        if *self.capture_enabled.lock().unwrap() && record.level() <= log::Level::Info {
-            let formatted = format!("{} - {}", record.level(), record.args());
-            self.buffer.lock().unwrap().push_back(formatted);
-        }
-    }
-
-    fn flush(&self) {}
-}
-
 lazy_static! {
-    static ref LOG_CAPTURER: LogCapturingWrapper = LogCapturingWrapper::new();
+    pub static ref LOG_CAPTURER: LogCapturingWrapper = LogCapturingWrapper::new();
 }
 
 pub async fn start_assessor(
