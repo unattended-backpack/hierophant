@@ -73,7 +73,10 @@ pub async fn start_assessor(
 
     // Prepare a moongate watcher to estimate proof progress from logs.
     let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
-    let offset = tokio::fs::metadata(&config.moongate_log_path).await?.len();
+    let offset = tokio::fs::metadata(&config.moongate_log_path)
+        .await
+        .context(format!("Open moongate log at {}", config.moongate_log_path))?
+        .len();
     tokio::spawn(follow_log_slice(
         config,
         offset,

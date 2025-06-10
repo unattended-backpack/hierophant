@@ -80,7 +80,7 @@ pub struct AssessorConfig {
 }
 
 fn default_moongate_log_path() -> String {
-    "moongate.log".into()
+    "./moongate.log".into()
 }
 
 fn default_watcher_reporting_inteval_ms() -> u64 {

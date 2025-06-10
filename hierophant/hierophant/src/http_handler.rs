@@ -53,7 +53,7 @@ async fn ws_handler(
     ws: WebSocketUpgrade,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
-    info!("Received ws connection request from {addr}");
+    debug!("Received ws connection request from {addr}");
 
     let one_hundred_mb: usize = 100 * 1024 * 1024; // 100MB
 
