@@ -8,7 +8,7 @@ use config::AssessorConfig;
 use futures_util::{SinkExt, StreamExt};
 use network_lib::ProofFromNetwork;
 use tokio::{
-    sync::{Mutex, mpsc, watch},
+    sync::{mpsc, watch},
     time::Instant,
 };
 
@@ -16,6 +16,7 @@ use tokio_tungstenite::{
     connect_async_with_config,
     tungstenite::protocol::{Message, WebSocketConfig},
 };
+use types::ProofStoreClient;
 
 use crate::config::Config;
 use crate::types::ProofStore;
@@ -26,7 +27,9 @@ use network_lib::{
     FromHierophantMessage, WorkerRegisterInfo,
 };
 use sp1_sdk::{
-    CpuProver, CudaProver, Prover, ProverClient, network::proto::network::ProofMode, utils,
+    CpuProver, CudaProver, Prover, ProverClient,
+    network::proto::network::{ExecutionStatus, ProofMode},
+    utils,
 };
 use std::{ops::ControlFlow, sync::Arc};
 use tokio::time::Duration;
@@ -36,7 +39,7 @@ pub struct WorkerState {
     // config: Config,
     cuda_prover: Arc<CudaProver>,
     mock_prover: Arc<CpuProver>,
-    proof_store: Arc<Mutex<ProofStore>>,
+    proof_store_client: ProofStoreClient,
     assessor_config: AssessorConfig,
 }
 
@@ -88,12 +91,12 @@ async fn main() -> Result<()> {
     let mock_prover = Arc::new(ProverClient::builder().mock().build());
     info!("Prover built");
 
-    let proof_store = Arc::new(Mutex::new(ProofStore::new(config.max_proofs_stored)));
+    let proof_store_client = ProofStore::new(config.max_proofs_stored);
 
     let worker_state = WorkerState {
         cuda_prover,
         mock_prover,
-        proof_store: proof_store.clone(),
+        proof_store_client,
         assessor_config: config.assessor,
     };
 
@@ -327,10 +330,9 @@ async fn request_proof(
 
     // It is assumed that the Hierophant won't request the same proof twice
     state
-        .proof_store
-        .lock()
-        .await
-        .insert(proof_request.request_id, initial_status);
+        .proof_store_client
+        .insert(proof_request.request_id, initial_status)
+        .await;
 
     let (assessor_shutdown_tx, assessor_shutdown_rx) = watch::channel(false);
     if let Err(e) = start_assessor(
@@ -339,7 +341,7 @@ async fn request_proof(
         &proof_request.sp1_stdin,
         state.assessor_config,
         assessor_shutdown_rx,
-        state.proof_store.clone(),
+        state.proof_store_client.clone(),
         proof_request.request_id,
     )
     .await
@@ -405,14 +407,14 @@ async fn request_proof(
         match proof_bytes_res {
             Ok(proof_bytes) => {
                 info!("Completed proof {} in {} minutes", proof_request, minutes);
-                if let Some(proof_status) = state
-                    .proof_store
-                    .lock()
-                    .await
-                    .get_mut(&proof_request.request_id)
-                {
-                    proof_status.proof_complete(proof_bytes);
-                };
+                state
+                    .proof_store_client
+                    .proof_status_update(
+                        proof_request.request_id,
+                        ExecutionStatus::Executed.into(),
+                        Some(proof_bytes),
+                    )
+                    .await;
             }
             Err(e) => {
                 let error_msg =
@@ -426,14 +428,14 @@ async fn request_proof(
                     .context("Send exit error message to main thread")
                     .unwrap();
 
-                if let Some(proof_status) = state
-                    .proof_store
-                    .lock()
-                    .await
-                    .get_mut(&proof_request.request_id)
-                {
-                    proof_status.unexecutable();
-                };
+                state
+                    .proof_store_client
+                    .proof_status_update(
+                        proof_request.request_id,
+                        ExecutionStatus::Unexecutable.into(),
+                        None,
+                    )
+                    .await;
             }
         };
 
@@ -448,9 +450,8 @@ async fn get_proof_request_status(
     state: WorkerState,
     request_id: B256,
 ) -> Option<ContemplantProofStatus> {
-    let proof_store = state.proof_store.lock().await;
-
-    match proof_store.get(&request_id).cloned() {
+    let start = tokio::time::Instant::now();
+    let status = match state.proof_store_client.get(request_id).await {
         Some(proof_status) => {
             info!(
                 "Received proof status request: {:?}.  Proof is {}",
@@ -465,5 +466,15 @@ async fn get_proof_request_status(
             );
             None
         }
+    };
+    let secs = start.elapsed().as_secs_f64();
+
+    if secs > 1.0 {
+        info!(
+            "Slow execution detected: took {} seconds to get proof status for proof request {}",
+            secs, request_id
+        );
     }
+
+    status
 }

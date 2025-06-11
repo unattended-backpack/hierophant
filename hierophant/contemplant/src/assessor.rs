@@ -1,7 +1,7 @@
 use network_lib::ProgressUpdate;
 
 use crate::config::AssessorConfig;
-use crate::types::ProofStore;
+use crate::types::ProofStoreClient;
 use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use log::info;
@@ -28,7 +28,7 @@ pub async fn start_assessor(
     sp1_stdin: &SP1Stdin,
     config: AssessorConfig,
     shutdown_rx: watch::Receiver<bool>,
-    proof_store: Arc<tokio::sync::Mutex<ProofStore>>,
+    proof_store_client: ProofStoreClient,
     request_id: B256,
 ) -> Result<()> {
     // Set up file appender for this specific proof execution
@@ -82,9 +82,7 @@ pub async fn start_assessor(
                         progress_complete = true;
                     }
 
-                    if let Some(proof_status) = proof_store.lock().await.get_mut(&request_id){
-                        proof_status.progress_update(update)
-                    }
+                    proof_store_client.proof_progress_update(request_id, update).await
                 }
 
                 else => {

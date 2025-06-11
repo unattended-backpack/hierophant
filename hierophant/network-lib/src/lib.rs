@@ -106,17 +106,6 @@ impl ContemplantProofStatus {
         }
     }
 
-    pub fn proof_complete(&mut self, proof_bytes: Vec<u8>) {
-        self.execution_status = ExecutionStatus::Executed.into();
-        self.proof = Some(proof_bytes);
-        self.progress = ProgressUpdate::Done;
-    }
-
-    pub fn unexecutable(&mut self) {
-        self.execution_status = ExecutionStatus::Unexecutable.into();
-        self.proof = None;
-    }
-
     pub fn progress_update(&mut self, new: ProgressUpdate) {
         self.progress = self.progress.max(new);
     }
