@@ -88,5 +88,5 @@ fn default_moongate_log_path() -> String {
 }
 
 fn default_watcher_polling_interval_ms() -> u64 {
-    5000
+    2000
 }

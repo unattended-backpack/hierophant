@@ -134,9 +134,9 @@ where
 
     // Read the log file to find max_clk
     let log_file_path = format!("{LOG_DIR}/proof_execution_{}.log", request_id);
-    let max_clk = tokio::task::spawn_blocking(move || read_max_clk_from_file(&log_file_path))
+    let max_clk = read_max_clk_from_file(&log_file_path)
         .await
-        .context("Failed to read max clk from log file")??;
+        .context("Failed to read max clk from log file")?;
 
     // Keep the guard alive until we're done
     drop(_guard);
@@ -263,18 +263,17 @@ fn extract_clk(line: &str) -> Option<u64> {
         .ok()
 }
 
-fn read_max_clk_from_file(file_path: &str) -> Result<u64> {
-    use std::fs::File;
-    use std::io::{BufRead, BufReader};
-
-    let file = File::open(file_path).context("Failed to open log file")?;
+async fn read_max_clk_from_file(file_path: &str) -> Result<u64> {
+    let file = File::open(file_path)
+        .await
+        .context("Failed to open log file")?;
     let reader = BufReader::new(file);
+    let mut lines = reader.lines();
 
     let clk_regex = regex::Regex::new(r"clk\s*=\s*(\d+)").unwrap();
     let mut max_clk: Option<u64> = None;
 
-    for line in reader.lines() {
-        let line = line.context("Failed to read line from log file")?;
+    while let Some(line) = lines.next_line().await.context("next line")? {
         if let Some(captures) = clk_regex.captures(&line) {
             if let Some(number_str) = captures.get(1) {
                 if let Ok(clk_value) = number_str.as_str().parse::<u64>() {
