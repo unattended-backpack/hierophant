@@ -299,6 +299,7 @@ async fn handle_message_from_hierophant(
             request_proof(state, proof_request, exit_sender).await
         }
         FromHierophantMessage::ProofStatusRequest(request_id) => {
+            let start = tokio::time::Instant::now();
             let proof_status = get_proof_request_status(state, request_id).await;
             if let Err(e) = response_sender
                 .send(FromContemplantMessage::ProofStatusResponse(
@@ -310,6 +311,8 @@ async fn handle_message_from_hierophant(
                 error!("Error sending proof status response to hierophant: {e}");
                 return ControlFlow::Break(());
             }
+            let elapsed = start.elapsed().as_secs_f64();
+            info!("took {elapsed} seconds to get and return proof request");
         }
     };
 

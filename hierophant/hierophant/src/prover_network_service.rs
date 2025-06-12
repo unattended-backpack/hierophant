@@ -341,7 +341,6 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<GetProofRequestStatusRequest>,
     ) -> Result<Response<GetProofRequestStatusResponse>, Status> {
-        info!("\n=== get_proof_request_status called ===");
         let req = request.into_inner();
         let request_id = match req.request_id.clone().try_into() {
             Ok(id) => B256::new(id),
@@ -414,6 +413,7 @@ impl ProverNetwork for ProverNetworkService {
             return Ok(Response::new(response));
         };
 
+        let start = tokio::time::Instant::now();
         // Check the workers for the proof
         let proof_status = match self.state.proof_router.get_proof_status(request_id).await {
             Ok(status) => status,
@@ -425,6 +425,11 @@ impl ProverNetwork for ProverNetworkService {
                 return Ok(Response::new(response));
             }
         };
+        let elapsed = start.elapsed().as_secs_f64();
+        info!(
+            "Took {elapsed} seconds to get proof status of {}",
+            request_id
+        );
 
         let assigned_status: i32 = FulfillmentStatus::Assigned.into();
         if proof_status.fulfillment_status != assigned_status {
