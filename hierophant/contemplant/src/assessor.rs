@@ -31,6 +31,7 @@ pub async fn start_assessor(
     proof_store_client: ProofStoreClient,
     request_id: B256,
 ) -> Result<()> {
+    info!("Starting assessor...");
     // Set up file appender for this specific proof execution
     let log_dir = std::path::Path::new(LOG_DIR);
     tokio::fs::create_dir_all(log_dir)
@@ -106,6 +107,7 @@ async fn execution_report_with_file_logging<W>(
 where
     W: for<'writer> tracing_subscriber::fmt::writer::MakeWriter<'writer> + Send + Sync + 'static,
 {
+    info!("Generating execution report...");
     // Create a temporary subscriber that writes to the file
     let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(file_writer)

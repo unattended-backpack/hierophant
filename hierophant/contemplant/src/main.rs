@@ -338,19 +338,26 @@ async fn request_proof(
         .await;
 
     let (assessor_shutdown_tx, assessor_shutdown_rx) = watch::channel(false);
-    if let Err(e) = start_assessor(
-        state.mock_prover.clone(),
-        &proof_request.elf,
-        &proof_request.sp1_stdin,
-        state.assessor_config,
-        assessor_shutdown_rx,
-        state.proof_store_client.clone(),
-        proof_request.request_id,
-    )
-    .await
-    {
-        error!("Assessor error: {e}");
-    };
+
+    let mock_prover_clone = state.mock_prover.clone();
+    let elf_clone = proof_request.elf.clone();
+    let stdin_clone = proof_request.sp1_stdin.clone();
+    let proof_store_client_clone = state.proof_store_client.clone();
+    tokio::task::spawn(async move {
+        if let Err(e) = start_assessor(
+            mock_prover_clone,
+            &elf_clone,
+            &stdin_clone,
+            state.assessor_config,
+            assessor_shutdown_rx,
+            proof_store_client_clone,
+            proof_request.request_id,
+        )
+        .await
+        {
+            error!("Assessor error: {e}");
+        }
+    });
 
     tokio::spawn(async move {
         let start_time = Instant::now();
