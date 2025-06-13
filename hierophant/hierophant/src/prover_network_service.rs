@@ -9,7 +9,7 @@ use crate::network::{
 };
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use network_lib::ProofFromNetwork;
 use sp1_sdk::network::proto::network::ExecutionStatus;
 use sp1_sdk::network::proto::{artifact::ArtifactType, network::ProofMode};
@@ -36,13 +36,11 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<GetProgramRequest>,
     ) -> Result<Response<GetProgramResponse>, Status> {
-        info!("\n=== get_program called ===");
         let req = request.into_inner();
 
         let vk_hash: VkHash = req.vk_hash.into();
         let vk_hash_hex = vk_hash.to_hex_string();
 
-        // Log vk_hash
         info!("Requested program with vk_hash: {vk_hash_hex}",);
 
         // get program
@@ -50,7 +48,7 @@ impl ProverNetwork for ProverNetworkService {
 
         match maybe_program {
             Some(program) => {
-                info!("Program with vk_hash {vk_hash_hex} found");
+                debug!("Program with vk_hash {vk_hash_hex} found");
                 // Create the response with the program
                 let response = GetProgramResponse {
                     program: Some(program),
@@ -68,7 +66,6 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<GetNonceRequest>,
     ) -> Result<Response<GetNonceResponse>, Status> {
-        info!("\n=== get_nonce called ===");
         let req = request.into_inner();
 
         let address: Address = match req.address.as_slice().try_into() {
@@ -86,12 +83,10 @@ impl ProverNetwork for ProverNetworkService {
             None => 0,
         };
 
-        info!("Nonce of address {address} is {nonce}");
+        debug!("Nonce of address {address} is {nonce}");
 
         // Create the response
         let response = GetNonceResponse { nonce };
-
-        info!("Responding with nonce: {}", response.nonce);
 
         Ok(Response::new(response))
     }
@@ -145,7 +140,7 @@ impl ProverNetwork for ProverNetworkService {
             created_at,
             name,
         };
-        info!("created program with vk_hash {vk_hash_hex}");
+        debug!("created program with vk_hash {vk_hash_hex}");
 
         self.state
             .program_store
@@ -156,14 +151,8 @@ impl ProverNetwork for ProverNetworkService {
         // Generate a mock transaction hash (in a real implementation, this would be from the blockchain)
         let tx_hash = (*B256::random()).to_vec();
 
-        // TODO: verify VK?
-
-        // TODO: who is signing this? Verify signature
-
-        // TODO: increment nonce?
-
         // Log the signature
-        info!("Signature: 0x{}", hex::encode(&req.signature));
+        debug!("Signature: 0x{}", hex::encode(&req.signature));
 
         // Create the response
         let response = CreateProgramResponse {
@@ -171,7 +160,7 @@ impl ProverNetwork for ProverNetworkService {
             body: Some(CreateProgramResponseBody {}),
         };
 
-        info!(
+        debug!(
             "Responding with tx_hash: 0x{}",
             hex::encode(&response.tx_hash)
         );
@@ -183,7 +172,6 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<RequestProofRequest>,
     ) -> Result<Response<RequestProofResponse>, Status> {
-        info!("\n=== request_proof called ===");
         let req = request.into_inner();
 
         let body = match req.body {
@@ -200,10 +188,11 @@ impl ProverNetwork for ProverNetworkService {
             }
         };
 
+        let request_id = B256::random();
         // Extract and log the body
         let vk_hash: VkHash = body.vk_hash.clone().into();
         let vk_hash_hex = vk_hash.to_hex_string();
-        info!("RequestProof request details:");
+        info!("RequestProof details:");
         info!("  Nonce: {}", body.nonce);
         info!("  VK Hash: {}", vk_hash_hex);
         info!("  Version: {}", body.version);
@@ -218,13 +207,10 @@ impl ProverNetwork for ProverNetworkService {
         info!("  Deadline: {}", body.deadline);
         info!("  Cycle Limit: {}", body.cycle_limit);
         info!("  Gas Limit: {}", body.gas_limit);
+        info!("Assigned proof request id {request_id}");
 
         // Log the signature
-        info!("Signature: 0x{}", hex::encode(&req.signature));
-
-        let request_id = B256::random();
-
-        info!("Assigned proof request id {request_id}");
+        debug!("Signature: 0x{}", hex::encode(&req.signature));
 
         let stdin_uri = match ArtifactUri::from_str(&body.stdin_uri) {
             Ok(uri) => uri,
@@ -315,7 +301,7 @@ impl ProverNetwork for ProverNetworkService {
             .lock()
             .await
             .insert(request_id, (artifact_uri.clone(), body));
-        info!(
+        debug!(
             "Assigned proof to be generated from request {request_id} to artifact_uri {artifact_uri}"
         );
 
@@ -327,9 +313,9 @@ impl ProverNetwork for ProverNetworkService {
             }),
         };
 
-        info!("Responding with:");
-        info!("  tx_hash: 0x{}", hex::encode(&response.tx_hash));
-        info!(
+        debug!("Responding with:");
+        debug!("  tx_hash: 0x{}", hex::encode(&response.tx_hash));
+        debug!(
             "  request_id: 0x{}",
             hex::encode(&response.body.as_ref().unwrap().request_id)
         );
@@ -383,20 +369,20 @@ impl ProverNetwork for ProverNetworkService {
             .get_artifact_bytes(proof_uri.clone())
             .await
         {
-            info!("Found proof request {request_id} in artifact store with uri {proof_uri}");
-            // TODO: do these values matter?
+            info!(
+                "Found proof with request id {request_id} in artifact store with uri {proof_uri}"
+            );
+
             let request_tx_hash = vec![];
             let fulfill_tx_hash = None;
-            // TODO: is this a hash of stdin?  Does that mean I have to load stdin_uri?
             let public_values_hash = None;
 
-            // TODO: do this in a better fashion
             let proof_download_address = format!(
                 "http://{}:{}/{}",
                 self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
             );
 
-            // info!("Responding with proof download address {proof_download_address}");
+            debug!("Responding with proof download address {proof_download_address}");
 
             let response = GetProofRequestStatusResponse {
                 fulfillment_status: FulfillmentStatus::Fulfilled.into(),

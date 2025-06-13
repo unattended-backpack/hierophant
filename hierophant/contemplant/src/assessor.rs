@@ -203,7 +203,6 @@ pub async fn follow_log_slice(
 
 
             _ = shutdown_rx.changed() => {
-                progress_tx.send(ProgressUpdate::Done).ok();
                 return Ok(());
             }
         }

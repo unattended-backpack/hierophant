@@ -90,8 +90,8 @@ fn default_max_proof_artifacts_stored() -> usize {
 }
 
 fn proof_timeout_mins() -> u64 {
-    // 4 hours.  They're more likely to get cut off because they're not making progress
-    60 * 4
+    // 5 hours.  They're more likely to get cut off because they're not making progress
+    60 * 5
 }
 
 fn default_mock_mode() -> bool {

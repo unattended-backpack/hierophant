@@ -759,7 +759,7 @@ impl WorkerRegistry {
             };
 
         info!(
-            "Worker {} at {} is {}",
+            "Worker {} at {} status: {}",
             worker_state.name, worker_addr, worker_state.status
         );
 
@@ -1118,10 +1118,17 @@ impl Display for WorkerStatus {
                 ..
             } => {
                 let minutes = (start_time.elapsed().as_secs_f32() / 60.0).round() as u32;
+                let progress = match progress {
+                    Some(progress) => {
+                        format!("{progress}")
+                    }
+                    None => {
+                        format!("not started")
+                    }
+                };
                 write!(
                     f,
-                    "progress {:?} for {} proof {request_id}. Computing for {minutes} minutes",
-                    progress,
+                    "{} proof {request_id} is {progress}. Computing for {minutes} minutes",
                     proof_mode.as_str_name()
                 )
             }
