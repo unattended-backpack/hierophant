@@ -58,7 +58,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Run the HTTP server in a separate task
     let http_server = tokio::spawn(async move {
-        info!("HTTP server starting on {http_addr}");
         axum::serve(
             tokio::net::TcpListener::bind(http_addr)
                 .await
