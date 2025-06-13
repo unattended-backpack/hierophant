@@ -51,6 +51,15 @@ pub struct Config {
     // or it will be dropped
     #[serde(default = "contemplant_required_progress_interval_mins")]
     pub contemplant_required_progress_interval_mins: u64,
+    // The amount of time the execution report can be running for the contemplant.
+    // This is measured by the contemplant returning None progress.  When it returns
+    // Some() then the execution report is done and the proof has started executing.
+    #[serde(default = "contemplant_max_execution_report_mins")]
+    pub contemplant_max_execution_report_mins: u64,
+}
+
+fn contemplant_max_execution_report_mins() -> u64 {
+    45
 }
 
 fn contemplant_required_progress_interval_mins() -> u64 {
@@ -81,8 +90,8 @@ fn default_max_proof_artifacts_stored() -> usize {
 }
 
 fn proof_timeout_mins() -> u64 {
-    // 3 hours.  They're more likely to get cut off because they're not making progress
-    60 * 3
+    // 4 hours.  They're more likely to get cut off because they're not making progress
+    60 * 4
 }
 
 fn default_mock_mode() -> bool {

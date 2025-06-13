@@ -94,7 +94,7 @@ impl Display for ContemplantProofRequest {
 pub struct ContemplantProofStatus {
     pub execution_status: i32,
     pub proof: Option<Vec<u8>>,
-    pub progress: ProgressUpdate,
+    pub progress: Option<ProgressUpdate>,
 }
 
 impl ContemplantProofStatus {
@@ -102,19 +102,26 @@ impl ContemplantProofStatus {
         Self {
             execution_status: ExecutionStatus::Unexecuted.into(),
             proof: None,
-            progress: ProgressUpdate::Execution(0),
+            progress: None,
         }
     }
 
-    pub fn progress_update(&mut self, new: ProgressUpdate) {
-        self.progress = self.progress.max(new);
+    // Progress can never go from Some(progress) to None.  Will always take the higher progress
+    pub fn progress_update(&mut self, new: Option<ProgressUpdate>) {
+        let updated_progress = match (self.progress, new) {
+            (Some(progress), Some(new_progress)) => Some(progress.max(new_progress)),
+            (Some(progress), None) => Some(progress),
+            (None, Some(progress)) => Some(progress),
+            (None, None) => None,
+        };
+        self.progress = updated_progress;
     }
 
     pub fn default() -> Self {
         Self {
             execution_status: ExecutionStatus::Unexecutable.into(),
             proof: None,
-            progress: ProgressUpdate::Execution(0),
+            progress: None,
         }
     }
 }
@@ -130,9 +137,10 @@ impl Display for ContemplantProofStatus {
         };
 
         let progress_update = match self.progress {
-            ProgressUpdate::Execution(x) => format!("{x}% executed"),
-            ProgressUpdate::Serialization(x) => format!("{x}% serialized"),
-            ProgressUpdate::Done => format!("Done"),
+            Some(ProgressUpdate::Execution(x)) => format!("{x}% executed"),
+            Some(ProgressUpdate::Serialization(x)) => format!("{x}% serialized"),
+            Some(ProgressUpdate::Done) => format!("Done"),
+            None => format!("not started"),
         };
 
         write!(

@@ -354,9 +354,7 @@ async fn request_proof(
         {
             error!("Assessor error: {e}");
         }
-    });
 
-    tokio::spawn(async move {
         let start_time = Instant::now();
         let mock = proof_request.mock;
         let stdin = &proof_request.sp1_stdin;
@@ -461,7 +459,7 @@ async fn get_proof_request_status(
     let status = match state.proof_store_client.get(request_id).await {
         Some(proof_status) => {
             info!(
-                "Received proof status request: {:?}.  Proof is {}",
+                "Received proof status request: {:?}.  Progress is {:?}",
                 request_id, proof_status.progress
             );
             Some(proof_status)

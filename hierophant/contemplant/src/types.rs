@@ -141,7 +141,7 @@ impl ProofStore {
                         .find(|(this_request_id, _)| *this_request_id == request_id)
                     {
                         Some((_, proof_status)) => {
-                            proof_status.progress_update(update);
+                            proof_status.progress_update(Some(update));
                         }
                         None => {
                             warn!(
@@ -165,7 +165,7 @@ impl ProofStore {
                     {
                         Some((_, proof_status)) => {
                             if let Some(_) = &proof {
-                                proof_status.progress = ProgressUpdate::Done;
+                                proof_status.progress = Some(ProgressUpdate::Done);
                             }
                             proof_status.execution_status = execution_status;
                             proof_status.proof = proof;
