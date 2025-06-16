@@ -95,8 +95,6 @@ impl ProverNetwork for ProverNetworkService {
         &self,
         request: Request<CreateProgramRequest>,
     ) -> Result<Response<CreateProgramResponse>, Status> {
-        info!("\n=== create_program called ===");
-
         let req = request.into_inner();
 
         let body = match req.body {

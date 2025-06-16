@@ -124,8 +124,6 @@ async fn handle_artifact_download(
     State(state): State<Arc<HierophantState>>,
     Path(uri): Path<ArtifactUri>,
 ) -> Result<Vec<u8>, StatusCode> {
-    info!("\n=== Received Download Request ===");
-
     let bytes = match state
         .artifact_store_client
         .get_artifact_bytes(uri.clone())
@@ -160,9 +158,7 @@ async fn handle_artifact_upload(
     Path(uri): Path<ArtifactUri>,
     body: Bytes,
 ) -> Result<impl IntoResponse, StatusCode> {
-    info!("\n=== Received Upload Request ===");
-
-    info!("Received {} bytes of artifact {uri}", body.len());
+    info!("Received {} bytes of artifact {uri} for upload", body.len());
 
     match state
         .artifact_store_client
