@@ -114,6 +114,7 @@ impl WorkerRegistryClient {
             .send(WorkerRegistryCommand::WorkerReady {
                 worker_addr,
                 worker_name: worker_register_info.name,
+                worker_magister: worker_register_info.magister,
                 from_hierophant_sender,
             })
             .await
@@ -314,10 +315,16 @@ impl WorkerRegistry {
                 WorkerRegistryCommand::WorkerReady {
                     worker_addr,
                     worker_name,
+                    worker_magister,
                     from_hierophant_sender,
                 } => {
-                    self.handle_worker_ready(worker_addr, worker_name, from_hierophant_sender)
-                        .await;
+                    self.handle_worker_ready(
+                        worker_addr,
+                        worker_name,
+                        worker_magister,
+                        from_hierophant_sender,
+                    )
+                    .await;
                 }
                 WorkerRegistryCommand::ProofComplete { request_id } => {
                     self.handle_proof_complete(request_id).await;
@@ -521,9 +528,11 @@ impl WorkerRegistry {
         &mut self,
         worker_addr: String,
         worker_name: String,
+        worker_magister: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) {
-        let default_state = WorkerState::new(worker_name.clone(), from_hierophant_sender);
+        let default_state =
+            WorkerState::new(worker_name.clone(), worker_magister, from_hierophant_sender);
         match self
             .workers
             .insert(worker_addr.clone(), default_state.clone())
@@ -817,6 +826,7 @@ pub enum WorkerRegistryCommand {
     WorkerReady {
         worker_addr: String,
         worker_name: String,
+        worker_magister: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     },
     // sp1_sdk requests the status of a proof
@@ -916,10 +926,15 @@ pub struct WorkerState {
     last_heartbeat: Instant,
     #[serde(skip_serializing)]
     from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
+    magister: Option<String>,
 }
 
 impl WorkerState {
-    fn new(name: String, from_hierophant_sender: mpsc::Sender<FromHierophantMessage>) -> Self {
+    fn new(
+        name: String,
+        magister: Option<String>,
+        from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
+    ) -> Self {
         Self {
             name,
             status: WorkerStatus::Idle,
@@ -928,6 +943,7 @@ impl WorkerState {
             average_span_proof_time: 0.0,
             last_heartbeat: Instant::now(),
             from_hierophant_sender,
+            magister,
         }
     }
     fn is_busy(&self) -> bool {

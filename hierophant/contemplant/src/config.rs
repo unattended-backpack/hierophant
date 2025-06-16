@@ -21,6 +21,15 @@ pub struct Config {
     pub max_proofs_stored: usize,
     #[serde(default = "default_assessor_config")]
     pub assessor: AssessorConfig,
+    // http endpoint of this contemplant's managing magister. When this contemplant
+    // is dropped, this endpoint is used to notify the magister to deallocate
+    // resources.
+    #[serde(default = "default_magister")]
+    pub magister: Option<String>,
+}
+
+fn default_magister() -> Option<String> {
+    None
 }
 
 // realistically we shouldn't need more than 1, but some edge cases require us to store more
