@@ -26,6 +26,7 @@ use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromContemplantMessage,
     FromHierophantMessage, WorkerRegisterInfo,
 };
+use sp1_cuda::{MoongateServer, SP1CudaProver};
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient,
     network::proto::network::{ExecutionStatus, ProofMode},
@@ -71,7 +72,7 @@ async fn main() -> Result<()> {
             Arc::new(
                 ProverClient::builder()
                     .cuda()
-                    .with_moongate_endpoint(moongate_endpoint)
+                    .server(moongate_endpoint)
                     .build(),
             )
         }
