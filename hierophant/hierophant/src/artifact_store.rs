@@ -163,7 +163,9 @@ impl ArtifactStore {
                     uri_sender,
                 } => {
                     let artifact_uri = self.handle_create_artifact(artifact_type);
-                    uri_sender.send(artifact_uri).unwrap();
+                    if let Err(_) = uri_sender.send(artifact_uri) {
+                        warn!("Receiver for CreateArtifact command dropped");
+                    }
                 }
                 ArtifactStoreCommand::SaveArtifact {
                     artifact_uri,
@@ -171,14 +173,18 @@ impl ArtifactStore {
                     result_sender,
                 } => {
                     let res = self.handle_save_artifact(artifact_uri, bytes);
-                    result_sender.send(res).unwrap();
+                    if let Err(_) = result_sender.send(res) {
+                        warn!("Receiver for SaveArtifact command dropped");
+                    }
                 }
                 ArtifactStoreCommand::GetArtifactBytes {
                     artifact_uri,
                     artifact_sender,
                 } => {
                     let res = self.handle_get_artifact_bytes(artifact_uri);
-                    artifact_sender.send(res).unwrap();
+                    if let Err(_) = artifact_sender.send(res) {
+                        warn!("Receiver for GetArtifactBytes command dropped");
+                    }
                 }
             };
 

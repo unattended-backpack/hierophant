@@ -141,9 +141,10 @@ pub struct ProofStatus {
     pub proof: Vec<u8>,
 }
 
-// CotemplantProofStatus structs are only constructed using it's methods `unexected()`,
+// ContemplantProofStatus structs are only constructed using it's methods `unexected()`,
 // `executed` or `unexectable` so it will only have a proof when it's executed.  Otherwise
-// this would be unsound code.
+// this would be unsound code.  The invariant is that an ExecutionStatus::Executed will always be
+// accompanied by a proof
 impl From<ContemplantProofStatus> for ProofStatus {
     fn from(contemplant_proof_status: ContemplantProofStatus) -> Self {
         match ExecutionStatus::try_from(contemplant_proof_status.execution_status)
@@ -162,6 +163,10 @@ impl From<ContemplantProofStatus> for ProofStatus {
             ExecutionStatus::Executed => Self {
                 fulfillment_status: FulfillmentStatus::Fulfilled.into(),
                 execution_status: ExecutionStatus::Executed.into(),
+                // we could default to an empty vector here, but if this is ever the case then
+                // there is a larger bug within the codebase, and returning an empty vector can be
+                // considered returing an incorrect proof. Additionally, we definitely want this to
+                // fail loudly so we can be notified and debug where our invariant is violated.
                 proof: contemplant_proof_status.proof.unwrap(),
             },
             ExecutionStatus::Unexecutable => Self {

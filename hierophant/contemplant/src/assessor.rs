@@ -271,7 +271,7 @@ async fn read_max_clk_from_file(file_path: &str) -> Result<u64> {
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
 
-    let clk_regex = regex::Regex::new(r"clk\s*=\s*(\d+)").unwrap();
+    let clk_regex = regex::Regex::new(r"clk\s*=\s*(\d+)").context("Create regex expression")?;
     let mut max_clk: Option<u64> = None;
 
     while let Some(line) = lines.next_line().await.context("next line")? {
