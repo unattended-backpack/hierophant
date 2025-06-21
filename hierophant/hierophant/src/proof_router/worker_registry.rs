@@ -805,17 +805,23 @@ impl WorkerRegistry {
             .iter()
             .map(|(x, y)| (x.clone(), y.clone()))
             .collect();
-        resp_sender.send(workers).unwrap();
+        if let Err(_) = resp_sender.send(workers) {
+            warn!("Receiver for WorkerRegistryCommand::Workers dropped");
+        }
     }
 
     fn handle_dead_workers(&self, resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>) {
         let dead_workers = self.dead_workers.clone();
-        resp_sender.send(dead_workers).unwrap();
+        if let Err(_) = resp_sender.send(dead_workers) {
+            warn!("Receiver for WorkerRegistryCommand::DeadWorkers dropped");
+        }
     }
 
     fn handle_proof_history(&self, resp_sender: oneshot::Sender<Vec<CompletedProofInfo>>) {
         let completed_proof_info = self.proof_history.iter().map(|x| x.clone()).collect();
-        resp_sender.send(completed_proof_info).unwrap();
+        if let Err(_) = resp_sender.send(completed_proof_info) {
+            warn!("Receiver for WorkerRegistryCommand::ProofHistory dropped");
+        }
     }
 }
 

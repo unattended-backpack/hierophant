@@ -26,6 +26,7 @@ tokio-tungstenite.workspace = true
 
 # sp1
 sp1-sdk.workspace = true
+sp1-cuda.workspace = true
 network-lib = { path = "../network-lib" }
 
 toml.workspace = true

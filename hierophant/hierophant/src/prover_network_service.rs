@@ -123,10 +123,13 @@ impl ProverNetwork for ProverNetworkService {
 
         // TODO: should owner be the requesting client or the Heirophant's pub key?
         let owner = self.state.config.pub_key;
-        let created_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let created_at = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(x) => x.as_secs(),
+            Err(e) => {
+                let err = format!("Error constructing created_at time: {e}");
+                return Err(Status::internal(err));
+            }
+        };
 
         let name = None;
 
@@ -313,10 +316,10 @@ impl ProverNetwork for ProverNetworkService {
 
         debug!("Responding with:");
         debug!("  tx_hash: 0x{}", hex::encode(&response.tx_hash));
-        debug!(
-            "  request_id: 0x{}",
-            hex::encode(&response.body.as_ref().unwrap().request_id)
-        );
+        // debug!(
+        //     "  request_id: 0x{}",
+        //     hex::encode(&response.body.as_ref().unwrap().request_id)
+        // );
 
         Ok(Response::new(response))
     }
