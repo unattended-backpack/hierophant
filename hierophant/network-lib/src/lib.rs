@@ -17,48 +17,22 @@ pub const CONTEMPLANT_VERSION: &str = "6.0.0";
 pub struct WorkerRegisterInfo {
     pub name: String,
     pub contemplant_version: String,
-    // Optional field of the Magister that manages this contemplant.  The Magister
-    // will be notified when this contemplant is cut, allowing it to deallocate
-    // the contemplant's machine and create a new one
-    // (Magister http address, the contemplant's instance_id assigned in magister)
-    pub magister: Option<MagisterInfo>,
+    // endpoint to hit to drop this contemplant from it's Magister.
+    // Only Some if this contemplant has a Magister
+    pub magister_drop_endpoint: Option<String>,
 }
 
 impl Display for WorkerRegisterInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let magister_info = if let Some(magister_info) = &self.magister {
-            format!(
-                "Magister {}, instance {}",
-                magister_info.magister_addr, magister_info.instance_id
-            )
-        } else {
-            format!("")
+        let magister_info = match self.magister_drop_endpoint.clone() {
+            Some(x) => format!(" with Magister drop endpoint {x}"),
+            None => format!(""),
         };
-
         write!(
             f,
-            "{} CONTEMPLANT_VERSION {} {}",
+            "{} CONTEMPLANT_VERSION {}{}",
             self.name, self.contemplant_version, magister_info
         )
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MagisterInfo {
-    pub magister_addr: String,
-    pub instance_id: u64,
-}
-
-impl MagisterInfo {
-    pub fn new(magister_addr: String, instance_id: u64) -> Self {
-        Self {
-            magister_addr,
-            instance_id,
-        }
-    }
-
-    pub fn to_drop_url(&self) -> String {
-        format!("{}/drop/{}", self.magister_addr, self.instance_id)
     }
 }
 

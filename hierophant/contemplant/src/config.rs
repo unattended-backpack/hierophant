@@ -22,15 +22,13 @@ pub struct Config {
     pub max_proofs_stored: usize,
     #[serde(default = "default_assessor_config")]
     pub assessor: AssessorConfig,
-    // http endpoint of this contemplant's managing magister. When this contemplant
-    // is dropped, this endpoint is used to notify the magister to deallocate
-    // resources.
-    // (Magister http address, the contemplant's instance_id assigned in magister)
-    #[serde(default = "default_magister")]
-    pub magister: Option<MagisterInfo>,
+    // endpoint to hit to drop this contemplant from it's Magister.
+    // Only Some if this contemplant has a Magister
+    #[serde(default = "default_magister_drop_endpoint")]
+    pub magister_drop_endpoint: Option<String>,
 }
 
-fn default_magister() -> Option<MagisterInfo> {
+fn default_magister() -> Option<String> {
     None
 }
 
