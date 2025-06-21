@@ -20,16 +20,45 @@ pub struct WorkerRegisterInfo {
     // Optional field of the Magister that manages this contemplant.  The Magister
     // will be notified when this contemplant is cut, allowing it to deallocate
     // the contemplant's machine and create a new one
-    pub magister: Option<String>,
+    // (Magister http address, the contemplant's instance_id assigned in magister)
+    pub magister: Option<MagisterInfo>,
 }
 
 impl Display for WorkerRegisterInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let magister_info = if let Some(magister_info) = &self.magister {
+            format!(
+                "Magister {}, instance {}",
+                magister_info.magister_addr, magister_info.instance_id
+            )
+        } else {
+            format!("")
+        };
+
         write!(
             f,
-            "{} CONTEMPLANT_VERSION {}",
-            self.name, self.contemplant_version
+            "{} CONTEMPLANT_VERSION {} {}",
+            self.name, self.contemplant_version, magister_info
         )
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MagisterInfo {
+    pub magister_addr: String,
+    pub instance_id: u64,
+}
+
+impl MagisterInfo {
+    pub fn new(magister_addr: String, instance_id: u64) -> Self {
+        Self {
+            magister_addr,
+            instance_id,
+        }
+    }
+
+    pub fn to_drop_url(&self) -> String {
+        format!("{}/drop/{}", self.magister_addr, self.instance_id)
     }
 }
 

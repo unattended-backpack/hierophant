@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
 use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromHierophantMessage,
-    ProgressUpdate, WorkerRegisterInfo,
+    MagisterInfo, ProgressUpdate, WorkerRegisterInfo,
 };
 use serde::{Serialize, Serializer};
 use sp1_sdk::network::proto::network::ProofMode;
@@ -41,6 +41,8 @@ impl WorkerRegistryClient {
 
         let proof_history = Vec::new();
 
+        let reqwest_client = reqwest::Client::new();
+
         let worker_registry = WorkerRegistry {
             cfg_max_worker_heartbeat_interval_secs,
             cfg_max_worker_strikes,
@@ -52,6 +54,7 @@ impl WorkerRegistryClient {
             receiver,
             awaiting_proof_status_responses,
             proof_history,
+            reqwest_client,
         };
 
         tokio::task::spawn(async move { worker_registry.background_event_loop().await });
@@ -297,6 +300,7 @@ pub struct WorkerRegistry {
         HashMap<B256, Vec<oneshot::Sender<Option<ContemplantProofStatus>>>>,
     // history of compelted proofs and information about the contemplant who completed it
     pub proof_history: Vec<CompletedProofInfo>,
+    pub reqwest_client: reqwest::Client,
 }
 
 impl WorkerRegistry {
@@ -432,6 +436,21 @@ impl WorkerRegistry {
                     );
                 }
 
+                // Notify the worker's magister so they can be deallocated
+                if let Some(magister) = dead_worker_state.magister.clone() {
+                    let url = magister.to_drop_url();
+                    debug!(
+                        "Notifying magister with {url} for worker {dead_worker_state} at {dead_worker_addr}"
+                    );
+                    let client_clone = self.reqwest_client.clone();
+                    // TODO: handle response if we decide the hierophant should care about this call failing
+                    tokio::spawn(async move {
+                        if let Err(e) = client_clone.delete(url.clone()).send().await {
+                            warn!("Error sending drop message to magister {url}: {e}");
+                        }
+                    });
+                }
+
                 // add them to the list of dead workers
                 self.dead_workers
                     .push((dead_worker_addr, dead_worker_state));
@@ -528,9 +547,12 @@ impl WorkerRegistry {
         &mut self,
         worker_addr: String,
         worker_name: String,
-        worker_magister: Option<String>,
+        worker_magister: Option<MagisterInfo>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) {
+        // TODO: should we ping the magister before adding this contemplant?  Or is it the
+        // magisters problem that they passed an incorrect address?
+
         let default_state =
             WorkerState::new(worker_name.clone(), worker_magister, from_hierophant_sender);
         match self
@@ -832,7 +854,7 @@ pub enum WorkerRegistryCommand {
     WorkerReady {
         worker_addr: String,
         worker_name: String,
-        worker_magister: Option<String>,
+        worker_magister: Option<MagisterInfo>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     },
     // sp1_sdk requests the status of a proof
@@ -932,13 +954,13 @@ pub struct WorkerState {
     last_heartbeat: Instant,
     #[serde(skip_serializing)]
     from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
-    magister: Option<String>,
+    magister: Option<MagisterInfo>,
 }
 
 impl WorkerState {
     fn new(
         name: String,
-        magister: Option<String>,
+        magister: Option<MagisterInfo>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) -> Self {
         Self {

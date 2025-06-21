@@ -24,7 +24,7 @@ use anyhow::{Context, Result, anyhow};
 use log::{error, info, trace, warn};
 use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromContemplantMessage,
-    FromHierophantMessage, WorkerRegisterInfo,
+    FromHierophantMessage, MagisterInfo, WorkerRegisterInfo,
 };
 use sp1_cuda::{MoongateServer, SP1CudaProver};
 use sp1_sdk::{
@@ -55,8 +55,11 @@ async fn main() -> Result<()> {
     utils::setup_logger();
     info!("Starting contemplant {}", config.contemplant_name);
 
-    if let Some(magister_addr) = &config.magister {
-        info!("Contemplant is being managed by the Magister at {magister_addr}");
+    if let Some(info) = &config.magister {
+        info!(
+            "Contemplant is being managed by the Magister at {}.  This contemplant is known to the Magister as instance {}",
+            info.magister_addr, info.instance_id
+        );
     }
 
     // compiler will always complain about one of these branches being unreachable, depending on if

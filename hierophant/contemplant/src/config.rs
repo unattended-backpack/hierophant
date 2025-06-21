@@ -1,3 +1,4 @@
+use network_lib::MagisterInfo;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -24,11 +25,12 @@ pub struct Config {
     // http endpoint of this contemplant's managing magister. When this contemplant
     // is dropped, this endpoint is used to notify the magister to deallocate
     // resources.
+    // (Magister http address, the contemplant's instance_id assigned in magister)
     #[serde(default = "default_magister")]
-    pub magister: Option<String>,
+    pub magister: Option<MagisterInfo>,
 }
 
-fn default_magister() -> Option<String> {
+fn default_magister() -> Option<MagisterInfo> {
     None
 }
 
