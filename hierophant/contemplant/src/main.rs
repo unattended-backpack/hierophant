@@ -24,9 +24,8 @@ use anyhow::{Context, Result, anyhow};
 use log::{error, info, trace, warn};
 use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromContemplantMessage,
-    FromHierophantMessage, MagisterInfo, WorkerRegisterInfo,
+    FromHierophantMessage, WorkerRegisterInfo,
 };
-use sp1_cuda::{MoongateServer, SP1CudaProver};
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient,
     network::proto::network::{ExecutionStatus, ProofMode},

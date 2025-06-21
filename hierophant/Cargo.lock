@@ -760,7 +760,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_repr",
- "sp1-cuda",
  "sp1-sdk",
  "tempfile",
  "tokio",
