@@ -21,6 +21,14 @@ pub struct Config {
     pub max_proofs_stored: usize,
     #[serde(default = "default_assessor_config")]
     pub assessor: AssessorConfig,
+    // endpoint to hit to drop this contemplant from it's Magister.
+    // Only Some if this contemplant has a Magister
+    #[serde(default = "default_magister_drop_endpoint")]
+    pub magister_drop_endpoint: Option<String>,
+}
+
+fn default_magister_drop_endpoint() -> Option<String> {
+    None
 }
 
 // realistically we shouldn't need more than 1, but some edge cases require us to store more

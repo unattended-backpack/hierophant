@@ -41,6 +41,8 @@ impl WorkerRegistryClient {
 
         let proof_history = Vec::new();
 
+        let reqwest_client = reqwest::Client::new();
+
         let worker_registry = WorkerRegistry {
             cfg_max_worker_heartbeat_interval_secs,
             cfg_max_worker_strikes,
@@ -52,6 +54,7 @@ impl WorkerRegistryClient {
             receiver,
             awaiting_proof_status_responses,
             proof_history,
+            reqwest_client,
         };
 
         tokio::task::spawn(async move { worker_registry.background_event_loop().await });
@@ -114,6 +117,7 @@ impl WorkerRegistryClient {
             .send(WorkerRegistryCommand::WorkerReady {
                 worker_addr,
                 worker_name: worker_register_info.name,
+                magister_drop_endpoint: worker_register_info.magister_drop_endpoint,
                 from_hierophant_sender,
             })
             .await
@@ -296,6 +300,7 @@ pub struct WorkerRegistry {
         HashMap<B256, Vec<oneshot::Sender<Option<ContemplantProofStatus>>>>,
     // history of compelted proofs and information about the contemplant who completed it
     pub proof_history: Vec<CompletedProofInfo>,
+    pub reqwest_client: reqwest::Client,
 }
 
 impl WorkerRegistry {
@@ -314,10 +319,16 @@ impl WorkerRegistry {
                 WorkerRegistryCommand::WorkerReady {
                     worker_addr,
                     worker_name,
+                    magister_drop_endpoint,
                     from_hierophant_sender,
                 } => {
-                    self.handle_worker_ready(worker_addr, worker_name, from_hierophant_sender)
-                        .await;
+                    self.handle_worker_ready(
+                        worker_addr,
+                        worker_name,
+                        magister_drop_endpoint,
+                        from_hierophant_sender,
+                    )
+                    .await;
                 }
                 WorkerRegistryCommand::ProofComplete { request_id } => {
                     self.handle_proof_complete(request_id).await;
@@ -425,6 +436,20 @@ impl WorkerRegistry {
                     );
                 }
 
+                // Notify the worker's magister so they can be deallocated
+                if let Some(drop_endpoint) = dead_worker_state.magister_drop_endpoint.clone() {
+                    debug!(
+                        "Notifying Magister to drop worker {dead_worker_state} at {dead_worker_addr} with endpoint {drop_endpoint}"
+                    );
+                    let client_clone = self.reqwest_client.clone();
+                    // TODO: handle response if we decide the hierophant should care about this call failing
+                    tokio::spawn(async move {
+                        if let Err(e) = client_clone.delete(drop_endpoint.clone()).send().await {
+                            warn!("Error sending drop message to Magister {drop_endpoint}: {e}");
+                        }
+                    });
+                }
+
                 // add them to the list of dead workers
                 self.dead_workers
                     .push((dead_worker_addr, dead_worker_state));
@@ -481,7 +506,7 @@ impl WorkerRegistry {
                 }
             }
 
-            info!(
+            debug!(
                 "Attemping to assign proof request {request_id} to worker {} at {worker_addr}",
                 worker_state.name
             );
@@ -521,9 +546,17 @@ impl WorkerRegistry {
         &mut self,
         worker_addr: String,
         worker_name: String,
+        magister_drop_endpoint: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) {
-        let default_state = WorkerState::new(worker_name.clone(), from_hierophant_sender);
+        // TODO: should we ping the magister before adding this contemplant?  Or is it the
+        // magisters problem that they passed an incorrect address?
+
+        let default_state = WorkerState::new(
+            worker_name.clone(),
+            magister_drop_endpoint,
+            from_hierophant_sender,
+        );
         match self
             .workers
             .insert(worker_addr.clone(), default_state.clone())
@@ -823,6 +856,7 @@ pub enum WorkerRegistryCommand {
     WorkerReady {
         worker_addr: String,
         worker_name: String,
+        magister_drop_endpoint: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     },
     // sp1_sdk requests the status of a proof
@@ -922,10 +956,15 @@ pub struct WorkerState {
     last_heartbeat: Instant,
     #[serde(skip_serializing)]
     from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
+    magister_drop_endpoint: Option<String>,
 }
 
 impl WorkerState {
-    fn new(name: String, from_hierophant_sender: mpsc::Sender<FromHierophantMessage>) -> Self {
+    fn new(
+        name: String,
+        magister_drop_endpoint: Option<String>,
+        from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
+    ) -> Self {
         Self {
             name,
             status: WorkerStatus::Idle,
@@ -934,6 +973,7 @@ impl WorkerState {
             average_span_proof_time: 0.0,
             last_heartbeat: Instant::now(),
             from_hierophant_sender,
+            magister_drop_endpoint,
         }
     }
     fn is_busy(&self) -> bool {

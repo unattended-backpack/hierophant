@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use axum::body::Bytes;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use serde::{
     Deserialize, Deserializer,
     de::{self, Visitor},
@@ -257,7 +257,7 @@ impl ArtifactStore {
             _ => (),
         };
 
-        info!(
+        debug!(
             "Writing artifact {} to disk.  Num bytes: {}",
             artifact_uri,
             bytes.len()

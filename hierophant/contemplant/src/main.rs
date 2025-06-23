@@ -26,7 +26,6 @@ use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromContemplantMessage,
     FromHierophantMessage, WorkerRegisterInfo,
 };
-use sp1_cuda::{MoongateServer, SP1CudaProver};
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient,
     network::proto::network::{ExecutionStatus, ProofMode},
@@ -127,6 +126,7 @@ async fn main() -> Result<()> {
     let worker_register_info = WorkerRegisterInfo {
         contemplant_version: CONTEMPLANT_VERSION.into(),
         name: config.contemplant_name.clone(),
+        magister_drop_endpoint: config.magister_drop_endpoint.clone(),
     };
 
     info!(
@@ -234,6 +234,14 @@ async fn main() -> Result<()> {
             }
         }
     });
+
+    if let Some(drop_endpoint) = &config.magister_drop_endpoint {
+        info!(
+            "Contemplant is being managed by the Magister with drop endpoint {}.",
+            drop_endpoint
+        );
+        verify_with_magister(drop_endpoint.clone()).await?;
+    }
 
     //wait for either task to finish and kill the other task
     tokio::select! {
@@ -483,4 +491,26 @@ async fn get_proof_request_status(
     }
 
     status
+}
+
+async fn verify_with_magister(drop_endpoint: String) -> Result<()> {
+    let url = drop_endpoint.replace("drop", "verify");
+
+    let resp = match reqwest::Client::new().get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let err = format!("Send verify request to Magister at {url}: {e}");
+            error!("{err}");
+            return Err(anyhow!("{err}"));
+        }
+    };
+
+    match resp.error_for_status() {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let err = format!("Receive verify response from Magister at {url}: {e}");
+            error!("{err}");
+            Err(anyhow!("{err}"))
+        }
+    }
 }

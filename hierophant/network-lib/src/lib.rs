@@ -11,20 +11,27 @@ pub const REGISTER_CONTEMPLANT_ENDPOINT: &str = "register_contemplant";
 // Increment this whenever there is a breaking change in the contemplant
 // This is to ensure the contemplant is on the same version as the Hierophant it's
 // connecting to
-pub const CONTEMPLANT_VERSION: &str = "5.0.0";
+pub const CONTEMPLANT_VERSION: &str = "6.0.0";
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerRegisterInfo {
     pub name: String,
     pub contemplant_version: String,
+    // endpoint to hit to drop this contemplant from it's Magister.
+    // Only Some if this contemplant has a Magister
+    pub magister_drop_endpoint: Option<String>,
 }
 
 impl Display for WorkerRegisterInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let magister_info = match self.magister_drop_endpoint.clone() {
+            Some(x) => format!(" with Magister drop endpoint {x}"),
+            None => format!(""),
+        };
         write!(
             f,
-            "{} CONTEMPLANT_VERSION {}",
-            self.name, self.contemplant_version
+            "{} CONTEMPLANT_VERSION {}{}",
+            self.name, self.contemplant_version, magister_info
         )
     }
 }
