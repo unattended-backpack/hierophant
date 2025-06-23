@@ -85,7 +85,7 @@ pub async fn handle_socket(
     tokio::select! {
         result = (&mut send_task) => {
             match result {
-                Ok(_) => info!("Send task completed normally"),
+                Ok(_) => debug!("Send task completed normally"),
                 Err(e) => error!("Send task failed with error: {e}"),
             }
             debug!("Send task exited, aborting recv task");
@@ -93,7 +93,7 @@ pub async fn handle_socket(
         },
         result = (&mut recv_task) => {
             match result {
-                Ok(_) => info!("Recv task completed normally"),
+                Ok(_) => debug!("Recv task completed normally"),
                 Err(e) => error!("Recv task failed with error: {e}"),
             }
             debug!("Recv task exited, aborting send task");
