@@ -1,4 +1,3 @@
-use network_lib::MagisterInfo;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -28,7 +27,7 @@ pub struct Config {
     pub magister_drop_endpoint: Option<String>,
 }
 
-fn default_magister() -> Option<String> {
+fn default_magister_drop_endpoint() -> Option<String> {
     None
 }
 

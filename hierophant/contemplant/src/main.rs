@@ -54,10 +54,10 @@ async fn main() -> Result<()> {
     utils::setup_logger();
     info!("Starting contemplant {}", config.contemplant_name);
 
-    if let Some(info) = &config.magister {
+    if let Some(endpoint) = &config.magister_drop_endpoint {
         info!(
-            "Contemplant is being managed by the Magister at {}.  This contemplant is known to the Magister as instance {}",
-            info.magister_addr, info.instance_id
+            "Contemplant is being managed by the Magister with drop endpoint {}.",
+            endpoint
         );
     }
 
@@ -133,7 +133,7 @@ async fn main() -> Result<()> {
     let worker_register_info = WorkerRegisterInfo {
         contemplant_version: CONTEMPLANT_VERSION.into(),
         name: config.contemplant_name.clone(),
-        magister: config.magister,
+        magister_drop_endpoint: config.magister_drop_endpoint,
     };
 
     info!(

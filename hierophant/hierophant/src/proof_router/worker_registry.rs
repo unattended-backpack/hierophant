@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
 use network_lib::{
     CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromHierophantMessage,
-    MagisterInfo, ProgressUpdate, WorkerRegisterInfo,
+    ProgressUpdate, WorkerRegisterInfo,
 };
 use serde::{Serialize, Serializer};
 use sp1_sdk::network::proto::network::ProofMode;
@@ -117,7 +117,7 @@ impl WorkerRegistryClient {
             .send(WorkerRegistryCommand::WorkerReady {
                 worker_addr,
                 worker_name: worker_register_info.name,
-                worker_magister: worker_register_info.magister,
+                magister_drop_endpoint: worker_register_info.magister_drop_endpoint,
                 from_hierophant_sender,
             })
             .await
@@ -319,13 +319,13 @@ impl WorkerRegistry {
                 WorkerRegistryCommand::WorkerReady {
                     worker_addr,
                     worker_name,
-                    worker_magister,
+                    magister_drop_endpoint,
                     from_hierophant_sender,
                 } => {
                     self.handle_worker_ready(
                         worker_addr,
                         worker_name,
-                        worker_magister,
+                        magister_drop_endpoint,
                         from_hierophant_sender,
                     )
                     .await;
@@ -437,16 +437,15 @@ impl WorkerRegistry {
                 }
 
                 // Notify the worker's magister so they can be deallocated
-                if let Some(magister) = dead_worker_state.magister.clone() {
-                    let url = magister.to_drop_url();
+                if let Some(drop_endpoint) = dead_worker_state.magister_drop_endpoint.clone() {
                     debug!(
-                        "Notifying magister with {url} for worker {dead_worker_state} at {dead_worker_addr}"
+                        "Notifying Magister to drop worker {dead_worker_state} at {dead_worker_addr} with endpoint {drop_endpoint}"
                     );
                     let client_clone = self.reqwest_client.clone();
                     // TODO: handle response if we decide the hierophant should care about this call failing
                     tokio::spawn(async move {
-                        if let Err(e) = client_clone.delete(url.clone()).send().await {
-                            warn!("Error sending drop message to magister {url}: {e}");
+                        if let Err(e) = client_clone.delete(drop_endpoint.clone()).send().await {
+                            warn!("Error sending drop message to Magister {drop_endpoint}: {e}");
                         }
                     });
                 }
@@ -547,14 +546,17 @@ impl WorkerRegistry {
         &mut self,
         worker_addr: String,
         worker_name: String,
-        worker_magister: Option<MagisterInfo>,
+        magister_drop_endpoint: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) {
         // TODO: should we ping the magister before adding this contemplant?  Or is it the
         // magisters problem that they passed an incorrect address?
 
-        let default_state =
-            WorkerState::new(worker_name.clone(), worker_magister, from_hierophant_sender);
+        let default_state = WorkerState::new(
+            worker_name.clone(),
+            magister_drop_endpoint,
+            from_hierophant_sender,
+        );
         match self
             .workers
             .insert(worker_addr.clone(), default_state.clone())
@@ -854,7 +856,7 @@ pub enum WorkerRegistryCommand {
     WorkerReady {
         worker_addr: String,
         worker_name: String,
-        worker_magister: Option<MagisterInfo>,
+        magister_drop_endpoint: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     },
     // sp1_sdk requests the status of a proof
@@ -954,13 +956,13 @@ pub struct WorkerState {
     last_heartbeat: Instant,
     #[serde(skip_serializing)]
     from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
-    magister: Option<MagisterInfo>,
+    magister_drop_endpoint: Option<String>,
 }
 
 impl WorkerState {
     fn new(
         name: String,
-        magister: Option<MagisterInfo>,
+        magister_drop_endpoint: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) -> Self {
         Self {
@@ -971,7 +973,7 @@ impl WorkerState {
             average_span_proof_time: 0.0,
             last_heartbeat: Instant::now(),
             from_hierophant_sender,
-            magister,
+            magister_drop_endpoint,
         }
     }
     fn is_busy(&self) -> bool {
