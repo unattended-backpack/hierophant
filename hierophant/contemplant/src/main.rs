@@ -54,8 +54,6 @@ async fn main() -> Result<()> {
     utils::setup_logger();
     info!("Starting contemplant {}", config.contemplant_name);
 
-    if let Some(endpoint) = &config.magister_drop_endpoint {}
-
     // compiler will always complain about one of these branches being unreachable, depending on if
     // you compiled with `features enable-native-gnark` or not
     let cuda_prover = match &config.moongate_endpoint {
@@ -242,7 +240,7 @@ async fn main() -> Result<()> {
             "Contemplant is being managed by the Magister with drop endpoint {}.",
             drop_endpoint
         );
-        verify_with_magister(drop_endpoint.clone()).await?
+        verify_with_magister(drop_endpoint.clone()).await?;
     }
 
     //wait for either task to finish and kill the other task

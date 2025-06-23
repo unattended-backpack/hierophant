@@ -506,7 +506,7 @@ impl WorkerRegistry {
                 }
             }
 
-            info!(
+            debug!(
                 "Attemping to assign proof request {request_id} to worker {} at {worker_addr}",
                 worker_state.name
             );
