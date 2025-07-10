@@ -28,30 +28,23 @@ cp hierophant/contemplant.example.toml hierophant/contemplant.toml
 ## `contemplant` overview
 
 ```bash
-  contemplant/
-  ├── Cargo.toml
-  ├── src/
-  │   ├── main.rs                    # Entry point 
-  │   ├── config.rs                  # Configuration 
-  │   │
-  │   ├── connection/                # Connection management
-  │   │   ├── mod.rs
-  │   │   ├── websocket.rs           # WebSocket client 
-  │   │   └── reconnect.rs           # Reconnection logic 
-  │   │
-  │   ├── proof/                     # Proof execution
-  │   │   ├── mod.rs
-  │   │   ├── executor.rs            # Proof generation 
-  │   │   ├── assessor.rs            # Execution assessment 
-  │   │   └── store.rs               # Local proof storage 
-  │   │
-  │   ├── message/                   # Message handling
-  │   │   ├── mod.rs
-  │   │   └── handler.rs             # Message routing 
-  │   │
-  │   └── monitoring/                # Resource monitoring
-  │       ├── mod.rs
-  │       └── resources.rs           # CPU/GPU assessor
+ contemplant
+ ├── Cargo.toml
+ └── src
+  ├── config.rs                # Configuration 
+  ├── connection.rs            # WebSocket initialization with Hierophant
+  ├── main.rs                  # Entry point
+  ├── message_handler.rs       # Handles messages from Hierophant
+  ├── proof_executor
+  │   ├── assessor.rs          # Proof execution assessment 
+  │   ├── executor.rs          # Proof execution
+  │   └── mod.rs
+  ├── proof_store
+  │   ├── client.rs            # Public proof store interface
+  │   ├── command.rs           # proof store commands
+  │   ├── mod.rs
+  │   └── store.rs             # Local proof status storage
+  └── worker_state.rs          # Global Contemplant state
 ```
 
 ## `hierophant` overview
