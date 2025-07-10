@@ -1,3 +1,4 @@
+use crate::config::WorkerRegistryConfig;
 use crate::hierophant_state::ProofStatus;
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
@@ -25,13 +26,7 @@ pub struct WorkerRegistryClient {
 }
 
 impl WorkerRegistryClient {
-    pub fn new(
-        cfg_max_worker_strikes: usize,
-        cfg_max_worker_heartbeat_interval_secs: Duration,
-        cfg_proof_timeout_mins: u64,
-        cfg_contemplant_required_progress_interval_mins: u64,
-        cfg_contemplant_max_execution_report_mins: u64,
-    ) -> Self {
+    pub fn new(config: WorkerRegistryConfig) -> Self {
         let workers = HashMap::new();
         let dead_workers = Vec::new();
 
@@ -44,11 +39,7 @@ impl WorkerRegistryClient {
         let reqwest_client = reqwest::Client::new();
 
         let worker_registry = WorkerRegistry {
-            cfg_max_worker_heartbeat_interval_secs,
-            cfg_max_worker_strikes,
-            cfg_proof_timeout_mins,
-            cfg_contemplant_required_progress_interval_mins,
-            cfg_contemplant_max_execution_report_mins,
+            config,
             workers,
             dead_workers,
             receiver,
@@ -284,11 +275,7 @@ impl WorkerRegistryClient {
 }
 
 pub struct WorkerRegistry {
-    pub cfg_max_worker_strikes: usize,
-    pub cfg_max_worker_heartbeat_interval_secs: Duration,
-    pub cfg_proof_timeout_mins: u64,
-    pub cfg_contemplant_required_progress_interval_mins: u64,
-    pub cfg_contemplant_max_execution_report_mins: u64,
+    config: WorkerRegistryConfig,
     // Using a HashMap is a fine complexity tradeoff because we'll never have >20 workers, so
     // iterating isn't horrible in reality.
     pub workers: HashMap<String, WorkerState>,
@@ -398,13 +385,7 @@ impl WorkerRegistry {
             .workers
             .iter_mut()
             .filter_map(|(worker_addr, worker_state)| {
-                if worker_state.should_drop(
-                    self.cfg_max_worker_strikes,
-                    self.cfg_max_worker_heartbeat_interval_secs,
-                    self.cfg_proof_timeout_mins,
-                    self.cfg_contemplant_required_progress_interval_mins,
-                    self.cfg_contemplant_max_execution_report_mins,
-                ) {
+                if worker_state.should_drop(&self.config) {
                     Some(worker_addr.clone())
                 } else {
                     None
@@ -563,15 +544,7 @@ impl WorkerRegistry {
         {
             Some(old_state) => {
                 // if this worker was working on a proof but we didn't drop it
-                if old_state.is_busy()
-                    && !old_state.should_drop(
-                        self.cfg_max_worker_strikes,
-                        self.cfg_max_worker_heartbeat_interval_secs,
-                        self.cfg_proof_timeout_mins,
-                        self.cfg_contemplant_required_progress_interval_mins,
-                        self.cfg_contemplant_max_execution_report_mins,
-                    )
-                {
+                if old_state.is_busy() && !old_state.should_drop(&self.config) {
                     // TODO: re-assign this proof request
                     // Currently, this is resolved when sp1_sdk requests the proof status because
                     // the hierophant will see no worker working on it and will re-assign.  But we
@@ -732,7 +705,7 @@ impl WorkerRegistry {
             };
 
         // set their strikes to the max. This will trigger a drop
-        worker_state.strikes = self.cfg_max_worker_strikes;
+        worker_state.strikes = self.config.max_worker_strikes;
 
         // remove this and any other dead workers
         self.trim_workers();
@@ -805,7 +778,7 @@ impl WorkerRegistry {
             // The receiving end of this was dropped because the ws was dropped.
             // This means we're no longer connected to this contemplant.  It'll get cleaned up by
             // the `trim_workers()` task.
-            worker_state.strikes = self.cfg_max_worker_strikes;
+            worker_state.strikes = self.config.max_worker_strikes;
             // TODO: proof re-assignment if this worker was in the middle of the proof
             warn!(
                 "No longer connected to worker {} at {} who was working on proof {target_request_id} (error {e})",
@@ -1030,21 +1003,14 @@ impl WorkerState {
     // if it's been too long since their last heartbeat OR
     // if they've been working on a proof for too long OR
     // if it's been too long since their proof made progress
-    fn should_drop(
-        &self,
-        cfg_max_worker_strikes: usize,
-        cfg_max_worker_heartbeat_interval_secs: Duration,
-        cfg_proof_timeout_mins: u64,
-        cfg_contemplant_required_progress_interval_mins: u64,
-        cfg_contemplant_max_execution_report_mins: u64,
-    ) -> bool {
-        if self.strikes >= cfg_max_worker_strikes {
+    fn should_drop(&self, config: &WorkerRegistryConfig) -> bool {
+        if self.strikes >= config.max_worker_strikes {
             warn!(
                 "Dropping contemplant {} because they have {} strikes",
                 self.name, self.strikes
             );
             true
-        } else if self.last_heartbeat.elapsed() >= cfg_max_worker_heartbeat_interval_secs {
+        } else if self.last_heartbeat.elapsed() >= config.max_worker_heartbeat_interval_secs {
             warn!(
                 "Dropping contemplant {} because their last heartbeat was {} seconds ago",
                 self.name,
@@ -1061,10 +1027,10 @@ impl WorkerState {
         {
             let mins_on_this_proof = (start_time.elapsed().as_secs_f32() / 60.0) as u64;
             // if they've been working on this proof for too long
-            if mins_on_this_proof > cfg_proof_timeout_mins {
+            if mins_on_this_proof > config.proof_timeout_mins {
                 warn!(
                     "Dropping contemplant {} because they have been working on proof request {} for {} mins.  Max proof time is set to {} mins.",
-                    self.name, request_id, mins_on_this_proof, cfg_proof_timeout_mins
+                    self.name, request_id, mins_on_this_proof, config.proof_timeout_mins
                 );
                 true
             } else if let Ok(duration_since_last_update) =
@@ -1073,7 +1039,7 @@ impl WorkerState {
                 let mins_since_last_update =
                     (duration_since_last_update.as_secs_f64() / 60.0) as u64;
                 // if it's been too long since this contemplant has reported progress on this proof
-                if mins_since_last_update > cfg_contemplant_required_progress_interval_mins {
+                if mins_since_last_update > config.worker_required_progress_interval_mins {
                     warn!(
                         "Dropping contemplant {} because they haven't made progress on proof {} in {} mins.",
                         self.name, request_id, mins_since_last_update
@@ -1086,13 +1052,13 @@ impl WorkerState {
                 // progress starts as None and moves to Some when the execution report is done
                 // and the proof starts executing.  Progress never moves from Some to None.
                 // If the contemplant takes too long on the execution report, drop them.
-                if mins_on_this_proof > cfg_contemplant_max_execution_report_mins {
+                if mins_on_this_proof > config.worker_max_execution_report_mins {
                     warn!(
                         "Dropping contemplant {} of proof {} because they've been running the execution report for {} mins.  Max time allowed {} mins.",
                         self.name,
                         request_id,
                         mins_on_this_proof,
-                        cfg_contemplant_max_execution_report_mins
+                        config.worker_max_execution_report_mins
                     );
                     true
                 } else {

@@ -19,12 +19,32 @@ pub struct Config {
     // max number of finished proofs stored in memory
     #[serde(default = "default_max_proofs_stored")]
     pub max_proofs_stored: usize,
-    #[serde(default = "default_assessor_config")]
+    #[serde(default)]
     pub assessor: AssessorConfig,
     // endpoint to hit to drop this contemplant from it's Magister.
     // Only Some if this contemplant has a Magister
     #[serde(default = "default_magister_drop_endpoint")]
     pub magister_drop_endpoint: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AssessorConfig {
+    // The path to the moongate log file to watch for progress.
+    #[serde(default = "default_moongate_log_path")]
+    pub moongate_log_path: String,
+    // The frequency in milliseconds with which the moongate log watcher should poll the moongate
+    // log file.
+    #[serde(default = "default_watcher_polling_interval_ms")]
+    pub watcher_polling_interval_ms: u64,
+}
+
+impl Default for AssessorConfig {
+    fn default() -> Self {
+        Self {
+            moongate_log_path: default_moongate_log_path(),
+            watcher_polling_interval_ms: default_watcher_polling_interval_ms(),
+        }
+    }
 }
 
 fn default_magister_drop_endpoint() -> Option<String> {
@@ -71,24 +91,6 @@ fn default_contemplant_name() -> String {
         Some(name) => name.into(),
         None => default_error_name,
     }
-}
-
-fn default_assessor_config() -> AssessorConfig {
-    AssessorConfig {
-        moongate_log_path: default_moongate_log_path(),
-        watcher_polling_interval_ms: default_watcher_polling_interval_ms(),
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AssessorConfig {
-    // The path to the moongate log file to watch for progress.
-    #[serde(default = "default_moongate_log_path")]
-    pub moongate_log_path: String,
-    // The frequency in milliseconds with which the moongate log watcher should poll the moongate
-    // log file.
-    #[serde(default = "default_watcher_polling_interval_ms")]
-    pub watcher_polling_interval_ms: u64,
 }
 
 fn default_moongate_log_path() -> String {

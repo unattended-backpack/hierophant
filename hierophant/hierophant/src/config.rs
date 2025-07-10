@@ -9,17 +9,6 @@ pub struct Config {
     pub grpc_port: u16,
     #[serde(default = "default_http_port")]
     pub http_port: u16,
-    // number of strikes before a worker is evicted.  Typically a worker gets a strike
-    // when it fails to respond to a request
-    #[serde(default = "default_max_worker_strikes")]
-    pub max_worker_strikes: usize,
-    // How long between worker heartbeats to wait before evicting workers.
-    // For reference, the default worker heartbeat is 30 seconds.
-    #[serde(
-        default = "default_max_worker_heartbeat_interval_secs",
-        deserialize_with = "deserialize_duration_from_secs"
-    )]
-    pub max_worker_heartbeat_interval_secs: Duration,
     // How long to wait for a response from a worker before evicting them.
     // For example, Hierophant waiting for a response from a worker on a proof_status_request
     #[serde(
@@ -27,10 +16,6 @@ pub struct Config {
         deserialize_with = "deserialize_duration_from_secs"
     )]
     pub worker_response_timeout_secs: Duration,
-    // Maximum time a contemplant can be working on a proof before they're declared
-    // probably dead and kicked
-    #[serde(default = "proof_timeout_mins")]
-    pub proof_timeout_mins: u64,
     // publicly reachable address of this Hierophant for artifact uploads
     pub this_hierophant_ip: String,
     // key pair used for signing messages to the client and retreiving nonces
@@ -47,22 +32,57 @@ pub struct Config {
     pub max_stdin_artifacts_stored: usize,
     #[serde(default = "default_max_proof_artifacts_stored")]
     pub max_proof_artifacts_stored: usize,
+    // Conditions to drop workers
+    #[serde(default)]
+    pub worker_registry: WorkerRegistryConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct WorkerRegistryConfig {
+    // number of strikes before a worker is evicted.  Typically a worker gets a strike
+    // when it fails to respond to a request
+    #[serde(default = "default_max_worker_strikes")]
+    pub max_worker_strikes: usize,
+    // How long between worker heartbeats to wait before evicting workers.
+    // For reference, the default worker heartbeat is 30 seconds.
+    #[serde(
+        default = "default_max_worker_heartbeat_interval_secs",
+        deserialize_with = "deserialize_duration_from_secs"
+    )]
+    pub max_worker_heartbeat_interval_secs: Duration,
+    // Maximum time a contemplant can be working on a proof before they're declared
+    // probably dead and kicked
+    #[serde(default = "default_proof_timeout_mins")]
+    pub proof_timeout_mins: u64,
     // The contemplant must make at least 1% progress every contemplant_required_progress_interval_mins
     // or it will be dropped
-    #[serde(default = "contemplant_required_progress_interval_mins")]
-    pub contemplant_required_progress_interval_mins: u64,
+    #[serde(default = "default_worker_required_progress_interval_mins")]
+    pub worker_required_progress_interval_mins: u64,
     // The amount of time the execution report can be running for the contemplant.
     // This is measured by the contemplant returning None progress.  When it returns
     // Some() then the execution report is done and the proof has started executing.
-    #[serde(default = "contemplant_max_execution_report_mins")]
-    pub contemplant_max_execution_report_mins: u64,
+    #[serde(default = "default_worker_max_execution_report_mins")]
+    pub worker_max_execution_report_mins: u64,
 }
 
-fn contemplant_max_execution_report_mins() -> u64 {
+impl Default for WorkerRegistryConfig {
+    fn default() -> Self {
+        Self {
+            max_worker_strikes: default_max_worker_strikes(),
+            max_worker_heartbeat_interval_secs: default_max_worker_heartbeat_interval_secs(),
+            proof_timeout_mins: default_proof_timeout_mins(),
+            worker_required_progress_interval_mins: default_worker_required_progress_interval_mins(
+            ),
+            worker_max_execution_report_mins: default_worker_max_execution_report_mins(),
+        }
+    }
+}
+
+fn default_worker_max_execution_report_mins() -> u64 {
     45
 }
 
-fn contemplant_required_progress_interval_mins() -> u64 {
+fn default_worker_required_progress_interval_mins() -> u64 {
     10
 }
 
@@ -89,7 +109,7 @@ fn default_max_proof_artifacts_stored() -> usize {
     10
 }
 
-fn proof_timeout_mins() -> u64 {
+fn default_proof_timeout_mins() -> u64 {
     // 5 hours.  They're more likely to get cut off because they're not making progress
     60 * 5
 }
