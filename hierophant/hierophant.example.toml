@@ -1,1 +1,23 @@
-#TODO:
+# REQUIRED
+
+# publicly reachable address of this Hierophant for artifact uploads
+this_hierophant_ip = ""
+# TODO: use or allow a default
+pub_key = ""
+
+# OPTIONAL
+# Below is a list of all config variables
+# See hierophant/hierophant/config.rs for default values and explanations.
+#
+# grpc_port=
+# http_port=
+# worker_response_timeout_secs=
+# mock_mode=
+# artifact_store_directory=
+# max_stdin_artifacts_stored=
+# max_proof_artifacts_stored=
+# worker_registry.max_worker_strikes=
+# worker_registry.max_worker_heartbeat_interval_secs=
+# worker_registry.proof_timeout_mins=
+# worker_registry.worker_required_progress_interval_mins=
+# worker_registry.worker_max_execution_report_mins=

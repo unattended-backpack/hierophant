@@ -7,6 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 pub struct Config {
     #[serde(default = "default_grpc_port")]
     pub grpc_port: u16,
+    // Also the ws port for the contemplant config
     #[serde(default = "default_http_port")]
     pub http_port: u16,
     // How long to wait for a response from a worker before evicting them.
@@ -18,6 +19,7 @@ pub struct Config {
     pub worker_response_timeout_secs: Duration,
     // publicly reachable address of this Hierophant for artifact uploads
     pub this_hierophant_ip: String,
+    // TODO: use or allow a default
     // key pair used for signing messages to the client and retreiving nonces
     pub pub_key: Address,
     // Make mock proofs instead of real proofs.  Witnessgen still happens.
