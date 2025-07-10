@@ -58,6 +58,7 @@ async fn main() -> Result<()> {
 
     // compiler will always complain about one of these branches being unreachable, depending on if
     // you compiled with `features enable-native-gnark` or not
+    #[allow(unreachable_code, unused_variables)]
     let cuda_prover = match &config.moongate_endpoint {
         // build with undockerized moongate server
         Some(moongate_endpoint) => {
