@@ -10,9 +10,9 @@ use crate::network::{
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::{debug, error, info, warn};
-use network_lib::ProofFromNetwork;
 use sp1_sdk::network::proto::network::ExecutionStatus;
 use sp1_sdk::network::proto::{artifact::ArtifactType, network::ProofMode};
+use sp1_sdk::proof::ProofFromNetwork;
 use sp1_sdk::{Prover, SP1ProofWithPublicValues};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{str::FromStr, sync::Arc};

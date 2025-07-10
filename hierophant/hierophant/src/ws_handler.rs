@@ -1,7 +1,7 @@
 use crate::proof_router::WorkerRegistryClient;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error, info, warn};
-use network_lib::{FromContemplantMessage, FromHierophantMessage};
+use network_lib::messages::{FromContemplantMessage, FromHierophantMessage};
 use std::net::SocketAddr;
 use std::ops::ControlFlow;
 use tokio::sync::mpsc;

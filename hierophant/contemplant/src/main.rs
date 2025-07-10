@@ -6,7 +6,7 @@ use alloy_primitives::B256;
 use assessor::start_assessor;
 use config::AssessorConfig;
 use futures_util::{SinkExt, StreamExt};
-use network_lib::ProofFromNetwork;
+use sp1_sdk::proof::ProofFromNetwork;
 use tokio::{
     sync::{mpsc, watch},
     time::Instant,
@@ -23,8 +23,10 @@ use crate::types::ProofStore;
 use anyhow::{Context, Result, anyhow};
 use log::{error, info, trace, warn};
 use network_lib::{
-    CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromContemplantMessage,
-    FromHierophantMessage, WorkerRegisterInfo,
+    ContemplantProofRequest, ContemplantProofStatus, WorkerRegisterInfo,
+    messages::{FromContemplantMessage, FromHierophantMessage},
+    protocol::CONTEMPLANT_VERSION,
+    to_proof_from_network,
 };
 use sp1_sdk::{
     CpuProver, CudaProver, Prover, ProverClient,
@@ -413,7 +415,7 @@ async fn request_proof(
         let minutes = (start_time.elapsed().as_secs_f32() / 60.0).round() as u32;
 
         let proof_bytes_res = proof_res.and_then(|proof| {
-            let network_proof: ProofFromNetwork = proof.into();
+            let network_proof: ProofFromNetwork = to_proof_from_network(proof);
             bincode::serialize(&network_proof).map_err(|e| anyhow!("Error serializing proof {e}"))
         });
 

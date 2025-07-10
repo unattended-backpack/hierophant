@@ -3,8 +3,8 @@ use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{debug, error, info, trace, warn};
 use network_lib::{
-    CONTEMPLANT_VERSION, ContemplantProofRequest, ContemplantProofStatus, FromHierophantMessage,
-    ProgressUpdate, WorkerRegisterInfo,
+    ContemplantProofRequest, ContemplantProofStatus, ProgressUpdate, WorkerRegisterInfo,
+    messages::FromHierophantMessage, protocol::CONTEMPLANT_VERSION,
 };
 use serde::{Serialize, Serializer};
 use sp1_sdk::network::proto::network::ProofMode;
