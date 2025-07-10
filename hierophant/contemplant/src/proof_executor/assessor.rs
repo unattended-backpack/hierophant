@@ -1,7 +1,7 @@
 use network_lib::ProgressUpdate;
 
 use crate::config::AssessorConfig;
-use crate::types::ProofStoreClient;
+use crate::proof_store::ProofStoreClient;
 use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use log::info;
@@ -22,7 +22,7 @@ use tracing_subscriber::{
 
 const LOG_DIR: &str = "./execution-reports";
 
-pub async fn start_assessor(
+pub(super) async fn start_assessor(
     mock_prover: Arc<CpuProver>,
     elf: &[u8],
     sp1_stdin: &SP1Stdin,

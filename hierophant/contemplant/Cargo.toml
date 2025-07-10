@@ -8,11 +8,8 @@ authors.workspace = true
 # repository.workspace = true
 
 [dependencies]
-# workspace
 tokio.workspace = true
-alloy-primitives = { workspace = true, features = [
-	"getrandom",
-] } #alloy-primitives.workspace = true
+alloy-primitives = { workspace = true, features = ["getrandom"] }
 reqwest.workspace = true
 env_logger.workspace = true
 lazy_static = "1.4"
@@ -20,20 +17,12 @@ rand = "0.9.1"
 regex = "1"
 futures-util.workspace = true
 tokio-tungstenite.workspace = true
-
-# local
-# network-lib = { path = "../network-lib" }
-
-# sp1
 sp1-sdk.workspace = true
-
 network-lib = { path = "../network-lib" }
-
 toml.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-# server
 axum = { version = "0.7.4", features = ["macros"] }
 bincode.workspace = true
 log.workspace = true
