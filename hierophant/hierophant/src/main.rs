@@ -1,12 +1,10 @@
+mod api;
 mod artifact_store;
+
 mod config;
 mod proof_router;
 
-mod create_artifact_service;
 mod hierophant_state;
-mod http_handler;
-mod prover_network_service;
-mod ws_handler;
 pub mod network {
     tonic::include_proto!("network");
 }
@@ -16,12 +14,17 @@ pub mod artifact {
 use crate::config::Config;
 use crate::hierophant_state::HierophantState;
 use anyhow::Context;
+use api::{
+    grpc::{
+        create_artifact_service::ArtifactStoreService, prover_network_service::ProverNetworkService,
+    },
+    http::create_router,
+};
+
 use artifact::artifact_store_server::ArtifactStoreServer;
 use axum::extract::DefaultBodyLimit;
-use create_artifact_service::ArtifactStoreService;
 use log::info;
 use network::prover_network_server::ProverNetworkServer;
-use prover_network_service::ProverNetworkService;
 use std::{net::SocketAddr, sync::Arc};
 use tonic::transport::Server;
 
@@ -52,9 +55,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(ArtifactStoreServer::new(artifact_service))
         .serve(grpc_addr);
 
-    // Create the axum router with all routes
-    let app =
-        http_handler::create_router(hierophant_state.clone()).layer(DefaultBodyLimit::disable());
+    // Create the axum http router with all routes
+    let app = create_router(hierophant_state.clone()).layer(DefaultBodyLimit::disable());
 
     // Run the HTTP server in a separate task
     let http_server = tokio::spawn(async move {

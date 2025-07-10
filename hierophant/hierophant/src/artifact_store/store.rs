@@ -1,3 +1,6 @@
+use super::artifact_uri::ArtifactUri;
+use super::command::ArtifactStoreCommand;
+
 use anyhow::{Context, Result, anyhow};
 use axum::body::Bytes;
 use log::{debug, error, info, warn};
@@ -19,90 +22,13 @@ use tokio::{
 };
 use uuid::Uuid;
 
-#[derive(Clone, Debug)]
-pub struct ArtifactStoreClient {
-    command_sender: mpsc::Sender<ArtifactStoreCommand>,
-}
-
-impl ArtifactStoreClient {
-    pub fn new(
-        artifact_directory: &str,
-        max_stdin_artifacts_stored: usize,
-        max_proof_artifacts_stored: usize,
-    ) -> Self {
-        let (command_sender, receiver) = mpsc::channel(100);
-
-        let artifact_store = ArtifactStore::new(
-            receiver,
-            artifact_directory,
-            max_stdin_artifacts_stored,
-            max_proof_artifacts_stored,
-        );
-
-        // start the artifact_store db
-        tokio::task::spawn(async move { artifact_store.background_event_loop().await });
-
-        Self { command_sender }
-    }
-
-    pub async fn create_artifact(&self, artifact_type: ArtifactType) -> Result<ArtifactUri> {
-        let (sender, receiver) = oneshot::channel();
-        let command = ArtifactStoreCommand::CreateArtifact {
-            artifact_type,
-            uri_sender: sender,
-        };
-
-        self.command_sender
-            .send(command)
-            .await
-            .context("Send CreateArtifact command")?;
-
-        receiver.await.map_err(|e| anyhow!(e))
-    }
-
-    pub async fn save_artifact(
-        &self,
-        artifact_uri: ArtifactUri,
-        artifact_bytes: Bytes,
-    ) -> Result<()> {
-        let (sender, receiver) = oneshot::channel();
-        let command = ArtifactStoreCommand::SaveArtifact {
-            artifact_uri,
-            bytes: artifact_bytes,
-            result_sender: sender,
-        };
-
-        self.command_sender
-            .send(command)
-            .await
-            .context("Send SaveArtifact command")?;
-
-        receiver.await?
-    }
-
-    pub async fn get_artifact_bytes(&self, artifact_uri: ArtifactUri) -> Result<Option<Vec<u8>>> {
-        let (sender, receiver) = oneshot::channel();
-        let command = ArtifactStoreCommand::GetArtifactBytes {
-            artifact_uri,
-            artifact_sender: sender,
-        };
-
-        self.command_sender
-            .send(command)
-            .await
-            .context("Send GetArtifactBytes command")?;
-
-        receiver.await?
-    }
-}
-
-struct ArtifactStore {
+pub(super) struct ArtifactStore {
     receiver: mpsc::Receiver<ArtifactStoreCommand>,
     // folder where artifacts are saved
     artifact_directory: String,
     // uris that can be uploaded
     upload_uris: HashSet<ArtifactUri>,
-    // below if for trimming old artifacts:
+    // below are for trimming old artifacts:
     max_stdin_artifacts_stored: usize,
     stdin_artifacts: Vec<ArtifactUri>,
     current_stdin_artifact_index: usize,
@@ -112,7 +38,7 @@ struct ArtifactStore {
 }
 
 impl ArtifactStore {
-    fn new(
+    pub(super) fn new(
         receiver: mpsc::Receiver<ArtifactStoreCommand>,
         artifact_directory: &str,
         max_stdin_artifacts_stored: usize,
@@ -136,7 +62,7 @@ impl ArtifactStore {
         info!("Created new directory {artifact_directory}.");
 
         // initialize artifacts as an array of default values
-        let default_proof = ArtifactUri::default_proof();
+        let default_proof = ArtifactUri::default();
         let stdin_artifacts = vec![default_proof.clone(); max_stdin_artifacts_stored];
         let proof_artifacts = vec![default_proof; max_proof_artifacts_stored];
 
@@ -153,7 +79,7 @@ impl ArtifactStore {
         }
     }
 
-    async fn background_event_loop(mut self) {
+    pub(super) async fn background_event_loop(mut self) {
         while let Some(command) = self.receiver.recv().await {
             let start = Instant::now();
             let command_string = format!("{}", command);
@@ -233,7 +159,7 @@ impl ArtifactStore {
                 // if theres an artifact at this index, delete it to make room for this new artifact
                 if let Some(old_artifact_uri) = self.proof_artifacts.get(index_to_insert) {
                     // don't try to delete a default entry
-                    if old_artifact_uri != &ArtifactUri::default_proof() {
+                    if old_artifact_uri != &ArtifactUri::default() {
                         self.handle_delete_artifact(old_artifact_uri.clone());
                     }
                 }
@@ -246,7 +172,7 @@ impl ArtifactStore {
                 // if theres an artifact at this index, delete it to make room for this new artifact
                 if let Some(old_artifact_uri) = self.stdin_artifacts.get(index_to_insert) {
                     // don't try to delete a default entry
-                    if old_artifact_uri != &ArtifactUri::default_proof() {
+                    if old_artifact_uri != &ArtifactUri::default() {
                         self.handle_delete_artifact(old_artifact_uri.clone());
                     }
                 }
@@ -311,134 +237,5 @@ impl ArtifactStore {
         let new_artifact_index =
             (self.current_stdin_artifact_index + 1) % self.max_stdin_artifacts_stored;
         self.current_stdin_artifact_index = new_artifact_index;
-    }
-}
-
-#[derive(Debug)]
-enum ArtifactStoreCommand {
-    CreateArtifact {
-        artifact_type: ArtifactType,
-        uri_sender: oneshot::Sender<ArtifactUri>,
-    },
-    SaveArtifact {
-        artifact_uri: ArtifactUri,
-        bytes: Bytes,
-        result_sender: oneshot::Sender<Result<()>>,
-    },
-    GetArtifactBytes {
-        artifact_uri: ArtifactUri,
-        artifact_sender: oneshot::Sender<Result<Option<Vec<u8>>>>,
-    },
-}
-
-impl fmt::Display for ArtifactStoreCommand {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let display = match self {
-            Self::CreateArtifact { artifact_type, .. } => {
-                format!("CreateArtifact {}", artifact_type.as_str_name())
-            }
-            Self::SaveArtifact { artifact_uri, .. } => {
-                format!("SaveArtifact {}", artifact_uri)
-            }
-            Self::GetArtifactBytes { artifact_uri, .. } => {
-                format!("GetArtifactBytes {}", artifact_uri)
-            }
-        };
-
-        write!(f, "{display}",)
-    }
-}
-
-// artifact_uri is {artifact_type}-{artifact_uuid}
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct ArtifactUri {
-    id: Uuid,
-    artifact_type: ArtifactType,
-}
-
-impl ArtifactUri {
-    fn new(artifact_type: ArtifactType) -> Self {
-        let id = Uuid::new_v4();
-
-        Self { id, artifact_type }
-    }
-
-    fn default_proof() -> Self {
-        let id = Uuid::nil();
-        let artifact_type = ArtifactType::Proof;
-        Self { id, artifact_type }
-    }
-
-    // artifact will be written to {artifact_directory}/{artifact_uri}
-    fn file_path(&self, artifact_directory: &str) -> String {
-        format!("{}/{}", artifact_directory, self)
-    }
-}
-
-// {artifact_type}-{artifact_uuid}
-impl fmt::Display for ArtifactUri {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}_{}", self.artifact_type.as_str_name(), self.id)
-    }
-}
-
-impl fmt::Display for ParseArtifactUriError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "failed to parse ArtifactUri")
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ParseArtifactUriError;
-
-impl std::error::Error for ParseArtifactUriError {}
-
-// Implement FromStr for ArtifactUri
-impl FromStr for ArtifactUri {
-    type Err = ParseArtifactUriError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // Split the string by '_'
-        let parts: Vec<&str> = s.split('_').collect();
-
-        // Check if we have exactly 2 parts
-        if parts.len() != 2 {
-            return Err(ParseArtifactUriError);
-        }
-
-        // Parse the artifact type
-        let artifact_type =
-            ArtifactType::from_str_name(parts[0]).ok_or_else(|| ParseArtifactUriError)?;
-
-        // Parse the UUID
-        let id = Uuid::parse_str(parts[1]).map_err(|_| ParseArtifactUriError)?;
-
-        Ok(ArtifactUri { id, artifact_type })
-    }
-}
-
-impl<'de> Deserialize<'de> for ArtifactUri {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct ArtifactUriVisitor;
-
-        impl<'de> Visitor<'de> for ArtifactUriVisitor {
-            type Value = ArtifactUri;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a string in the format 'artifact_type-uuid'")
-            }
-
-            fn visit_str<E>(self, value: &str) -> Result<ArtifactUri, E>
-            where
-                E: de::Error,
-            {
-                ArtifactUri::from_str(value).map_err(E::custom)
-            }
-        }
-
-        deserializer.deserialize_str(ArtifactUriVisitor)
     }
 }

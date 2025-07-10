@@ -1,6 +1,9 @@
 use crate::hierophant_state::HierophantState;
 use crate::proof_router::WorkerState;
 use crate::{artifact_store::ArtifactUri, proof_router::CompletedProofInfo};
+
+use super::websocket::handle_socket;
+
 use axum::{
     Json, Router,
     body::Bytes,
@@ -10,19 +13,12 @@ use axum::{
     routing::{any, get, post, put},
 };
 use log::{debug, error, info};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     net::SocketAddr,
     sync::Arc,
 };
-
-// Structure to receive worker registration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkerRegistration {
-    pub name: String,
-}
 
 // Create the router with all routes
 pub fn create_router(state: Arc<HierophantState>) -> Router {
@@ -62,7 +58,7 @@ async fn ws_handler(
     ws.max_message_size(one_hundred_mb)
         .max_frame_size(one_hundred_mb)
         .on_upgrade(move |socket| {
-            crate::ws_handler::handle_socket(
+            handle_socket(
                 socket,
                 addr,
                 state.proof_router.worker_registry_client.clone(),
