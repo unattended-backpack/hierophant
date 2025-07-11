@@ -1,8 +1,5 @@
 # Hierophant
 
-> "A hierophant is an interpreter of sacred mysteries and arcane principles."
-[wikipedia](https://en.wikipedia.org/wiki/Hierophant)
-
 Hierophant is a locally-hosted SP1 prover network that is built to be a drop in replacement as a Succinct prover network endpoint.
 
 ## "Hierophant" and "contemplant"
@@ -34,6 +31,10 @@ cp hierophant/contemplant.example.toml hierophant/contemplant.toml
 ```
 
 # Architecture
+
+Most of the state is handled in a non-blocking actor pattern.  1 thread holds state and others interact with state by sending messages to that thread.
+Any module in this repo that contain files `client.rs` and `command.rs` is following this pattern.  These modules are `contemplant/proof_store`, `hierophant/artifact_store`, and `hierophant/worker_registry`.
+The flow of control for these modules are `Client method → Command → Handler → State update/read`.  To add a new state-touching function, I recommend first adding a new command to the enum in the appropriate `command.rs` file and letting the rust compiler guide you through the rest of the implementation.  In the future I'd like to move to a more robust actor library like Actix or Ractor.
 
 ## `contemplant` overview
 
@@ -102,6 +103,8 @@ proto/
 
 ## `network-lib` overview
 
+This is a library for types shared between both `hierophant` and `contemplant`.
+
 ```bash
 src/
 ├── lib.rs                 # Shared structs
@@ -109,7 +112,7 @@ src/
 └── protocol.rs            # Shared protocol constants
 ```
 
-# Building an developing
+# Building and developing
 
 ## Developing
 
