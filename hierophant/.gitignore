@@ -1,5 +1,0 @@
-.env
-/target
-hierophant.toml
-contemplant.toml
-**/run-contemplant.sh

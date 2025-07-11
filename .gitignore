@@ -1,3 +1,5 @@
 hierophant.toml
 contemplant.toml
 .env
+/target
+**/run-contemplant.sh
