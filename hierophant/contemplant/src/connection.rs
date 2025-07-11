@@ -15,6 +15,15 @@ use tokio_tungstenite::{
     tungstenite::protocol::{Message, WebSocketConfig},
 };
 
+// Starts processes to connect to and initialize with Hierophant
+//
+// Order of operations:
+//  - initiates a ws with the Heirophant.
+//  - send Hierophant register message, making the Hierophant aware of this Contemplant
+//  - start task that receives messages from Hierophant
+//  - start task that sends a Heartbeat messages to Hierophant
+//  - if all the above is successful and Hierophant is aware of this Contemplant,
+//    send register message to the Magister (if this Contemplant has a Magister)
 pub async fn connect_to_hierophant(config: Config, worker_state: WorkerState) -> Result<()> {
     let hierophant_ws_address = config.hierophant_ws_address.clone();
 
