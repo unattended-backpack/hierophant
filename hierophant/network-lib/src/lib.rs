@@ -21,7 +21,7 @@ impl Display for WorkerRegisterInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let magister_info = match self.magister_drop_endpoint.clone() {
             Some(x) => format!(" with Magister drop endpoint {x}"),
-            None => format!(""),
+            None => "".to_string(),
         };
         write!(
             f,
@@ -105,8 +105,8 @@ impl Display for ContemplantProofStatus {
         let progress_update = match self.progress {
             Some(ProgressUpdate::Execution(x)) => format!("{x}% executed"),
             Some(ProgressUpdate::Serialization(x)) => format!("{x}% serialized"),
-            Some(ProgressUpdate::Done) => format!("Done"),
-            None => format!("not started"),
+            Some(ProgressUpdate::Done) => "Done".to_string(),
+            None => "not started".to_string(),
         };
 
         write!(
@@ -136,9 +136,7 @@ impl Display for ProgressUpdate {
             ProgressUpdate::Serialization(x) => {
                 format!("{x}% serialized")
             }
-            ProgressUpdate::Done => {
-                format!("done")
-            }
+            ProgressUpdate::Done => "done".to_string(),
         };
 
         write!(f, "{}", msg)

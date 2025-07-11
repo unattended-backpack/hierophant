@@ -417,7 +417,7 @@ impl WorkerRegistry {
 
         // send the proof status to all tasks waiting for it
         for sender in tasks_awaiting {
-            if let Err(_) = sender.send(maybe_proof_status.clone()) {
+            if sender.send(maybe_proof_status.clone()).is_err() {
                 // if the receiver is dropped, it means we reached the timeout before
                 // this contemplant responded.  The contemplant was already given
                 // a strike for this, so nothing to do here
@@ -534,7 +534,7 @@ impl WorkerRegistry {
         // contemplant
         self.awaiting_proof_status_responses
             .entry(target_request_id)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(resp_sender);
     }
 
@@ -544,21 +544,21 @@ impl WorkerRegistry {
             .iter()
             .map(|(x, y)| (x.clone(), y.clone()))
             .collect();
-        if let Err(_) = resp_sender.send(workers) {
+        if resp_sender.send(workers).is_err() {
             warn!("Receiver for WorkerRegistryCommand::Workers dropped");
         }
     }
 
     fn handle_dead_workers(&self, resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>) {
         let dead_workers = self.dead_workers.clone();
-        if let Err(_) = resp_sender.send(dead_workers) {
+        if resp_sender.send(dead_workers).is_err() {
             warn!("Receiver for WorkerRegistryCommand::DeadWorkers dropped");
         }
     }
 
     fn handle_proof_history(&self, resp_sender: oneshot::Sender<Vec<CompletedProofInfo>>) {
-        let completed_proof_info = self.proof_history.iter().map(|x| x.clone()).collect();
-        if let Err(_) = resp_sender.send(completed_proof_info) {
+        let completed_proof_info = self.proof_history.clone();
+        if resp_sender.send(completed_proof_info).is_err() {
             warn!("Receiver for WorkerRegistryCommand::ProofHistory dropped");
         }
     }

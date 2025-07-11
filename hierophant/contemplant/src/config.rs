@@ -71,11 +71,12 @@ fn default_contemplant_name() -> String {
 
     let path = Path::new("old_testament.txt");
 
-    let file = match File::open(&path) {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(_) => return default_error_name,
     };
 
+    #[allow(clippy::lines_filter_map_ok)]
     let names: Vec<String> = io::BufReader::new(file)
         .lines()
         .filter_map(Result::ok)

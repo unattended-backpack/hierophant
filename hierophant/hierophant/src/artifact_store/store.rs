@@ -75,7 +75,7 @@ impl ArtifactStore {
                     uri_sender,
                 } => {
                     let artifact_uri = self.handle_create_artifact(artifact_type);
-                    if let Err(_) = uri_sender.send(artifact_uri) {
+                    if uri_sender.send(artifact_uri).is_err() {
                         warn!("Receiver for CreateArtifact command dropped");
                     }
                 }
@@ -85,7 +85,7 @@ impl ArtifactStore {
                     result_sender,
                 } => {
                     let res = self.handle_save_artifact(artifact_uri, bytes);
-                    if let Err(_) = result_sender.send(res) {
+                    if result_sender.send(res).is_err() {
                         warn!("Receiver for SaveArtifact command dropped");
                     }
                 }
@@ -94,7 +94,7 @@ impl ArtifactStore {
                     artifact_sender,
                 } => {
                     let res = self.handle_get_artifact_bytes(artifact_uri);
-                    if let Err(_) = artifact_sender.send(res) {
+                    if artifact_sender.send(res).is_err() {
                         warn!("Receiver for GetArtifactBytes command dropped");
                     }
                 }
@@ -123,7 +123,7 @@ impl ArtifactStore {
 
     fn handle_save_artifact(&mut self, artifact_uri: ArtifactUri, bytes: Bytes) -> Result<()> {
         // make sure the uri is listed as a valid upload
-        if let None = self.upload_uris.get(&artifact_uri) {
+        if !self.upload_uris.contains(&artifact_uri) {
             let error_msg = format!("artifact uri {artifact_uri} is not a registered upload uri");
             error!("{error_msg}");
             return Err(anyhow!("{error_msg}"));
@@ -175,8 +175,7 @@ impl ArtifactStore {
             bytes.len()
         );
         // write artifact to disk
-        fs::write(path, bytes.to_vec())
-            .context(format!("Write artifact to file {artifact_path}"))?;
+        fs::write(path, &bytes).context(format!("Write artifact to file {artifact_path}"))?;
 
         info!("Artifact written to {artifact_path}");
 
@@ -189,7 +188,7 @@ impl ArtifactStore {
         if path.exists() {
             fs::read(path)
                 .context(format!("Loading artifact from file {artifact_path}"))
-                .map(|b| Some(b))
+                .map(Some)
         } else {
             Ok(None)
         }

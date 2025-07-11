@@ -47,14 +47,11 @@ impl ProofStore {
                     // yes I know, this is O(n) when it could be O(1) with a hash map BUT in practice
                     // it is much faster because self.proofs.length is < 5 and we don't
                     // have to hash anything
-                    let proof = match self
+                    let proof = self
                         .proofs
                         .iter()
                         .find(|(this_request_id, _)| *this_request_id == request_id)
-                    {
-                        Some((_, proof_status)) => Some(proof_status.clone()),
-                        None => None,
-                    };
+                        .map(|(_, proof_status)| proof_status.clone());
 
                     let _ = resp_sender.send(proof);
                 }
@@ -91,7 +88,7 @@ impl ProofStore {
                         .find(|(this_request_id, _)| *this_request_id == request_id)
                     {
                         Some((_, proof_status)) => {
-                            if let Some(_) = &proof {
+                            if proof.is_some() {
                                 proof_status.progress = Some(ProgressUpdate::Done);
                             }
                             proof_status.execution_status = execution_status;

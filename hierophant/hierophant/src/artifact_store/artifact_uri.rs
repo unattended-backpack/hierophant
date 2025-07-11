@@ -71,8 +71,7 @@ impl FromStr for ArtifactUri {
         }
 
         // Parse the artifact type
-        let artifact_type =
-            ArtifactType::from_str_name(parts[0]).ok_or_else(|| ParseArtifactUriError)?;
+        let artifact_type = ArtifactType::from_str_name(parts[0]).ok_or(ParseArtifactUriError)?;
 
         // Parse the UUID
         let id = Uuid::parse_str(parts[1]).map_err(|_| ParseArtifactUriError)?;
@@ -88,7 +87,7 @@ impl<'de> Deserialize<'de> for ArtifactUri {
     {
         struct ArtifactUriVisitor;
 
-        impl<'de> Visitor<'de> for ArtifactUriVisitor {
+        impl Visitor<'_> for ArtifactUriVisitor {
             type Value = ArtifactUri;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {

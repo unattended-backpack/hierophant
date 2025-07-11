@@ -140,7 +140,7 @@ impl WorkerState {
                 } else {
                     false
                 }
-            } else if let None = progress {
+            } else if progress.is_none() {
                 // progress starts as None and moves to Some when the execution report is done
                 // and the proof starts executing.  Progress never moves from Some to None.
                 // If the contemplant takes too long on the execution report, drop them.
@@ -226,9 +226,7 @@ impl Display for WorkerStatus {
                     Some(progress) => {
                         format!("{progress}")
                     }
-                    None => {
-                        format!("not started")
-                    }
+                    None => "not started".to_string(),
                 };
                 write!(
                     f,

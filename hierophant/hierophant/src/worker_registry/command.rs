@@ -63,42 +63,18 @@ pub enum WorkerRegistryCommand {
 impl fmt::Debug for WorkerRegistryCommand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let command = match self {
-            WorkerRegistryCommand::AssignProofRequest { .. } => {
-                format!("AssignProofRequest")
-            }
-            WorkerRegistryCommand::WorkerReady { .. } => {
-                format!("WorkerReady")
-            }
-            WorkerRegistryCommand::ProofComplete { .. } => {
-                format!("ProofComplete")
-            }
-            WorkerRegistryCommand::ProofProgressUpdate { .. } => {
-                format!("ProofProgressUpdate")
-            }
-            WorkerRegistryCommand::ProofStatusRequest { .. } => {
-                format!("ProofStatusRequest")
-            }
-            WorkerRegistryCommand::ProofStatusResponse { .. } => {
-                format!("ProofStatusResponse")
-            }
-            WorkerRegistryCommand::Workers { .. } => {
-                format!("Workers")
-            }
-            WorkerRegistryCommand::DeadWorkers { .. } => {
-                format!("DeadWorkers")
-            }
-            WorkerRegistryCommand::ProofHistory { .. } => {
-                format!("ProofHistory")
-            }
-            WorkerRegistryCommand::Heartbeat { .. } => {
-                format!("Heartbeat")
-            }
-            WorkerRegistryCommand::StrikeWorkerOfRequest { .. } => {
-                format!("StrikeWorkerOfRequest")
-            }
-            WorkerRegistryCommand::DropWorkerOfRequest { .. } => {
-                format!("DropWorkerOfRequest")
-            }
+            WorkerRegistryCommand::AssignProofRequest { .. } => "AssignProofRequest",
+            WorkerRegistryCommand::WorkerReady { .. } => "WorkerReady",
+            WorkerRegistryCommand::ProofComplete { .. } => "ProofComplete",
+            WorkerRegistryCommand::ProofProgressUpdate { .. } => "ProofProgressUpdate",
+            WorkerRegistryCommand::ProofStatusRequest { .. } => "ProofStatusRequest",
+            WorkerRegistryCommand::ProofStatusResponse { .. } => "ProofStatusResponse",
+            WorkerRegistryCommand::Workers { .. } => "Workers",
+            WorkerRegistryCommand::DeadWorkers { .. } => "DeadWorkers",
+            WorkerRegistryCommand::ProofHistory { .. } => "ProofHistory",
+            WorkerRegistryCommand::Heartbeat { .. } => "Heartbeat",
+            WorkerRegistryCommand::StrikeWorkerOfRequest { .. } => "StrikeWorkerOfRequest",
+            WorkerRegistryCommand::DropWorkerOfRequest { .. } => "DropWorkerOfRequest",
         };
         write!(f, "{command}")
     }

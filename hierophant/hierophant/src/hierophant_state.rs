@@ -76,18 +76,12 @@ impl HierophantState {
 }
 
 // newtype wrapper for keeping vk_hash bytes distinct from other Vec<u8>
-#[derive(Debug, Clone, Serialize, Eq, PartialEq, Hash)]
+#[derive(Default, Debug, Clone, Serialize, Eq, PartialEq, Hash)]
 pub struct VkHash(Vec<u8>);
 
 impl VkHash {
     pub fn to_hex_string(&self) -> String {
         format!("0x{}", hex::encode(self.clone().0))
-    }
-}
-
-impl Default for VkHash {
-    fn default() -> Self {
-        VkHash(vec![])
     }
 }
 

@@ -15,7 +15,7 @@ pub struct ProofStoreClient {
 impl ProofStoreClient {
     pub fn new(max_proofs_stored: usize) -> Self {
         if max_proofs_stored < 1 {
-            let error_msg = format!("Contemplant's config max_proofs_stored must be > 1");
+            let error_msg = "Contemplant's config max_proofs_stored must be > 1";
             error!("{error_msg}");
             panic!("{error_msg}");
         }

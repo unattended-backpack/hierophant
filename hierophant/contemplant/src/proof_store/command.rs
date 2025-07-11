@@ -26,18 +26,10 @@ pub(super) enum ProofStoreCommand {
 impl fmt::Debug for ProofStoreCommand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let command = match self {
-            ProofStoreCommand::GetProofStatus { .. } => {
-                format!("GetProofStatus")
-            }
-            ProofStoreCommand::ProofProgressUpdate { .. } => {
-                format!("ProofProgressUpdate")
-            }
-            ProofStoreCommand::ProofStatusUpdate { .. } => {
-                format!("ProofStatusUpdate")
-            }
-            ProofStoreCommand::InsertProof { .. } => {
-                format!("InsertProof")
-            }
+            ProofStoreCommand::GetProofStatus { .. } => "GetProofStatus",
+            ProofStoreCommand::ProofProgressUpdate { .. } => "ProofProgressUpdate",
+            ProofStoreCommand::ProofStatusUpdate { .. } => "ProofStatusUpdate",
+            ProofStoreCommand::InsertProof { .. } => "InsertProof",
         };
         write!(f, "{command}")
     }

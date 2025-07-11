@@ -75,11 +75,9 @@ impl ProofRouter {
             elf,
         };
 
-        let res = self
-            .worker_registry_client
+        self.worker_registry_client
             .assign_proof_request(proof_request)
-            .await;
-        res
+            .await
     }
 
     pub async fn get_proof_status(&self, proof_request_id: B256) -> Result<ProofStatus> {

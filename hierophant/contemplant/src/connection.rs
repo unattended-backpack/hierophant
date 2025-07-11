@@ -69,9 +69,8 @@ pub async fn connect_to_hierophant(config: Config, worker_state: WorkerState) ->
     let (exit_sender, mut exit_receiver): (mpsc::Sender<String>, mpsc::Receiver<String>) =
         mpsc::channel(10);
     let mut exit_task = tokio::spawn(async move {
-        while let Some(error_msg) = exit_receiver.recv().await {
+        if let Some(error_msg) = exit_receiver.recv().await {
             error!("{error_msg}");
-            break;
         }
     });
 
