@@ -1,6 +1,6 @@
 use crate::hierophant_state::HierophantState;
-use crate::proof_router::WorkerState;
-use crate::{artifact_store::ArtifactUri, proof_router::CompletedProofInfo};
+use crate::worker_registry::WorkerState;
+use crate::{artifact_store::ArtifactUri, proof::CompletedProofInfo};
 
 use super::websocket::handle_socket;
 

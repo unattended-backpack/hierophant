@@ -2,24 +2,8 @@ use super::{artifact_uri::ArtifactUri, command::ArtifactStoreCommand, store::Art
 
 use anyhow::{Context, Result, anyhow};
 use axum::body::Bytes;
-use log::{debug, error, info, warn};
-use serde::{
-    Deserialize, Deserializer,
-    de::{self, Visitor},
-};
 use sp1_sdk::network::proto::artifact::ArtifactType;
-use std::{
-    collections::HashSet,
-    fmt::{self},
-    fs,
-    path::Path,
-    str::FromStr,
-};
-use tokio::{
-    sync::{mpsc, oneshot},
-    time::Instant,
-};
-use uuid::Uuid;
+use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone, Debug)]
 pub struct ArtifactStoreClient {

@@ -1,4 +1,4 @@
-use crate::proof_router::WorkerRegistryClient;
+use crate::worker_registry::WorkerRegistryClient;
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, error, info, warn};
 use network_lib::messages::{FromContemplantMessage, FromHierophantMessage};

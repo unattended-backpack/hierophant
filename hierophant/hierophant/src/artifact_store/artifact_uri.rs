@@ -1,21 +1,12 @@
-use anyhow::{Context, Result, anyhow};
-use axum::body::Bytes;
-use log::{debug, error, info, warn};
+use anyhow::Result;
 use serde::{
     Deserialize, Deserializer,
     de::{self, Visitor},
 };
 use sp1_sdk::network::proto::artifact::ArtifactType;
 use std::{
-    collections::HashSet,
     fmt::{self},
-    fs,
-    path::Path,
     str::FromStr,
-};
-use tokio::{
-    sync::{mpsc, oneshot},
-    time::Instant,
 };
 use uuid::Uuid;
 

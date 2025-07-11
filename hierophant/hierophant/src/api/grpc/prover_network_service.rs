@@ -1,5 +1,5 @@
 use crate::artifact_store::ArtifactUri;
-use crate::hierophant_state::{HierophantState, ProofStatus, VkHash};
+use crate::hierophant_state::{HierophantState, VkHash};
 use crate::network::prover_network_server::ProverNetwork;
 use crate::network::{
     CreateProgramRequest, CreateProgramResponse, CreateProgramResponseBody, FulfillmentStatus,
@@ -7,6 +7,7 @@ use crate::network::{
     GetProofRequestStatusRequest, GetProofRequestStatusResponse, Program, RequestProofRequest,
     RequestProofResponse, RequestProofResponseBody,
 };
+use crate::proof::ProofStatus;
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::{debug, error, info, warn};

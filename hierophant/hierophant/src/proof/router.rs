@@ -1,8 +1,7 @@
-mod worker_registry;
-
 use crate::{
     artifact_store::{ArtifactStoreClient, ArtifactUri},
-    hierophant_state::ProofStatus,
+    proof::ProofStatus,
+    worker_registry::WorkerRegistryClient,
 };
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
@@ -10,7 +9,6 @@ use log::{error, warn};
 use network_lib::ContemplantProofRequest;
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use tokio::time::Duration;
-pub use worker_registry::{CompletedProofInfo, WorkerRegistryClient, WorkerState};
 
 use crate::config::Config;
 

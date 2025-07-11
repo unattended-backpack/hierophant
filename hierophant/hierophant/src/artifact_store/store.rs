@@ -4,23 +4,9 @@ use super::command::ArtifactStoreCommand;
 use anyhow::{Context, Result, anyhow};
 use axum::body::Bytes;
 use log::{debug, error, info, warn};
-use serde::{
-    Deserialize, Deserializer,
-    de::{self, Visitor},
-};
 use sp1_sdk::network::proto::artifact::ArtifactType;
-use std::{
-    collections::HashSet,
-    fmt::{self},
-    fs,
-    path::Path,
-    str::FromStr,
-};
-use tokio::{
-    sync::{mpsc, oneshot},
-    time::Instant,
-};
-use uuid::Uuid;
+use std::{collections::HashSet, fs, path::Path};
+use tokio::{sync::mpsc, time::Instant};
 
 pub(super) struct ArtifactStore {
     receiver: mpsc::Receiver<ArtifactStoreCommand>,

@@ -1,26 +1,10 @@
 use super::artifact_uri::ArtifactUri;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 use axum::body::Bytes;
-use log::{debug, error, info, warn};
-use serde::{
-    Deserialize, Deserializer,
-    de::{self, Visitor},
-};
 use sp1_sdk::network::proto::artifact::ArtifactType;
-use std::{
-    collections::HashSet,
-    fmt::{self},
-    fs,
-    path::Path,
-    str::FromStr,
-};
-use tokio::{
-    sync::{mpsc, oneshot},
-    time::Instant,
-};
-
-use uuid::Uuid;
+use std::fmt::{self};
+use tokio::sync::oneshot;
 
 #[derive(Debug)]
 pub(super) enum ArtifactStoreCommand {

@@ -1,8 +1,8 @@
 mod api;
 mod artifact_store;
-
 mod config;
-mod proof_router;
+mod proof;
+mod worker_registry;
 
 mod hierophant_state;
 pub mod network {
