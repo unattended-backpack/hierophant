@@ -5,6 +5,16 @@
 
 Hierophant is a locally-hosted SP1 prover network that is built to be a drop in replacement as a Succinct prover network endpoint.
 
+## "Hierophant" and "contemplant"
+
+> "A hierophant is an interpreter of sacred mysteries and arcane principles."
+[wikipedia](https://en.wikipedia.org/wiki/Hierophant)
+
+> "Contemplant: One who contemplates."
+[wikipedia](https://en.wiktionary.org/wiki/contemplant)
+
+"Hierophant" and "Contemplant" are our versions of "coordinator" and "worker" or "master" and "slave".  The Hierophant receives proof requests and delegates them to be computed by the Contemplants.  "Contemplant" is used interchangeably with "worker" in this repo for brevity.
+
 # Running Hierophant
 
 Make a `hierophant.toml` and fill in config values:
@@ -98,3 +108,30 @@ src/
 ├── messages.rs            # Shared message types 
 └── protocol.rs            # Shared protocol constants
 ```
+
+# Building an developing
+
+## Developing
+
+When making a breaking change in Hierophant/Contemplant compatability, increment
+the `CONTEMPLANT_VERSION` var in `network-lib/src/lib.rs`.  On each Contemplant
+connection, the Hierophant asserts that the `CONTEMPLANT_VERSION` that they have
+is the same as the `CONTEMPLANT_VERSION` being passed in by the Contemplant.
+
+## Building
+
+Install `protoc`: [https://protobuf.dev/installation/](https://protobuf.dev/installation/)
+
+`cargo build --release`
+
+### Contemplant without Docker access
+
+If you're running a Contemplant in an environment where Docker containers can't run, like inside a Vast.ai instance, the CUDA prover `moongate` binary must be run separately and pointed to in `contemplant.toml` by setting a `moongate_endpoint`.  The `moongate` binary needs to be extracted from the latest Succinct CUDA prover image.  At the time of writing, that is `https://public.ecr.aws/succinct-labs/moongate:v5.0.0`.  You must also build the Contemplant binary with the feature `enable-native-gnark`.
+
+```
+cargo build --release --bin contemplant --features enable-native-gnark
+```
+
+## `old_testament.txt`
+
+List of biblical names to randomly draw from if a Contemplant is started without a name.
