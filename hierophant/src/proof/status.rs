@@ -121,8 +121,7 @@ impl Display for ProofStatus {
 
         write!(
             f,
-            "FulfillmentStatus: {}, ExecutionStatus: {}, Proof: {}",
-            fulfillment_status, execution_status, proof_display
+            "FulfillmentStatus: {fulfillment_status}, ExecutionStatus: {execution_status}, Proof: {proof_display}"
         )
     }
 }

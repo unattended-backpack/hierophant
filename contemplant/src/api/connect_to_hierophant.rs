@@ -94,7 +94,7 @@ pub async fn connect_to_hierophant(config: Config, worker_state: WorkerState) ->
             let ws_msg_bytes = match bincode::serialize(&ws_msg) {
                 Ok(bytes) => bytes,
                 Err(e) => {
-                    let error_msg = format!("Error serializing message {}: {e}", ws_msg);
+                    let error_msg = format!("Error serializing message {ws_msg}: {e}");
                     error!("{error_msg}");
                     // skip this message
                     continue;
@@ -166,8 +166,7 @@ pub async fn connect_to_hierophant(config: Config, worker_state: WorkerState) ->
 
     if let Some(drop_endpoint) = &config.magister_drop_endpoint {
         info!(
-            "Contemplant is being managed by the Magister with drop endpoint {}.",
-            drop_endpoint
+            "Contemplant is being managed by the Magister with drop endpoint {drop_endpoint}."
         );
         verify_with_magister(drop_endpoint.clone()).await?;
     }

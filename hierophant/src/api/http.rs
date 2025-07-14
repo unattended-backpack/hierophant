@@ -180,5 +180,5 @@ fn display_artifact_hex(bytes: &[u8]) -> String {
     bytes.hash(&mut hasher);
     let hash = hasher.finish();
 
-    format!("{:016x}", hash)
+    format!("{hash:016x}")
 }

@@ -139,7 +139,7 @@ impl Display for ProgressUpdate {
             ProgressUpdate::Done => "done".to_string(),
         };
 
-        write!(f, "{}", msg)
+        write!(f, "{msg}")
     }
 }
 

@@ -34,7 +34,7 @@ impl ProofStore {
     pub(super) async fn background_event_loop(mut self) {
         while let Some(command) = self.receiver.recv().await {
             let start = Instant::now();
-            let command_string = format!("{:?}", command);
+            let command_string = format!("{command:?}");
             trace!(
                 "{} messages in worker registry channel",
                 self.receiver.len()
@@ -126,8 +126,7 @@ impl ProofStore {
 
             if secs > 0.5 {
                 info!(
-                    "Slow execution detected: took {} seconds to process worker_registry command {:?}",
-                    secs, command_string
+                    "Slow execution detected: took {secs} seconds to process worker_registry command {command_string:?}"
                 );
             }
         }

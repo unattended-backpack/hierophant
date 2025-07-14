@@ -38,7 +38,7 @@ pub(super) async fn start_assessor(
         .await
         .context("Failed to create logs directory")?;
 
-    let file_name = format!("proof_execution_{}.log", request_id);
+    let file_name = format!("proof_execution_{request_id}.log");
     let file_appender = tracing_appender::rolling::never(log_dir, &file_name);
     let (file_writer, _guard) = tracing_appender::non_blocking(file_appender);
 
@@ -55,8 +55,8 @@ pub(super) async fn start_assessor(
     )
     .await?;
 
-    info!("... proof details {:?} ...", report);
-    info!("... proof cycles {} ...", max_clk);
+    info!("... proof details {report:?} ...");
+    info!("... proof cycles {max_clk} ...");
 
     // Prepare a moongate watcher to estimate proof progress from logs.
     let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
@@ -135,7 +135,7 @@ where
     let (_, report) = result.context("Failed to execute proof")?;
 
     // Read the log file to find max_clk
-    let log_file_path = format!("{LOG_DIR}/proof_execution_{}.log", request_id);
+    let log_file_path = format!("{LOG_DIR}/proof_execution_{request_id}.log");
     let max_clk = read_max_clk_from_file(&log_file_path)
         .await
         .context("Failed to read max clk from log file")?;

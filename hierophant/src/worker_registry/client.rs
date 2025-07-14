@@ -61,7 +61,7 @@ impl WorkerRegistryClient {
             })
             .await
         {
-            error!("Failed to send command Heartbeat: {}", e);
+            error!("Failed to send command Heartbeat: {e}");
         }
 
         match receiver.await {

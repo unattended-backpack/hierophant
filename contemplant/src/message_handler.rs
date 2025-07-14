@@ -30,7 +30,7 @@ pub async fn handle_message_from_hierophant(
             }
         },
         _ => {
-            error!("Unsupported message type {:?}", msg);
+            error!("Unsupported message type {msg:?}");
             return ControlFlow::Continue(());
         }
     };
@@ -74,8 +74,7 @@ async fn get_proof_request_status(
         }
         None => {
             warn!(
-                "Received proof status request: {:?} but this proof cannot be found",
-                request_id
+                "Received proof status request: {request_id:?} but this proof cannot be found"
             );
             None
         }
@@ -84,8 +83,7 @@ async fn get_proof_request_status(
 
     if secs > 1.0 {
         info!(
-            "Slow execution detected: took {} seconds to get proof status for proof request {}",
-            secs, request_id
+            "Slow execution detected: took {secs} seconds to get proof status for proof request {request_id}"
         );
     }
 

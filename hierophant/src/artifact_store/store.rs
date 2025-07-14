@@ -68,7 +68,7 @@ impl ArtifactStore {
     pub(super) async fn background_event_loop(mut self) {
         while let Some(command) = self.receiver.recv().await {
             let start = Instant::now();
-            let command_string = format!("{}", command);
+            let command_string = format!("{command}");
             match command {
                 ArtifactStoreCommand::CreateArtifact {
                     artifact_type,
@@ -104,8 +104,7 @@ impl ArtifactStore {
 
             if secs > 0.5 {
                 info!(
-                    "Slow execution detected: took {} seconds to process artifact_store command {:?}",
-                    secs, command_string
+                    "Slow execution detected: took {secs} seconds to process artifact_store command {command_string:?}"
                 );
             }
         }

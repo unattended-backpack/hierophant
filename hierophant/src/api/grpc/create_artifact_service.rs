@@ -51,7 +51,7 @@ impl ArtifactStore for ArtifactStoreService {
             }
         };
 
-        let upload_path = format!("/upload/{}", artifact_uri);
+        let upload_path = format!("/upload/{artifact_uri}");
 
         let this_hierophant_ip = self.state.config.this_hierophant_ip.clone();
         let http_port = self.state.config.http_port;

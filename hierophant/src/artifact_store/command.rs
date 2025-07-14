@@ -30,10 +30,10 @@ impl fmt::Display for ArtifactStoreCommand {
                 format!("CreateArtifact {}", artifact_type.as_str_name())
             }
             Self::SaveArtifact { artifact_uri, .. } => {
-                format!("SaveArtifact {}", artifact_uri)
+                format!("SaveArtifact {artifact_uri}")
             }
             Self::GetArtifactBytes { artifact_uri, .. } => {
-                format!("GetArtifactBytes {}", artifact_uri)
+                format!("GetArtifactBytes {artifact_uri}")
             }
         };
 

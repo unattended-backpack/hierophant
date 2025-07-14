@@ -26,7 +26,7 @@ impl ArtifactUri {
 
     // artifact will be written to {artifact_directory}/{artifact_uri}
     pub fn file_path(&self, artifact_directory: &str) -> String {
-        format!("{}/{}", artifact_directory, self)
+        format!("{artifact_directory}/{self}")
     }
 }
 

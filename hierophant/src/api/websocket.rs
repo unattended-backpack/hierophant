@@ -32,7 +32,7 @@ pub async fn handle_socket(
             let ws_msg_bytes = match bincode::serialize(&ws_msg) {
                 Ok(bytes) => bytes,
                 Err(e) => {
-                    let error_msg = format!("Error serializing message {}: {e}", ws_msg);
+                    let error_msg = format!("Error serializing message {ws_msg}: {e}");
                     error!("{error_msg}");
                     // skip this message
                     continue;
@@ -128,7 +128,7 @@ async fn handle_message_from_contemplant(
             }
         },
         _ => {
-            error!("Unsupported message type {:?}", msg);
+            error!("Unsupported message type {msg:?}");
             return ControlFlow::Continue(());
         }
     };

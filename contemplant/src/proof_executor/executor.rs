@@ -109,7 +109,7 @@ pub async fn execute_proof(
         // Update new proof status based on success or error
         match proof_bytes_res {
             Ok(proof_bytes) => {
-                info!("Completed proof {} in {} minutes", proof_request, minutes);
+                info!("Completed proof {proof_request} in {minutes} minutes");
                 state
                     .proof_store_client
                     .proof_status_update(
@@ -121,7 +121,7 @@ pub async fn execute_proof(
             }
             Err(e) => {
                 let error_msg =
-                    format!("Error proving {} at minute {}: {e}", proof_request, minutes);
+                    format!("Error proving {proof_request} at minute {minutes}: {e}");
 
                 // If a contemplant errors while making a proof it should seppuku.
                 // This message will force the program to exit gracefully.

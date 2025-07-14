@@ -36,7 +36,7 @@ impl WorkerRegistry {
     pub(super) async fn background_event_loop(mut self) {
         while let Some(command) = self.receiver.recv().await {
             let start = Instant::now();
-            let command_string = format!("{:?}", command);
+            let command_string = format!("{command:?}");
             trace!(
                 "{} messages in worker registry channel",
                 self.receiver.len()
@@ -110,8 +110,7 @@ impl WorkerRegistry {
 
             if secs > 0.5 {
                 info!(
-                    "Slow execution detected: took {} seconds to process worker_registry command {:?}",
-                    secs, command_string
+                    "Slow execution detected: took {secs} seconds to process worker_registry command {command_string:?}"
                 );
             }
         }
@@ -204,7 +203,7 @@ impl WorkerRegistry {
 
         // iterate over all idle workers
         for (worker_addr, worker_state) in self.workers.iter_mut() {
-            debug!("Worker {} state {}", worker_addr, worker_state);
+            debug!("Worker {worker_addr} state {worker_state}");
 
             // skip a worker if it's busy or return early if there's already a worker proving this
             if let WorkerStatus::Busy {
@@ -290,20 +289,17 @@ impl WorkerRegistry {
                     // might want it to happen earlier than that.  i.e. We might want to NOT be
                     // driven by proof status requests.
                     error!(
-                        "Contemplant {} re-started but wasn't dropped yet.  Contemplant's previous state: {}",
-                        worker_addr, old_state
+                        "Contemplant {worker_addr} re-started but wasn't dropped yet.  Contemplant's previous state: {old_state}"
                     );
                 } else {
                     info!(
-                        "Known contemplant {} at {} re-started, resetting state from {} to {}",
-                        worker_name, worker_addr, old_state, default_state
+                        "Known contemplant {worker_name} at {worker_addr} re-started, resetting state from {old_state} to {default_state}"
                     );
                 }
             }
             None => {
                 info!(
-                    "New contemplant {} at {} added to registry",
-                    worker_name, worker_addr
+                    "New contemplant {worker_name} at {worker_addr} added to registry"
                 );
             }
         }
@@ -436,8 +432,7 @@ impl WorkerRegistry {
                 None => {
                     // This proof wasn't assigned to any worker, return none
                     info!(
-                        "Can't drop worker because no worker is assigned to proof {}",
-                        target_request_id
+                        "Can't drop worker because no worker is assigned to proof {target_request_id}"
                     );
                     return;
                 }
@@ -464,8 +459,7 @@ impl WorkerRegistry {
                 None => {
                     // This proof wasn't assigned to any worker, return none
                     info!(
-                        "Can't strike worker because no worker is assigned to proof {}",
-                        target_request_id
+                        "Can't strike worker because no worker is assigned to proof {target_request_id}"
                     );
                     return;
                 }
@@ -497,7 +491,7 @@ impl WorkerRegistry {
                 Some(worker_assigned) => worker_assigned,
                 None => {
                     // This proof wasn't assigned to any worker, return none
-                    info!("No worker is assigned to proof {}", target_request_id);
+                    info!("No worker is assigned to proof {target_request_id}");
                     let _ = resp_sender.send(None);
                     return;
                 }
