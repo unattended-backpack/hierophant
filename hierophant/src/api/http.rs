@@ -36,6 +36,8 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         .route("/dead-contemplants", get(dead_contemplants))
         // get a history of all completed proofs and the contemplant who finished it
         .route("/proof-history", get(handle_proof_history))
+        // Health check.  Returns true indicating that http has started
+        .route("/health", get(handle_health))
         .with_state(state)
 }
 
@@ -167,6 +169,11 @@ async fn handle_artifact_upload(
             Err(StatusCode::BAD_REQUEST)
         }
     }
+}
+
+// Handler for simple health check
+async fn handle_health() -> Result<Json<bool>, StatusCode> {
+    Ok(Json(true))
 }
 
 fn display_artifact_hex(bytes: &[u8]) -> String {
