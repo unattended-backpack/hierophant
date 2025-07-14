@@ -2,7 +2,7 @@ use crate::artifact_store::{ArtifactStoreClient, ArtifactUri};
 use crate::config::Config;
 use crate::network::{Program, RequestProofRequestBody};
 use crate::proof::ProofRouter;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use anyhow::anyhow;
 use serde::Serialize;
 use sp1_sdk::{CpuProver, SP1VerifyingKey};
@@ -24,8 +24,6 @@ pub struct HierophantState {
     pub proof_router: ProofRouter,
     // solely used for verifying proofs returned from contemplant
     pub cpu_prover: Arc<CpuProver>,
-    // TODO: use (lol)
-    pub nonces: Arc<Mutex<HashMap<Address, u64>>>,
 }
 
 impl HierophantState {
@@ -41,7 +39,6 @@ impl HierophantState {
             config,
             proof_requests: Arc::new(Mutex::new(HashMap::new())),
             program_store: Arc::new(Mutex::new(HashMap::new())),
-            nonces: Arc::new(Mutex::new(HashMap::new())),
             artifact_store_client,
             proof_router,
             cpu_prover,

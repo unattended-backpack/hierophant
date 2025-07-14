@@ -79,10 +79,8 @@ impl ProverNetwork for ProverNetworkService {
             }
         };
 
-        let nonce = match self.state.nonces.lock().await.get(&address) {
-            Some(nonce) => *nonce,
-            None => 0,
-        };
+        // Nonces not yet implemented
+        let nonce = 0;
 
         debug!("Nonce of address {address} is {nonce}");
 
