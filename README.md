@@ -19,7 +19,10 @@ Make a `hierophant.toml` and fill in config values:
 ```bash
 cp hierophant/hierophant.example.toml hierophant/hierophant.toml
 # Add your config values
+RUST_LOG=info cargo run --release --bin hierophant
 ```
+
+If you're running in an environment with multiple configurations (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
 
 # Running Contemplant
 
@@ -28,7 +31,12 @@ Make a `contemplant.toml` and fill in config values:
 ```bash
 cp hierophant/contemplant.example.toml hierophant/contemplant.toml
 # Add your config values
+RUST_LOG=info cargo run --release --bin contemplant
 ```
+
+If you're running in an environment with multiple configurations (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
+
+If you're running Contemplant in an environment that can't run docker, see the [Contemplant without Docker access](#contemplant-without-docker-access) section below.
 
 # Architecture
 
@@ -129,7 +137,7 @@ Install `protoc`: [https://protobuf.dev/installation/](https://protobuf.dev/inst
 
 ### Contemplant without Docker access
 
-If you're running a Contemplant in an environment where Docker containers can't run, like inside a Vast.ai instance, the CUDA prover `moongate` binary must be run separately and pointed to in `contemplant.toml` by setting a `moongate_endpoint`.  The `moongate` binary needs to be extracted from the latest Succinct CUDA prover image.  At the time of writing, that is `https://public.ecr.aws/succinct-labs/moongate:v5.0.0`.  You must also build the Contemplant binary with the feature `enable-native-gnark`.
+If you're running a Contemplant in an environment where Docker containers can't run, like inside a Vast.ai instance, Succinct's CUDA prover `moongate` binary must be run separately and pointed to in `contemplant.toml` by setting a `moongate_endpoint`.  The `moongate` binary needs to be extracted from the latest Succinct CUDA prover image.  At the time of writing, that is `https://public.ecr.aws/succinct-labs/moongate:v5.0.0`.  You must also build the Contemplant binary with the feature `enable-native-gnark`.
 
 ```
 cargo build --release --bin contemplant --features enable-native-gnark

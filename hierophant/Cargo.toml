@@ -28,6 +28,7 @@ sp1-sdk.workspace = true
 env_logger.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true
+clap.workspace = true
 
 [build-dependencies]
 tonic-build = "0.10.0"

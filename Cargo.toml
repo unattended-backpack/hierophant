@@ -35,4 +35,5 @@ alloy-primitives = { version = "1.0.0", default-features = false, features = [
 	"sha3-keccak",
 	"getrandom",
 ] }
+clap = "4.5.41"
 sp1-sdk = { version = "5.0.0" }

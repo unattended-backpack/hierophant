@@ -29,6 +29,7 @@ base64.workspace = true
 tracing-appender = "0.2.3"
 tracing-subscriber.workspace = true
 tracing.workspace = true
+clap.workspace = true
 
 # use `cargo build --features enable-native-gnark` when building a binary that uses undockerized cudaProver
 [features]

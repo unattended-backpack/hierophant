@@ -23,18 +23,31 @@ use api::{
 
 use artifact::artifact_store_server::ArtifactStoreServer;
 use axum::extract::DefaultBodyLimit;
-use log::info;
+use clap::Parser;
+use log::{debug, info};
 use network::prover_network_server::ProverNetworkServer;
 use std::{net::SocketAddr, sync::Arc};
 use tonic::transport::Server;
+
+// used for dynamic environments that use multiple configurations, like running an integration test
+// on a machine that has another config
+#[derive(Parser)]
+struct Args {
+    /// Path to config file
+    #[arg(short, long, default_value = "hierophant.toml")]
+    config: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
-    let config = tokio::fs::read_to_string("hierophant.toml")
+    let config_file = Args::parse().config;
+    debug!("Using config {config_file}");
+
+    let config = tokio::fs::read_to_string(config_file)
         .await
-        .context("read hierophant.toml file")?;
+        .context("read {config_file} file")?;
 
     let config: Config = toml::de::from_str(&config).context("parse config")?;
 

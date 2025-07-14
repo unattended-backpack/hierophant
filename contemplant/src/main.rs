@@ -9,15 +9,28 @@ mod worker_state;
 use crate::config::Config;
 use crate::worker_state::WorkerState;
 use anyhow::{Context, Result};
-use log::{error, info};
+use clap::Parser;
+use log::{debug, error, info};
 use sp1_sdk::utils;
 use std::{net::SocketAddr, sync::Arc};
 
+// used for dynamic environments that use multiple configurations, like running an integration test
+// on a machine that has another config
+#[derive(Parser)]
+struct Args {
+    /// Path to config file
+    #[arg(short, long, default_value = "contemplant.toml")]
+    config: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = tokio::fs::read_to_string("contemplant.toml")
+    let config_file = Args::parse().config;
+    debug!("Using config {config_file}");
+
+    let config = tokio::fs::read_to_string(config_file)
         .await
-        .context("read contemplant.toml file")?;
+        .context("read {config_file} file")?;
 
     let config: Config = toml::de::from_str(&config).context("parse config")?;
 
