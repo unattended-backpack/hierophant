@@ -19,8 +19,9 @@ pub struct Config {
     pub worker_response_timeout_secs: Duration,
     // publicly reachable address of this Hierophant for artifact uploads
     pub this_hierophant_ip: String,
-    // TODO: use or allow a default
+    // TODO: Require a signing key and remove default.  This is a future feature to be implemented.
     // key pair used for signing messages to the client and retreiving nonces
+    #[serde(default = "default_pub_key")]
     pub pub_key: Address,
     // Make mock proofs instead of real proofs.  Witnessgen still happens.
     #[serde(default = "default_mock_mode")]
@@ -78,6 +79,10 @@ impl Default for WorkerRegistryConfig {
             worker_max_execution_report_mins: default_worker_max_execution_report_mins(),
         }
     }
+}
+
+fn default_pub_key() -> Address {
+    Address::default()
 }
 
 fn default_worker_max_execution_report_mins() -> u64 {

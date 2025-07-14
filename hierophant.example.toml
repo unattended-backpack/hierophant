@@ -2,8 +2,6 @@
 
 # publicly reachable address of this Hierophant for artifact uploads
 this_hierophant_ip = ""
-# TODO: use or allow a default
-pub_key = ""
 
 # OPTIONAL
 # Below is a list of all config variables
@@ -16,6 +14,7 @@ pub_key = ""
 # artifact_store_directory=
 # max_stdin_artifacts_stored=
 # max_proof_artifacts_stored=
+# pub_key=
 # worker_registry.max_worker_strikes=
 # worker_registry.max_worker_heartbeat_interval_secs=
 # worker_registry.proof_timeout_mins=
