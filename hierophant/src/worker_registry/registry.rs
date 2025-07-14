@@ -109,7 +109,6 @@ impl WorkerRegistry {
             let secs = start.elapsed().as_secs_f64();
 
             if secs > 0.5 {
-                // TODO: remove this or send it to debug.  Just for basic benchmarking
                 info!(
                     "Slow execution detected: took {} seconds to process worker_registry command {:?}",
                     secs, command_string
@@ -165,7 +164,7 @@ impl WorkerRegistry {
                         "Notifying Magister to drop worker {dead_worker_state} at {dead_worker_addr} with endpoint {drop_endpoint}"
                     );
                     let client_clone = self.reqwest_client.clone();
-                    // TODO: handle response if we decide the hierophant should care about this call failing
+                    // TODO: retry this request on a failure
                     tokio::spawn(async move {
                         if let Err(e) = client_clone.delete(drop_endpoint.clone()).send().await {
                             warn!("Error sending drop message to Magister {drop_endpoint}: {e}");
@@ -260,7 +259,8 @@ impl WorkerRegistry {
         // receive the request.
         //
         // This doesn't result in deadlock because the proposer will call `/status/request_id`
-        // which will trigger another AssignProof request here TODO: don't drive on this
+        // which will trigger another AssignProof request here
+        // TODO: don't drive on proof status requests
 
         warn!("No workers available for proof {request_id}");
     }
@@ -272,9 +272,6 @@ impl WorkerRegistry {
         magister_drop_endpoint: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) {
-        // TODO: should we ping the magister before adding this contemplant?  Or is it the
-        // magisters problem that they passed an incorrect address?
-
         let default_state = WorkerState::new(
             worker_name.clone(),
             magister_drop_endpoint,

@@ -13,7 +13,6 @@ use tokio::sync::Mutex;
 pub struct HierophantState {
     pub config: Config,
     // mapping id -> (proof_uri, ProofRequestBody)
-    // TODO: If we only use this in the proof router, move it to ProofRouter state
     pub proof_requests: Arc<Mutex<HashMap<B256, (ArtifactUri, RequestProofRequestBody)>>>,
     // mapping vk_hash -> Program (contains program_uri)
     // programs are requested by vk_hash in ProverNetworkService.get_program reqs

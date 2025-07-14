@@ -120,7 +120,7 @@ impl ProverNetwork for ProverNetworkService {
         info!("  VK size: {} bytes", body.vk.len());
         info!("  Program URI: {}", body.program_uri);
 
-        // TODO: should owner be the requesting client or the Heirophant's pub key?
+        // TODO: signing impl
         let owner = self.state.config.pub_key;
         let created_at = match SystemTime::now().duration_since(UNIX_EPOCH) {
             Ok(x) => x.as_secs(),
@@ -440,13 +440,13 @@ impl ProverNetwork for ProverNetworkService {
                 }
             };
 
+            // make sure the proof verifies
             if let Err(e) = self.state.cpu_prover.verify(&proof, &vkey) {
                 warn!(
                     "Error verifying proof {request_id}: {e}.  Dropping worker and returning lost proof status"
                 );
 
                 // Drop worker who was assigned to this proof
-                // TODO: this is ugly
                 self.state
                     .proof_router
                     .worker_registry_client
@@ -487,20 +487,17 @@ impl ProverNetwork for ProverNetworkService {
             info!("Saved proof from request_id {request_id} to disk with uri {proof_uri}");
         }
 
-        // TODO: do these values matter?
+        // Succinct's prover network is integrated on-chain but ours isn't
         let request_tx_hash = vec![];
         let fulfill_tx_hash = None;
-        // TODO: is this a hash of stdin?  Does that mean I have to load stdin_uri?
         let public_values_hash = None;
 
-        // TODO: do this in a better fashion
         let proof_download_address = format!(
             "http://{}:{}/{}",
             self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
         );
 
-        // TODO: don't respond with a download address when we don't have the proof yet
-        //info!("Responding with proof download address {proof_download_address}");
+        debug!("Responding with proof download address {proof_download_address}");
 
         let response = GetProofRequestStatusResponse {
             fulfillment_status: proof_status.fulfillment_status,
