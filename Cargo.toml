@@ -1,5 +1,5 @@
 [workspace]
-members = ["hierophant", "contemplant", "network-lib"]
+members = ["hierophant", "contemplant", "network-lib", "integration-test"]
 resolver = "2"
 
 [workspace.package]
