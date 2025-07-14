@@ -119,7 +119,9 @@ pub async fn connect_to_hierophant(config: Config, worker_state: WorkerState) ->
     // sometimes sends responses back to Hierophant using the response_sender (which
     // sends messages to send_task)
     let response_sender_clone = response_sender.clone();
+    let worker_state_clone = worker_state.clone();
     let mut recv_task = tokio::spawn(async move {
+        let worker_state = worker_state_clone;
         while let Some(msg_result) = ws_receiver.next().await {
             trace!("Got ws message from hierophant");
             match msg_result {
@@ -169,6 +171,9 @@ pub async fn connect_to_hierophant(config: Config, worker_state: WorkerState) ->
         );
         verify_with_magister(drop_endpoint.clone()).await?;
     }
+
+    // contemplant is now ready for requests.  Change ready to true.
+    *(worker_state.ready.lock().await) = true;
 
     //wait for either task to finish and kill the other task
     tokio::select! {

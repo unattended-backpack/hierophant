@@ -3,6 +3,7 @@ use crate::proof_store::ProofStoreClient;
 use log::{error, info};
 use sp1_sdk::{CpuProver, CudaProver, ProverClient};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct WorkerState {
@@ -10,6 +11,8 @@ pub struct WorkerState {
     pub mock_prover: Arc<CpuProver>,
     pub proof_store_client: ProofStoreClient,
     pub assessor_config: AssessorConfig,
+    // just used for healthcheck.  Is set to true in api/connect_to_hierophant
+    pub ready: Arc<Mutex<bool>>,
 }
 
 impl WorkerState {
@@ -55,12 +58,14 @@ impl WorkerState {
         info!("Prover built");
 
         let proof_store_client = ProofStoreClient::new(config.max_proofs_stored);
+        let ready = Arc::new(Mutex::new(false));
 
         Self {
             cuda_prover,
             mock_prover,
             proof_store_client,
             assessor_config: config.assessor.clone(),
+            ready,
         }
     }
 }

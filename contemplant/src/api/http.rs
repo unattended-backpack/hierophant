@@ -1,6 +1,6 @@
 use crate::worker_state::WorkerState;
 
-use axum::{Json, Router, http::StatusCode, routing::get};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use std::sync::Arc;
 
 pub fn create_router(state: Arc<WorkerState>) -> Router {
@@ -11,6 +11,9 @@ pub fn create_router(state: Arc<WorkerState>) -> Router {
 }
 
 // Handler for simple health check
-async fn handle_health() -> Result<Json<bool>, StatusCode> {
-    Ok(Json(true))
+async fn handle_health(State(state): State<Arc<WorkerState>>) -> Result<Json<bool>, StatusCode> {
+    // ready is set to true in `api/connect_to_hierophant`
+    let ready = *state.ready.lock().await;
+
+    Ok(Json(ready))
 }
