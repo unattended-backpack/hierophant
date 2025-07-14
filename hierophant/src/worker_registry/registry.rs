@@ -298,9 +298,7 @@ impl WorkerRegistry {
                 }
             }
             None => {
-                info!(
-                    "New contemplant {worker_name} at {worker_addr} added to registry"
-                );
+                info!("New contemplant {worker_name} at {worker_addr} added to registry");
             }
         }
     }
@@ -420,23 +418,21 @@ impl WorkerRegistry {
 
     fn handle_drop_worker_of_request(&mut self, target_request_id: B256) {
         // get worker assigned to this proof, if any
-        let (_, worker_state) =
-            match self
-                .workers
-                .iter_mut()
-                .find(|(_, worker_state)| match worker_state.status {
-                    WorkerStatus::Idle => false,
-                    WorkerStatus::Busy { request_id, .. } => request_id == target_request_id,
-                }) {
-                Some(worker_assigned) => worker_assigned,
-                None => {
-                    // This proof wasn't assigned to any worker, return none
-                    info!(
-                        "Can't drop worker because no worker is assigned to proof {target_request_id}"
-                    );
-                    return;
-                }
-            };
+        let (_, worker_state) = match self.workers.iter_mut().find(|(_, worker_state)| {
+            match worker_state.status {
+                WorkerStatus::Idle => false,
+                WorkerStatus::Busy { request_id, .. } => request_id == target_request_id,
+            }
+        }) {
+            Some(worker_assigned) => worker_assigned,
+            None => {
+                // This proof wasn't assigned to any worker, return none
+                info!(
+                    "Can't drop worker because no worker is assigned to proof {target_request_id}"
+                );
+                return;
+            }
+        };
 
         // set their strikes to the max. This will trigger a drop
         worker_state.strikes = self.config.max_worker_strikes;
@@ -447,23 +443,21 @@ impl WorkerRegistry {
 
     fn handle_strike_worker_of_request(&mut self, target_request_id: B256) {
         // get worker assigned to this proof, if any
-        let (_, worker_state) =
-            match self
-                .workers
-                .iter_mut()
-                .find(|(_, worker_state)| match worker_state.status {
-                    WorkerStatus::Idle => false,
-                    WorkerStatus::Busy { request_id, .. } => request_id == target_request_id,
-                }) {
-                Some(worker_assigned) => worker_assigned,
-                None => {
-                    // This proof wasn't assigned to any worker, return none
-                    info!(
-                        "Can't strike worker because no worker is assigned to proof {target_request_id}"
-                    );
-                    return;
-                }
-            };
+        let (_, worker_state) = match self.workers.iter_mut().find(|(_, worker_state)| {
+            match worker_state.status {
+                WorkerStatus::Idle => false,
+                WorkerStatus::Busy { request_id, .. } => request_id == target_request_id,
+            }
+        }) {
+            Some(worker_assigned) => worker_assigned,
+            None => {
+                // This proof wasn't assigned to any worker, return none
+                info!(
+                    "Can't strike worker because no worker is assigned to proof {target_request_id}"
+                );
+                return;
+            }
+        };
 
         worker_state.add_strike();
 
