@@ -20,7 +20,6 @@ use std::{
     sync::Arc,
 };
 
-// Create the router with all routes
 pub fn create_router(state: Arc<HierophantState>) -> Router {
     Router::new()
         // for contemplant ws connections

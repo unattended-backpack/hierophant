@@ -10,6 +10,9 @@ pub struct Config {
     pub hierophant_ws_address: String,
     #[serde(default = "default_contemplant_name")]
     pub contemplant_name: String,
+    // port for http server
+    #[serde(default = "default_http_port")]
+    pub http_port: u16,
     // If None, then the contemplant spins up a CUDA prover Docker container.
     #[serde(default = "default_moongate_endpoint")]
     pub moongate_endpoint: Option<String>,
@@ -45,6 +48,10 @@ impl Default for AssessorConfig {
             watcher_polling_interval_ms: default_watcher_polling_interval_ms(),
         }
     }
+}
+
+fn default_http_port() -> u16 {
+    9011
 }
 
 fn default_magister_drop_endpoint() -> Option<String> {
