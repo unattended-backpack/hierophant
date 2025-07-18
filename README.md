@@ -223,6 +223,8 @@ Install `protoc`: [https://protobuf.dev/installation/](https://protobuf.dev/inst
 
 `cargo build --release`
 
+### Building Hierophant and Contemplant Docker images
+
 ### Contemplant without Docker access (advanced)
 
 If you're running a Contemplant in an environment where Docker containers can't run, like inside a Vast.ai instance, Succinct's CUDA prover `moongate` binary must be run separately and pointed to in `contemplant.toml` by setting a `moongate_endpoint`.  The `moongate` binary needs to be extracted from the latest Succinct CUDA prover image.  At the time of writing, that is `https://public.ecr.aws/succinct-labs/moongate:v5.0.0`.  You must also build the Contemplant binary with the feature `enable-native-gnark`.
