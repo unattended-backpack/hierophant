@@ -1,8 +1,8 @@
 # Hierophant
 
-Hierophant is a locally-hosted SP1 prover network that is built to be a drop in replacement as a Succinct prover network endpoint.
+Hierophant is an open-source SP1 prover network that is built to be a drop in replacement as a Succinct prover network endpoint.
 
-## "Hierophant" and "contemplant"
+## "Hierophant" and "Contemplant"
 
 > "A hierophant is an interpreter of sacred mysteries and arcane principles."
 [wikipedia](https://en.wikipedia.org/wiki/Hierophant)
@@ -20,9 +20,46 @@ Make a `hierophant.toml` and fill in config values:
 cp hierophant/hierophant.example.toml hierophant/hierophant.toml
 # Add your config values
 RUST_LOG=info cargo run --release --bin hierophant
+# Request proofs to http://<public-hierophant-ip>:<grpc-port>
 ```
 
-If you're running in an environment with multiple configurations (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
+Hierophant is an open source alternative to Succinct's prover network.  Hierophant is meant to be run with a program that requests Succinct sp1 proofs and takes a Succinct prover network rpc.  [`Op-Succinct`](https://github.com/succinctlabs/op-succinct/) is an example of a program that Hierophant works well for.  Anywhere that asks for a Succinct prover network rpc will be compatible with `http://<public-hierophant-ip>:<grpc-port>` (`9000` is the default grpc port).
+
+Running the Hierophant by itself doesn't do anything.  Hierophant is the manager who receives proof requests and assigns proofs to be executed by Contemplants.  See [Running Contemplant](#running-contemplant) below.  There is always just 1 Hierophant for many Contemplants, and you must run at least 1 Contemplant to successfully execute proofs.  
+
+Once at least 1 Contemplant is connected, there is nothing else to do besides request a proof to the Hierophant.  It will automatically route the proof and the Contemplant will start working on it and return it when it's done.  One note however is that the execution loop of Hierophant is driven on receiving proof status requests from the sp1-sdk library function call, so make sure to poll proof status's often.  Most likely you don't have to worry about this as `op-succinct` and other services that request sp1 proofs will poll for proof status updates often enough.
+
+## Hierophant endpoints
+
+Hierophant has a few endpoints for basic status checking available at the http port (default `9010`).
+
+- `GET /contemplants` shows json information on all Contemplants connected to this Hierophant including ip, name, time alive, strikes, average proof completion time, current working proof, and progress on that proof.
+
+example curl request run locally on Hierophant machine:
+
+```bash
+curl --request GET --url http://127.0.0.1:9010/contemplants
+```
+
+- `GET /dead-contemplants` shows json information on all Contemplants that have been dropped by this Hierophant.  Reasons for drop could be network disconnection, not making enough progress, or returning incorrect data.
+
+example curl request run locally on Hierophant machine:
+
+```bash
+curl --request GET --url http://127.0.0.1:9010/dead-contemplants
+```
+
+- `GET /proof-history` shows json information on all the proofs that this Hierophant has completed including the Contemplant who was assigned to the proof and the proof time.
+
+example curl request run locally on Hierophant machine:
+
+```bash
+curl --request GET --url http://127.0.0.1:9010/proof-history
+```
+
+## Working with multiple Hierophant config files
+
+If you're running in an environment with multiple `hierophant.toml` configuration files (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
 
 # Running Contemplant
 
@@ -32,11 +69,18 @@ Make a `contemplant.toml` and fill in config values:
 cp hierophant/contemplant.example.toml hierophant/contemplant.toml
 # Add your config values
 RUST_LOG=info cargo run --release --bin contemplant
+# Your Contemplant will automatically start executing proof requests from the Hierophant
 ```
 
-If you're running in an environment with multiple configurations (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
+Each Contemplant is connected to 1 Hierophant.  You're likely running a Hierophant from the [Running Hierophant](#running-hierophant) section above.  Use your Hierophant's public ip in the `contemplant.toml` file for the `hierophant_ws_address` variable like `"ws://<public-hierophant-ip>:<hierophant-http-port>/ws"` (default Hierophant http port is `9010`).
 
-If you're running Contemplant in an environment that can't run docker, see the [Contemplant without Docker access](#contemplant-without-docker-access) section below.
+It is *REQUIRED* that the Contemplant is run on a machine with a GPU.  This is because the Contemplant uses a GPU to accelerate proofs.  If you were only to use your CPU to execute a proof it will be 100-1000x slower than a GPU accelerated proof.
+
+The GPU proof accelerator is automatically run inside a docker container.  If you're running Contemplant in an environment that can't run docker, see the [Contemplant without Docker access](#contemplant-without-docker-access) section below.
+
+## Working with multiple Contemplant config files
+
+If you're running in an environment with multiple configurations (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
 
 # Architecture
 
@@ -149,7 +193,7 @@ Install `protoc`: [https://protobuf.dev/installation/](https://protobuf.dev/inst
 
 `cargo build --release`
 
-### Contemplant without Docker access
+### Contemplant without Docker access (advanced)
 
 If you're running a Contemplant in an environment where Docker containers can't run, like inside a Vast.ai instance, Succinct's CUDA prover `moongate` binary must be run separately and pointed to in `contemplant.toml` by setting a `moongate_endpoint`.  The `moongate` binary needs to be extracted from the latest Succinct CUDA prover image.  At the time of writing, that is `https://public.ecr.aws/succinct-labs/moongate:v5.0.0`.  You must also build the Contemplant binary with the feature `enable-native-gnark`.
 

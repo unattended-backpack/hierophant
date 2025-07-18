@@ -1,8 +1,8 @@
 # REQUIRED
 
-# websocket address in the form of <ws://127.0.0.1:3000/ws>
+# websocket address in the form of <ws://127.0.0.1:9010/ws>
 # The port is usually the same as the Hierophant http port.
-hierophant_ws_address = "ws://127.0.0.1:3000/ws"
+hierophant_ws_address = "ws://127.0.0.1:9010/ws"
 
 # OPTIONAL
 # Below is a list of all config variables
