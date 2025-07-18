@@ -1,0 +1,31 @@
+FROM nvcr.io/nvidia/cuda:12.8.1-runtime-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install tmux, supervisor, openssh-server.
+RUN apt-get update && apt-get install -y \
+	tmux supervisor openssh-server sudo curl vim \
+	&& apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Set up SSH.
+COPY sshd_config /etc/ssh/sshd_config
+RUN mkdir -p /run/sshd && chmod 755 /run/sshd
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
+COPY authorized_keys /root/.ssh/authorized_keys
+RUN chmod 600 /root/.ssh/authorized_keys
+
+# Add binaries.
+COPY moongate-server /usr/local/bin/
+COPY ../contemplant_names.txt /root
+COPY ../target/release/contemplant /usr/local/bin/
+
+# Configure supervisord.
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Entrypoint to prepare the config and tmux session.
+COPY contemplant-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+EXPOSE 22
+EXPOSE 3001
+ENTRYPOINT ["/entrypoint.sh"]
+
