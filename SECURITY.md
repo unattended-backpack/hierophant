@@ -1,6 +1,6 @@
 # Security
 
-If you have a security issue to report please message the team about it at `root+security@trustless.box` or contact Tim Clancy through any of the means listed [here on ENS](https://app.ens.domains/tim-clancy.eth).
+If you have a security issue to report please message the team about it at `root+security@sigil.box` or contact Tim Clancy through any of the means listed [here on ENS](https://app.ens.domains/tim-clancy.eth).
 
 # Bug Bounty Policy
 
