@@ -48,6 +48,11 @@ The flow of control for these modules are `Client method → Command → Handler
 
 ```bash
 src/
+├── api/
+│   ├── connect_to_hierophant.rs       # WebSocket initialization with Hierophant
+│   ├── http.rs                        # HTTP handlers
+│   └── mod.rs
+│
 ├── proof_executor/
 │   ├── assessor.rs                    # Proof execution estimation assessment 
 │   ├── executor.rs                    # Proof execution
@@ -60,7 +65,6 @@ src/
 │   └── store.rs                       # Local proof status storage
 │
 ├── config.rs                          # Configuration 
-├── connection.rs                      # WebSocket initialization with Hierophant
 ├── main.rs                            # Entry point
 ├── message_handler.rs                 # Handles messages from Hierophant
 └── worker_state.rs                    # Global Contemplant state
@@ -128,6 +132,16 @@ When making a breaking change in Hierophant/Contemplant compatability, increment
 the `CONTEMPLANT_VERSION` var in `network-lib/src/lib.rs`.  On each Contemplant
 connection, the Hierophant asserts that the `CONTEMPLANT_VERSION` that they have
 is the same as the `CONTEMPLANT_VERSION` being passed in by the Contemplant.
+
+If file structure is changed, kindly update the tree in the [Architecture](#architecture) section for readability.
+
+### Integration test
+
+The integration test is a basic configuration that only tests minimal compatibility.  It runs a Hierophant with 1 Contemplant and requests a single small proof.
+
+```bash
+RUST_LOG=info cargo run --release --bin integration-test
+```
 
 ## Building
 

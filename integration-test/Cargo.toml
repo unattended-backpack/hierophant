@@ -6,3 +6,7 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
+tokio.workspace = true
+log.workspace = true
+anyhow.workspace = true
+env_logger.workspace = true
