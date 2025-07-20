@@ -2,6 +2,30 @@
 
 Hierophant is an open-source SP1 prover network that is built to be a drop in replacement as a Succinct prover network endpoint.
 
+[SP1](https://github.com/succinctlabs/sp1) is [Succinct's](https://www.succinct.xyz/) zero-knowledge virtual machine (zkVM).  Hierophant was built for direct compatibility for [op-succinct](https://github.com/succinctlabs/op-succinct/) but any program that utilizes Succinct's [sp1-sdk](https://crates.io/crates/sp1-sdk) rust crate to request proofs to the Succinct prover network can instead request proofs to a Hierophant instance.
+
+In practice, running Hierophant with [Vast.ai](https://vast.ai/) GPU instances has been cheaper than Succinct's prover network.  See [Vast.ai integration (recommended)](#Vast.ai-integration-(recommended)).
+
+## Table of Contents
+
+- [Hierophant and Contemplant](#hierophant-and-contemplant)
+- [Running Hierophant](#running-hierophant)
+  - [Hierophant Endpoints](#hierophant-endpoints)
+  - [Working with Multiple Hierophant Config Files](#working-with-multiple-hierophant-config-files)
+- [Running Contemplant](#running-contemplant)
+  - [Working with Multiple Contemplant Config Files](#working-with-multiple-contemplant-config-files)
+  - [Vast.ai Integration (Recommended)](#vastai-integration-recommended)
+- [Architecture](#architecture)
+  - [Contemplant Overview](#contemplant-overview)
+  - [Hierophant Overview](#hierophant-overview)
+  - [Network-lib Overview](#network-lib-overview)
+- [Building and Developing](#building-and-developing)
+  - [Developing](#developing)
+    - [Integration Test](#integration-test)
+  - [Building](#building)
+    - [Contemplant without Docker Access (Advanced)](#contemplant-without-docker-access-advanced)
+  - [contemplant_names.txt](#contemplant_namestxt)
+
 ## "Hierophant" and "Contemplant"
 
 > "A hierophant is an interpreter of sacred mysteries and arcane principles."
@@ -63,6 +87,10 @@ If you're running in an environment with multiple `hierophant.toml` configuratio
 
 # Running Contemplant
 
+It is *REQUIRED* that the Contemplant is run on a machine with a GPU.  This is because the Contemplant uses a GPU to accelerate proofs.  If you were only to use your CPU to execute a proof it will be 100-1000x slower than a GPU accelerated proof.
+
+It is recommended to not manually run your Contemplant instances.  See [Vast.ai integration (recommended)](#Vast.ai-integration-(recommended)) section.
+
 Make a `contemplant.toml` and fill in config values:
 
 ```bash
@@ -74,13 +102,15 @@ RUST_LOG=info cargo run --release --bin contemplant
 
 Each Contemplant is connected to 1 Hierophant.  You're likely running a Hierophant from the [Running Hierophant](#running-hierophant) section above.  Use your Hierophant's public ip in the `contemplant.toml` file for the `hierophant_ws_address` variable like `"ws://<public-hierophant-ip>:<hierophant-http-port>/ws"` (default Hierophant http port is `9010`).
 
-It is *REQUIRED* that the Contemplant is run on a machine with a GPU.  This is because the Contemplant uses a GPU to accelerate proofs.  If you were only to use your CPU to execute a proof it will be 100-1000x slower than a GPU accelerated proof.
-
-The GPU proof accelerator is automatically run inside a docker container.  If you're running Contemplant in an environment that can't run docker, see the [Contemplant without Docker access](#contemplant-without-docker-access) section below.
+The GPU proof accelerator is automatically run inside a docker container.  If you're running Contemplant in an environment that can't run docker, see the [Contemplant without Docker access](#contemplant-without-docker-access-(advanced)) section below.
 
 ## Working with multiple Contemplant config files
 
 If you're running in an environment with multiple configurations (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
+
+## Vast.ai integration (recommended)
+
+If you don't have spare GPUs sitting around it is recommended to use Vast.ai to automatically manage your Contemplants.  Check out our [Magister](https://github.com/unattended-backpack/magister) repo for automatic allocation & deallocation of Vast.ai Contemplant instances.
 
 # Architecture
 
@@ -201,6 +231,6 @@ If you're running a Contemplant in an environment where Docker containers can't 
 cargo build --release --bin contemplant --features enable-native-gnark
 ```
 
-## `old_testament.txt`
+## `contemplant_names.txt`
 
 List of biblical names to randomly draw from if a Contemplant is started without a name.
