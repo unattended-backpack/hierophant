@@ -118,8 +118,8 @@ If you don't have spare GPUs sitting around it is recommended to use Vast.ai to 
 
 # Architecture
 
-Prover network architecture when running with Magister (See [Vast.ai integration (recommended)](#vastai-integration-(recommended)))
-![Sigil prover network diagram](sigil-prover-network.png).
+Prover network architecture when running with Magister (See [Vast.ai integration (recommended)](#vastai-integration-(recommended))).
+![Sigil prover network diagram](sigil-prover-network.png)
 
 ## state scheme
 
