@@ -16,6 +16,7 @@ In practice, running Hierophant with [Vast.ai](https://vast.ai/) GPU instances h
   - [Working with Multiple Contemplant Config Files](#working-with-multiple-contemplant-config-files)
   - [Vast.ai Integration (Recommended)](#vastai-integration-recommended)
 - [Architecture](#architecture)
+  - [State scheme](#state-scheme)
   - [Contemplant Overview](#contemplant-overview)
   - [Hierophant Overview](#hierophant-overview)
   - [Network-lib Overview](#network-lib-overview)
@@ -116,6 +117,11 @@ If you're running in an environment with multiple configurations (for example, r
 If you don't have spare GPUs sitting around it is recommended to use Vast.ai to automatically manage your Contemplants.  Check out our [Magister](https://github.com/unattended-backpack/magister) repo for automatic allocation & deallocation of Vast.ai Contemplant instances.
 
 # Architecture
+
+Prover network architecture when running with Magister (See [Vast.ai integration (recommended)](#vastai-integration-(recommended)))
+![Sigil prover network diagram](sigil-prover-network.png).
+
+## state scheme
 
 Most of the state is handled in a non-blocking actor pattern.  1 thread holds state and others interact with state by sending messages to that thread.
 Any module in this repo that contain files `client.rs` and `command.rs` is following this pattern.  These modules are `contemplant/proof_store`, `hierophant/artifact_store`, and `hierophant/worker_registry`.
