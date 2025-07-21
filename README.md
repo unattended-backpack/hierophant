@@ -89,7 +89,7 @@ If you're running in an environment with multiple `hierophant.toml` configuratio
 
 It is *REQUIRED* that the Contemplant is run on a machine with a GPU.  This is because the Contemplant uses a GPU to accelerate proofs.  If you were only to use your CPU to execute a proof it will be 100-1000x slower than a GPU accelerated proof.
 
-It is recommended to not manually run your Contemplant instances.  See [Vast.ai integration (recommended)](#Vast.ai-integration-(recommended)) section.
+It is not recommended to manually run your Contemplant instances.  See [Vast.ai integration (recommended)](#Vast.ai-integration-(recommended)) section.
 
 Make a `contemplant.toml` and fill in config values:
 

@@ -23,7 +23,7 @@ COPY ../target/release/contemplant /usr/local/bin/
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Entrypoint to prepare the config and tmux session.
-COPY contemplant-entrypoint.sh /entrypoint.sh
+COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 EXPOSE 22
 EXPOSE 3001

@@ -1,0 +1,16 @@
+FROM debian:sid-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+	ca-certificates \
+	&& rm -rf /var/lib/apt/lists/*
+
+# Copy pre-built binary 
+COPY target/release/hierophant /usr/local/bin/
+RUN chmod +x /usr/local/bin/hierophant
+
+# Copy config file
+COPY hierophant.toml .
+
+ENV RUST_LOG=info RUST_LOG_STYLE=always RUST_BACKTRACE=1
+CMD ["/usr/local/bin/hierophant"]
