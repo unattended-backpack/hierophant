@@ -23,7 +23,7 @@ In practice, running Hierophant with [Vast.ai](https://vast.ai/) GPU instances h
   - [Developing](#developing)
     - [Integration Test](#integration-test)
   - [Building](#building)
-    - [Contemplant without Docker Access (Advanced)](#contemplant-without-docker-access-advanced)
+    - [Building Hierophant and Contemplant Docker images](#building-hierophant-and-contemplant-docker-images)
   - [contemplant_names.txt](#contemplant_namestxt)
 
 ## "Hierophant" and "Contemplant"
@@ -52,6 +52,8 @@ Hierophant is an open source alternative to Succinct's prover network.  Hieropha
 Running the Hierophant by itself doesn't do anything.  Hierophant is the manager who receives proof requests and assigns proofs to be executed by Contemplants.  See [Running Contemplant](#running-contemplant) below.  There is always just 1 Hierophant for many Contemplants, and you must run at least 1 Contemplant to successfully execute proofs.  
 
 Once at least 1 Contemplant is connected, there is nothing else to do besides request a proof to the Hierophant.  It will automatically route the proof and the Contemplant will start working on it and return it when it's done.  One note however is that the execution loop of Hierophant is driven on receiving proof status requests from the sp1-sdk library function call, so make sure to poll proof status's often.  Most likely you don't have to worry about this as `op-succinct` and other services that request sp1 proofs will poll for proof status updates often enough.
+
+If you're running Hierophant inside a Docker container see [Running inside Docker](#running-inside-docker) section.
 
 ## Hierophant endpoints
 
@@ -102,7 +104,8 @@ RUST_LOG=info cargo run --release --bin contemplant
 
 Each Contemplant is connected to 1 Hierophant.  You're likely running a Hierophant from the [Running Hierophant](#running-hierophant) section above.  Use your Hierophant's public ip in the `contemplant.toml` file for the `hierophant_ws_address` variable like `"ws://<public-hierophant-ip>:<hierophant-http-port>/ws"` (default Hierophant http port is `9010`).
 
-The GPU proof accelerator is automatically run inside a docker container.  If you're running Contemplant in an environment that can't run docker, see the [Contemplant without Docker access](#contemplant-without-docker-access-(advanced)) section below.
+The GPU proof accelerator is automatically run inside a Docker container.  
+If you're running Contemplant inside a Docker container see [Running inside Docker](#running-inside-docker) section.
 
 ## Working with multiple Contemplant config files
 
@@ -225,13 +228,22 @@ Install `protoc`: [https://protobuf.dev/installation/](https://protobuf.dev/inst
 
 ### Building Hierophant and Contemplant Docker images
 
-### Contemplant without Docker access (advanced)
+Before building a docker image make sure to build the binary:
 
-If you're running a Contemplant in an environment where Docker containers can't run, like inside a Vast.ai instance, Succinct's CUDA prover `moongate` binary must be run separately and pointed to in `contemplant.toml` by setting a `moongate_endpoint`.  The `moongate` binary needs to be extracted from the latest Succinct CUDA prover image.  At the time of writing, that is `https://public.ecr.aws/succinct-labs/moongate:v5.0.0`.  You must also build the Contemplant binary with the feature `enable-native-gnark`.
-
-```
+```bash
+cargo build --release --bin hierophant
+# If Contemplant is run inside Docker without this feature it will crash
 cargo build --release --bin contemplant --features enable-native-gnark
 ```
+
+Then build the image:
+
+```bash
+docker build -f docker/Dockerfile.hierophant -t hierophant .
+docker build -f docker/Dockerfile.contemplant -t contemplant .
+```
+
+Add your ssh keys to `docker/authorized_keys` if you want ssh access inside Contemplant.
 
 ## `contemplant_names.txt`
 

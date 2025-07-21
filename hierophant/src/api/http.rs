@@ -155,7 +155,7 @@ async fn handle_artifact_upload(
     Path(uri): Path<ArtifactUri>,
     body: Bytes,
 ) -> Result<impl IntoResponse, StatusCode> {
-    info!("Received {} bytes of artifact {uri} for upload", body.len());
+    debug!("Received {} bytes of artifact {uri} for upload", body.len());
 
     match state
         .artifact_store_client

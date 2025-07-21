@@ -17,6 +17,8 @@ RUN chmod 600 /root/.ssh/authorized_keys
 # Add binaries.
 COPY moongate-server /usr/local/bin/
 COPY ../contemplant_names.txt /root
+
+# NOTE: make sure you built Contemplant with --features enable-native-gnark 
 COPY ../target/release/contemplant /usr/local/bin/
 
 # Configure supervisord.
