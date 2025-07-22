@@ -24,7 +24,7 @@ tokio.workspace = true
 axum.workspace = true
 toml.workspace = true
 bincode.workspace = true
-sp1-sdk.workspace = true
+sp1-sdk = { workspace = true, features = ["native-gnark"] }
 env_logger.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true
