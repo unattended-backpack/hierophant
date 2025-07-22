@@ -218,6 +218,8 @@ is the same as the `CONTEMPLANT_VERSION` being passed in by the Contemplant.
 
 If file structure is changed, kindly update the tree in the [Architecture](#architecture) section for readability.
 
+When a new release of SP1 comes out extract the new `moongate-server` binary from Succict's CUDA prover docker image and add it to `docker/moongate-server`.  This is Succinct's closed source CUDA proof accelerator.  The current `docker/moongate-server` was extracted from the image `https://public.ecr.aws/succinct-labs/moongate:v5.0.0`.
+
 ### Integration test
 
 The integration test is a basic configuration that only tests minimal compatibility.  It runs a Hierophant with 1 Contemplant and requests a single small proof.
