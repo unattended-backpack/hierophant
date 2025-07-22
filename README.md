@@ -54,8 +54,6 @@ Running the Hierophant by itself doesn't do anything.  Hierophant is the manager
 
 Once at least 1 Contemplant is connected, there is nothing else to do besides request a proof to the Hierophant.  It will automatically route the proof and the Contemplant will start working on it and return it when it's done.  One note however is that the execution loop of Hierophant is driven on receiving proof status requests from the sp1-sdk library function call, so make sure to poll proof status's often.  Most likely you don't have to worry about this as `op-succinct` and other services that request sp1 proofs will poll for proof status updates often enough.
 
-If you're running Hierophant inside a Docker container see [Running inside Docker](#running-inside-docker) section.
-
 ## Hierophant endpoints
 
 Hierophant has a few endpoints for basic status checking available at the http port (default `9010`).
@@ -106,7 +104,7 @@ RUST_LOG=info cargo run --release --bin contemplant
 Each Contemplant is connected to 1 Hierophant.  You're likely running a Hierophant from the [Running Hierophant](#running-hierophant) section above.  Use your Hierophant's public ip in the `contemplant.toml` file for the `hierophant_ws_address` variable like `"ws://<public-hierophant-ip>:<hierophant-http-port>/ws"` (default Hierophant http port is `9010`).
 
 The GPU proof accelerator is automatically run inside a Docker container.  
-If you're running Contemplant inside a Docker container see [Running inside Docker](#running-inside-docker) section.
+If you're running Contemplant inside a Docker container see [Building Hierophant and Contemplant Docker images](#building-hierophant-and-contemplant-docker-images) section.
 
 ## Working with multiple Contemplant config files
 
