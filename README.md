@@ -37,7 +37,30 @@ In practice, running Hierophant with [Vast.ai](https://vast.ai/) GPU instances h
 
 "Hierophant" and "Contemplant" are our versions of "coordinator" and "worker" or "master" and "slave".  The Hierophant receives proof requests and delegates them to be computed by the Contemplants.  "Contemplant" is used interchangeably with "worker" in this repo for brevity.
 
-# Running Hierophant
+# Quickstart
+
+This quickstart gets you up and running with a local Hierophant and [Magister](https://github.com/unattended-backpack/magister).  Magister is a binary that takes a vast.ai API key and automatically allocates and deallocates machines with GPUs running `contemplant`.  It is highly recommended to use this quickstart instead of manually running `contemplant` binaries.  In the future it will be easy to run using a local GPU.  If you really want this feature let the team know so we can prioritize.
+
+```bash
+# Copy .env file
+cp .env.example .env
+# Fill out required .env variables, `this_ip` and `vast_api_key`
+
+# Runs hierophant and magister locally in a docker-compose setup
+make hierophant
+
+# Stop any time with
+make stop
+# IMPORTANT: make sure to manually destroy orphaned vast.ai instances on the vast.ai frontend after stopping
+```
+
+You have a local SP1 prover network!  Use `http://<public-hierophant-ip>:<grpc-port>` (`9000` is the default grpc port) as the `NETWORK_RPC_URL` in programs that request SP1 proofs like [op-succinct](https://github.com/succinctlabs/op-succinct/).
+
+Example: `NETWORK_RPC_URL=http://123.4.5.6:9000`
+
+Hierophant will automatically manage assigning proof requests to Contemplants.  Contemplants are running on vast.ai GPU machines.  Magister handles deallocating bad vast.ai machines and allocating instances to ensure Hierophant always has `NUMBER_PROVERS` (from `.env`) Contemplants connected.
+
+# Running Hierophant manually
 
 Make a `hierophant.toml` and fill in config values:
 
@@ -86,7 +109,7 @@ curl --request GET --url http://127.0.0.1:9010/proof-history
 
 If you're running in an environment with multiple `hierophant.toml` configuration files (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
 
-# Running Contemplant
+# Running Contemplant manually
 
 It is *REQUIRED* that the Contemplant is run on a machine with a GPU.  This is because the Contemplant uses a GPU to accelerate proofs.  If you were only to use your CPU to execute a proof it will be 100-1000x slower than a GPU accelerated proof.
 
@@ -112,7 +135,7 @@ If you're running in an environment with multiple configurations (for example, r
 
 ## Vast.ai integration (recommended)
 
-If you don't have spare GPUs sitting around it is recommended to use Vast.ai to automatically manage your Contemplants.  Check out our [Magister](https://github.com/unattended-backpack/magister) repo for automatic allocation & deallocation of Vast.ai Contemplant instances.
+If you don't have spare GPUs sitting around it is recommended to use Vast.ai to automatically manage your Contemplants.  Check out the [Quickstart](#quickstart) section to use [Magister](https://github.com/unattended-backpack/magister) to automatically allocate and deallocate machines with GPUs running `contemplant`.
 
 # Architecture
 
