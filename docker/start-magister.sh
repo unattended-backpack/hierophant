@@ -11,7 +11,6 @@ hierophant_http_port = ${PORT__HIEROPHANT_HTTP}
 http_port=${PORT__MAGISTER_HTTP}
 vast_api_key="${VAST_API_KEY}"
 
-# 1 instance should be enough
 number_instances=${NUMBER_INSTANCES}
 
 # Contemplant vast.ai template
