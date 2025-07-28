@@ -8,24 +8,28 @@ In practice, running Hierophant with [Vast.ai](https://vast.ai/) GPU instances h
 
 ## Table of Contents
 
-- [Hierophant and Contemplant](#hierophant-and-contemplant)
-- [Running Hierophant](#running-hierophant)
-  - [Hierophant Endpoints](#hierophant-endpoints)
-  - [Working with Multiple Hierophant Config Files](#working-with-multiple-hierophant-config-files)
-- [Running Contemplant](#running-contemplant)
-  - [Working with Multiple Contemplant Config Files](#working-with-multiple-contemplant-config-files)
-  - [Vast.ai Integration (Recommended)](#vastai-integration-recommended)
+- ["Hierophant" and "Contemplant"](#hierophant-and-contemplant)
+- [Quickstart](#quickstart)
+  - [Requirements](#requirements)
+  - [Starting and Stopping](#starting-and-stopping)
+  - [Wait, why isn't Contemplant being run locally?](#wait-why-isnt-contemplant-being-run-locally)
+- [Running Hierophant manually](#running-hierophant-manually)
+  - [Hierophant endpoints](#hierophant-endpoints)
+  - [Working with multiple Hierophant config files](#working-with-multiple-hierophant-config-files)
+- [Running Contemplant manually](#running-contemplant-manually)
+  - [Working with multiple Contemplant config files](#working-with-multiple-contemplant-config-files)
+  - [Vast.ai integration (recommended)](#vastai-integration-recommended)
 - [Architecture](#architecture)
-  - [State scheme](#state-scheme)
-  - [Contemplant Overview](#contemplant-overview)
-  - [Hierophant Overview](#hierophant-overview)
-  - [Network-lib Overview](#network-lib-overview)
-- [Building and Developing](#building-and-developing)
+  - [state scheme](#state-scheme)
+  - [`contemplant` overview](#contemplant-overview)
+  - [`hierophant` overview](#hierophant-overview)
+  - [`network-lib` overview](#network-lib-overview)
+- [Building and developing](#building-and-developing)
   - [Developing](#developing)
-    - [Integration Test](#integration-test)
+    - [Integration test](#integration-test)
   - [Building](#building)
     - [Building Hierophant and Contemplant Docker images](#building-hierophant-and-contemplant-docker-images)
-  - [contemplant_names.txt](#contemplant_namestxt)
+  - [`contemplant_names.txt`](#contemplant_namestxt)
 
 ## "Hierophant" and "Contemplant"
 
@@ -40,6 +44,13 @@ In practice, running Hierophant with [Vast.ai](https://vast.ai/) GPU instances h
 # Quickstart
 
 This quickstart gets you up and running with a local Hierophant and [Magister](https://github.com/unattended-backpack/magister).  Magister is a binary that takes a vast.ai API key and automatically allocates and deallocates machines with GPUs running `contemplant`.  It is highly recommended to use this quickstart instead of manually running `contemplant` binaries.  In the future it will be easy to run using a local GPU.  If you really want this feature let the team know so we can prioritize.
+
+## Requirements
+
+- [`docker-compose`](https://docs.docker.com/compose/install/)
+- [`Vast.ai`](https://vast.ai/) API key connected to an account with credits (they accept crypto).  This is for executing a ZK proof on a machine with a GPU.  A machine on Vast.ai will only costs $0.3/hour - $0.6/hour
+
+## Starting and Stopping
 
 ```bash
 # Copy .env file
@@ -60,7 +71,13 @@ Example: `NETWORK_RPC_URL=http://123.4.5.6:9000`
 
 Hierophant will automatically manage assigning proof requests to Contemplants.  Contemplants are running on vast.ai GPU machines.  Magister handles deallocating bad vast.ai machines and allocating instances to ensure Hierophant always has `NUMBER_PROVERS` (from `.env`) Contemplants connected.
 
+## Wait, why isn't Contemplant being run locally?
+
+`contemplant` instances are being run on vast.ai GPU machines!  The [magister](https://github.com/unattended-backpack/magister) process is a vast.ai API wrapper that allocated and deallocates vast.ai instances to fit the needs of Hierophant.  These vast.ai instances run a vast.ai template that is pre-uploaded by the team and runs the `contemplant` binary for ease of use.
+
 # Running Hierophant manually
+
+If you want to use Hierophant as an SP1 prover network, it is recommended to follow the [Quickstart](#quickstart) instead of running manually.
 
 Make a `hierophant.toml` and fill in config values:
 
@@ -110,6 +127,8 @@ curl --request GET --url http://127.0.0.1:9010/proof-history
 If you're running in an environment with multiple `hierophant.toml` configuration files (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
 
 # Running Contemplant manually
+
+If you want to use Hierophant as an SP1 prover network, it is recommended to follow the [Quickstart](#quickstart) instead of running manually.
 
 It is *REQUIRED* that the Contemplant is run on a machine with a GPU.  This is because the Contemplant uses a GPU to accelerate proofs.  If you were only to use your CPU to execute a proof it will be 100-1000x slower than a GPU accelerated proof.
 
@@ -240,6 +259,8 @@ is the same as the `CONTEMPLANT_VERSION` being passed in by the Contemplant.
 If file structure is changed, kindly update the tree in the [Architecture](#architecture) section for readability.
 
 When a new release of SP1 comes out extract the new `moongate-server` binary from Succict's CUDA prover docker image and add it to `docker/moongate-server`.  This is Succinct's closed source CUDA proof accelerator.  The current `docker/moongate-server` was extracted from the image `https://public.ecr.aws/succinct-labs/moongate:v5.0.0`.
+
+When a change is made to the Contemplant template on vast.ai, copy the new template hash and add it to `.env.example`.
 
 ### Integration test
 
