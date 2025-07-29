@@ -14,11 +14,10 @@ Hierophant saves costs and maintains censorship-resistance over centralized prov
   - [Starting and Stopping](#starting-and-stopping)
   - [Wait, why isn't Contemplant being run locally?](#wait-why-isnt-contemplant-being-run-locally)
 - [Running Hierophant manually](#running-hierophant-manually)
-  - [Hierophant endpoints](#hierophant-endpoints)
   - [Working with multiple Hierophant config files](#working-with-multiple-hierophant-config-files)
+- [Hierophant endpoints](#hierophant-endpoints)
 - [Running Contemplant manually](#running-contemplant-manually)
   - [Working with multiple Contemplant config files](#working-with-multiple-contemplant-config-files)
-  - [Vast.ai integration (recommended)](#vastai-integration-recommended)
 - [Architecture](#architecture)
   - [state scheme](#state-scheme)
   - [`contemplant` overview](#contemplant-overview)
@@ -94,7 +93,11 @@ Running the Hierophant by itself doesn't do anything.  Hierophant is the manager
 
 Once at least 1 Contemplant is connected, there is nothing else to do besides request a proof to the Hierophant.  It will automatically route the proof and the Contemplant will start working on it and return it when it's done.  One note however is that the execution loop of Hierophant is driven on receiving proof status requests from the sp1-sdk library function call, so make sure to poll proof status's often.  Most likely you don't have to worry about this as `op-succinct` and other services that request sp1 proofs will poll for proof status updates often enough.
 
-## Hierophant endpoints
+## Working with multiple Hierophant config files
+
+If you're running in an environment with multiple `hierophant.toml` configuration files (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
+
+# Hierophant endpoints
 
 Hierophant has a few endpoints for basic status checking available at the http port (default `9010`).
 
@@ -122,17 +125,11 @@ example curl request run locally on Hierophant machine:
 curl --request GET --url http://127.0.0.1:9010/proof-history
 ```
 
-## Working with multiple Hierophant config files
-
-If you're running in an environment with multiple `hierophant.toml` configuration files (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
-
 # Running Contemplant manually
 
-If you want to use Hierophant as an SP1 prover network, it is recommended to follow the [Quickstart](#quickstart) instead of running manually.
+If you want to use this as an SP1 prover network, it is recommended to follow the [Quickstart](#quickstart) instead of running manually.
 
 It is *REQUIRED* that the Contemplant is run on a machine with a GPU.  This is because the Contemplant uses a GPU to accelerate proofs.  If you were only to use your CPU to execute a proof it will be 100-1000x slower than a GPU accelerated proof.
-
-It is not recommended to manually run your Contemplant instances.  See [Vast.ai integration (recommended)](#Vast.ai-integration-(recommended)) section.
 
 Make a `contemplant.toml` and fill in config values:
 
@@ -152,13 +149,9 @@ If you're running Contemplant inside a Docker container see [Building Hierophant
 
 If you're running in an environment with multiple configurations (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
 
-## Vast.ai integration (recommended)
-
-If you don't have spare GPUs sitting around it is recommended to use Vast.ai to automatically manage your Contemplants.  Check out the [Quickstart](#quickstart) section to use [Magister](https://github.com/unattended-backpack/magister) to automatically allocate and deallocate machines with GPUs running `contemplant`.
-
 # Architecture
 
-Prover network architecture when running with Magister (See [Vast.ai integration (recommended)](#vastai-integration-(recommended))).
+Prover network architecture when running with Magister (See [Quickstart](#quickstart)).
 ![Sigil prover network diagram](sigil-prover-network.png)
 
 ## state scheme
