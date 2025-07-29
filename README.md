@@ -4,7 +4,7 @@ Hierophant is an open-source SP1 prover network that is built to be a drop in re
 
 [SP1](https://github.com/succinctlabs/sp1) is [Succinct's](https://www.succinct.xyz/) zero-knowledge virtual machine (zkVM).  Hierophant was built for direct compatibility for [op-succinct](https://github.com/succinctlabs/op-succinct/) but any program that utilizes Succinct's [sp1-sdk](https://crates.io/crates/sp1-sdk) rust crate to request proofs to the Succinct prover network can instead request proofs to a Hierophant instance.
 
-In practice, running Hierophant with [Vast.ai](https://vast.ai/) GPU instances has been cheaper than Succinct's prover network.  See [Vast.ai integration (recommended)](#Vast.ai-integration-(recommended)).
+Hierophant saves costs and maintains censorship-resistance over centralized prover network offerings, making it well-suited for truly-unstoppable applications.
 
 ## Table of Contents
 
