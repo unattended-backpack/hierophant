@@ -1,6 +1,6 @@
 # REQUIRED
 
-# publicly reachable address of this Hierophant for artifact uploads
+# publicly reachable address of this Hierophant for artifact uploads by the program requesting proofs
 this_hierophant_ip = ""
 
 # OPTIONAL
