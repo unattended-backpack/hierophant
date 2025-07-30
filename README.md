@@ -57,16 +57,16 @@ cp .env.example .env
 # Fill out required .env variables, `this_ip` and `vast_api_key`
 
 # Runs hierophant and magister locally in a docker-compose setup
-make hierophant
+make prover-network
 
 # Stop any time with
-make stop
+make stop-prover-network
 # IMPORTANT: make sure to manually destroy orphaned vast.ai instances on the vast.ai frontend after stopping
 ```
 
 You have a local SP1 prover network!  Use `http://<public-hierophant-ip>:<grpc-port>` (`9000` is the default grpc port) as the `NETWORK_RPC_URL` in programs that request SP1 proofs like [op-succinct](https://github.com/succinctlabs/op-succinct/).
 
-Example: `NETWORK_RPC_URL=http://123.4.5.6:9000`
+Example: `NETWORK_RPC_URL=http://127.0.0.1:9000`
 
 Hierophant will automatically manage assigning proof requests to Contemplants.  Contemplants are running on vast.ai GPU machines.  Magister handles deallocating bad vast.ai machines and allocating instances to ensure Hierophant always has `NUMBER_PROVERS` (from `.env`) Contemplants connected.
 
@@ -81,17 +81,19 @@ If you want to use Hierophant as an SP1 prover network, it is recommended to fol
 Make a `hierophant.toml` and fill in config values:
 
 ```bash
-cp hierophant/hierophant.example.toml hierophant/hierophant.toml
+cp hierophant.example.toml hierophant.toml
 # Add your config values
-RUST_LOG=info cargo run --release --bin hierophant
+
+make hierophant
 # Request proofs to http://<public-hierophant-ip>:<grpc-port>
+# Example: `NETWORK_RPC_URL=http://127.0.0.1:9000`
 ```
 
-Hierophant is an open source alternative to Succinct's prover network.  Hierophant is meant to be run with a program that requests Succinct sp1 proofs and takes a Succinct prover network rpc.  [`Op-Succinct`](https://github.com/succinctlabs/op-succinct/) is an example of a program that Hierophant works well for.  Anywhere that asks for a Succinct prover network rpc will be compatible with `http://<public-hierophant-ip>:<grpc-port>` (`9000` is the default grpc port).
+Hierophant is an open source alternative to Succinct's prover network.  Hierophant is meant to be run with a program that requests Succinct sp1 proofs and takes a Succinct prover network rpc.  [`op-succinct`](https://github.com/succinctlabs/op-succinct/) is an example of a program that Hierophant works well for.  Anywhere that asks for a Succinct prover network rpc will be compatible with `http://<public-hierophant-ip>:<grpc-port>` (`9000` is the default grpc port).
 
-Running the Hierophant by itself doesn't do anything.  Hierophant is the manager who receives proof requests and assigns proofs to be executed by Contemplants.  See [Running Contemplant](#running-contemplant) below.  There is always just 1 Hierophant for many Contemplants, and you must run at least 1 Contemplant to successfully execute proofs.  
+Running the Hierophant by itself doesn't do anything.  Hierophant is the manager who receives proof requests and assigns proofs to be executed by Contemplants.  See [Running Contemplant Manually](#running-contemplant-manually) below.  There is always just 1 Hierophant for many Contemplants, and you must run at least 1 Contemplant to successfully execute proofs.  
 
-Once at least 1 Contemplant is connected, there is nothing else to do besides request a proof to the Hierophant.  It will automatically route the proof and the Contemplant will start working on it and return it when it's done.  One note however is that the execution loop of Hierophant is driven on receiving proof status requests from the sp1-sdk library function call, so make sure to poll proof status's often.  Most likely you don't have to worry about this as `op-succinct` and other services that request sp1 proofs will poll for proof status updates often enough.
+Once at least 1 Contemplant is connected, there is nothing else to do besides request a proof to the Hierophant.  It will automatically route the proof and the Contemplant will start working on it and return it when it's done.  One note however is that the execution loop of Hierophant is driven on receiving proof status requests from the [sp1-sdk](https://crates.io/crates/sp1-sdk) library function call, so make sure to poll proof status's often.  Most likely you don't have to worry about this as `op-succinct` and other services that request SP1 proofs will poll for proof status updates often enough.
 
 ## Working with multiple Hierophant config files
 
@@ -125,7 +127,7 @@ example curl request run locally on Hierophant machine:
 curl --request GET --url http://127.0.0.1:9010/proof-history
 ```
 
-# Running Contemplant manually
+# Running Contemplant Manually
 
 If you want to use this as an SP1 prover network, it is recommended to follow the [Quickstart](#quickstart) instead of running manually.
 
@@ -134,9 +136,10 @@ It is *REQUIRED* that the Contemplant is run on a machine with a GPU.  This is b
 Make a `contemplant.toml` and fill in config values:
 
 ```bash
-cp hierophant/contemplant.example.toml hierophant/contemplant.toml
+cp contemplant.example.toml contemplant.toml
 # Add your config values
-RUST_LOG=info cargo run --release --bin contemplant
+
+make contemplant
 # Your Contemplant will automatically start executing proof requests from the Hierophant
 ```
 
@@ -144,6 +147,12 @@ Each Contemplant is connected to 1 Hierophant.  You're likely running a Hieropha
 
 The GPU proof accelerator is automatically run inside a Docker container.  
 If you're running Contemplant inside a Docker container see [Building Hierophant and Contemplant Docker images](#building-hierophant-and-contemplant-docker-images) section.
+
+If the machine running a Contemplant doesn't have Docker, Contemplant has to be run with the `enable-native-gnark` feature or else proofs will fail to verify:
+
+```bash
+RUST_LOG=info RUST_BACKTRACE=1 cargo run --release --bin contemplant --features enable-native-gnark
+```
 
 ## Working with multiple Contemplant config files
 
@@ -275,7 +284,7 @@ Before building a docker image make sure to build the binary:
 
 ```bash
 cargo build --release --bin hierophant
-# If Contemplant is run inside Docker without this feature it will crash
+# If Contemplant is run inside Docker without this feature it will crash when verifying proofs
 cargo build --release --bin contemplant --features enable-native-gnark
 ```
 
