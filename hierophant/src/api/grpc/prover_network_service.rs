@@ -462,7 +462,7 @@ impl ProverNetwork for ProverNetworkService {
                     if !circuit_dir_exists {
                         // start downloading verifying artifacts in a separate tread
                         tokio::spawn(async move {
-                            info!("Starting to download plonk circuit artifacts for verifying");
+                            info!("Starting to download groth16 circuit artifacts for verifying");
                             let path = sp1_sdk::install::try_install_circuit_artifacts("groth16");
                             info!(
                                 "Downloaded groth16 circuit artifacts for verifying to {}",
