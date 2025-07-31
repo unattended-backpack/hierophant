@@ -440,6 +440,73 @@ impl ProverNetwork for ProverNetworkService {
                 }
             };
 
+            let proof_mode = match ProofMode::try_from(request_proof_request_body.mode) {
+                Ok(mode) => mode,
+                Err(e) => {
+                    warn!(
+                        "Proof request {request_id} with uri {proof_uri} has unknown ProofMode: {}.  Error: {e}",
+                        request_proof_request_body.mode
+                    );
+                    let response = lost_proof_response();
+                    return Ok(Response::new(response));
+                }
+            };
+
+            // if we don't yet have the circuits for verifying groth16 proofs we'll have to make a
+            // network call to download them, which takes awhile.  So for now just return "still
+            // proving" to the caller
+            let need_to_download_circuit = match proof_mode {
+                ProofMode::Groth16 => {
+                    let circuit_dir_exists =
+                        sp1_sdk::install::groth16_circuit_artifacts_dir().exists();
+                    if !circuit_dir_exists {
+                        // start downloading verifying artifacts in a separate tread
+                        tokio::spawn(async move {
+                            info!("Starting to download groth16 circuit artifacts for verifying");
+                            let path = sp1_sdk::install::try_install_circuit_artifacts("groth16");
+                            info!(
+                                "Downloaded groth16 circuit artifacts for verifying to {}",
+                                path.to_str().unwrap_or("unknown")
+                            );
+                        });
+                    }
+
+                    !circuit_dir_exists
+                }
+                ProofMode::Plonk => {
+                    let circuit_dir_exists =
+                        sp1_sdk::install::plonk_circuit_artifacts_dir().exists();
+                    if !circuit_dir_exists {
+                        // start downloading verifying artifacts in a separate tread
+                        tokio::spawn(async move {
+                            info!("Starting to download plonk circuit artifacts for verifying");
+                            let path = sp1_sdk::install::try_install_circuit_artifacts("plonk");
+                            info!(
+                                "Downloaded plonk circuit artifacts for verifying to {}",
+                                path.to_str().unwrap_or("unknown")
+                            );
+                        });
+                    }
+
+                    !circuit_dir_exists
+                }
+                _ => {
+                    warn!(
+                        "Proof request {request_id} with uri {proof_uri} has unsupported ProofMode: {}",
+                        request_proof_request_body.mode
+                    );
+                    let response = lost_proof_response();
+                    return Ok(Response::new(response));
+                }
+            };
+
+            if need_to_download_circuit {
+                // pretend like we're still waiting on a proof
+                let response =
+                    pretend_still_waiting_proof_response(request_proof_request_body.deadline);
+                return Ok(Response::new(response));
+            }
+
             // make sure the proof verifies
             if let Err(e) = self.state.cpu_prover.verify(&proof, &vkey) {
                 warn!(
@@ -520,6 +587,18 @@ fn lost_proof_response() -> GetProofRequestStatusResponse {
         execution_status: proof_status.execution_status,
         request_tx_hash: vec![],
         deadline: 0,
+        fulfill_tx_hash: None,
+        proof_uri: None,
+        public_values_hash: None,
+    }
+}
+
+fn pretend_still_waiting_proof_response(deadline: u64) -> GetProofRequestStatusResponse {
+    GetProofRequestStatusResponse {
+        fulfillment_status: FulfillmentStatus::Assigned.into(),
+        execution_status: ExecutionStatus::Unexecuted.into(),
+        request_tx_hash: vec![],
+        deadline,
         fulfill_tx_hash: None,
         proof_uri: None,
         public_values_hash: None,
