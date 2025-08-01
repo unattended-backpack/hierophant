@@ -323,6 +323,7 @@ impl ProverNetwork for ProverNetworkService {
         Ok(Response::new(response))
     }
 
+    // TODO: refactor this function into logical chunks
     async fn get_proof_request_status(
         &self,
         request: Request<GetProofRequestStatusRequest>,
@@ -391,7 +392,7 @@ impl ProverNetwork for ProverNetworkService {
                 deadline: request_proof_request_body.deadline,
                 fulfill_tx_hash,
                 // It's called proof_uri but the client is actually expecting the endpoint to hit
-                // to donwload this proof
+                // to download this proof
                 proof_uri: Some(proof_download_address),
                 public_values_hash,
             };
@@ -417,6 +418,16 @@ impl ProverNetwork for ProverNetworkService {
                 "Proof request {request_id} with uri {proof_uri} not yet assigned: {proof_status}"
             );
         }
+
+        // Succinct's prover network is integrated on-chain but ours isn't
+        let request_tx_hash = vec![];
+        let fulfill_tx_hash = None;
+        let public_values_hash = None;
+
+        let proof_download_address = format!(
+            "http://{}:{}/{}",
+            self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
+        );
 
         // if proof is complete, save it to disk as an artifact and mark the worker
         // as idle
@@ -459,6 +470,7 @@ impl ProverNetwork for ProverNetworkService {
                 ProofMode::Groth16 => {
                     let circuit_dir_exists =
                         sp1_sdk::install::groth16_circuit_artifacts_dir().exists();
+
                     if !circuit_dir_exists {
                         // start downloading verifying artifacts in a separate tread
                         tokio::spawn(async move {
@@ -476,6 +488,7 @@ impl ProverNetwork for ProverNetworkService {
                 ProofMode::Plonk => {
                     let circuit_dir_exists =
                         sp1_sdk::install::plonk_circuit_artifacts_dir().exists();
+
                     if !circuit_dir_exists {
                         // start downloading verifying artifacts in a separate tread
                         tokio::spawn(async move {
@@ -490,20 +503,16 @@ impl ProverNetwork for ProverNetworkService {
 
                     !circuit_dir_exists
                 }
-                _ => {
-                    warn!(
-                        "Proof request {request_id} with uri {proof_uri} has unsupported ProofMode: {}",
-                        request_proof_request_body.mode
-                    );
-                    let response = lost_proof_response();
-                    return Ok(Response::new(response));
-                }
+                // for other proof types we don't need to download a circuit
+                _ => false,
             };
 
             if need_to_download_circuit {
                 // pretend like we're still waiting on a proof
-                let response =
-                    pretend_still_waiting_proof_response(request_proof_request_body.deadline);
+                let response = pretend_still_waiting_proof_response(
+                    request_proof_request_body.deadline,
+                    &proof_download_address,
+                );
                 return Ok(Response::new(response));
             }
 
@@ -554,16 +563,6 @@ impl ProverNetwork for ProverNetworkService {
             info!("Saved proof from request_id {request_id} to disk with uri {proof_uri}");
         }
 
-        // Succinct's prover network is integrated on-chain but ours isn't
-        let request_tx_hash = vec![];
-        let fulfill_tx_hash = None;
-        let public_values_hash = None;
-
-        let proof_download_address = format!(
-            "http://{}:{}/{}",
-            self.state.config.this_hierophant_ip, self.state.config.http_port, proof_uri
-        );
-
         debug!("Responding with proof download address {proof_download_address}");
 
         let response = GetProofRequestStatusResponse {
@@ -593,14 +592,17 @@ fn lost_proof_response() -> GetProofRequestStatusResponse {
     }
 }
 
-fn pretend_still_waiting_proof_response(deadline: u64) -> GetProofRequestStatusResponse {
+fn pretend_still_waiting_proof_response(
+    deadline: u64,
+    proof_download_address: &str,
+) -> GetProofRequestStatusResponse {
     GetProofRequestStatusResponse {
         fulfillment_status: FulfillmentStatus::Assigned.into(),
         execution_status: ExecutionStatus::Unexecuted.into(),
         request_tx_hash: vec![],
         deadline,
         fulfill_tx_hash: None,
-        proof_uri: None,
+        proof_uri: Some(proof_download_address.into()),
         public_values_hash: None,
     }
 }
