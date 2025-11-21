@@ -1,0 +1,11 @@
+Port 2222
+HostKey /home/contemplant/ssh_host_keys/ssh_host_rsa_key
+HostKey /home/contemplant/ssh_host_keys/ssh_host_ecdsa_key
+HostKey /home/contemplant/ssh_host_keys/ssh_host_ed25519_key
+PidFile /home/contemplant/sshd.pid
+PermitRootLogin no
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM no
+AuthorizedKeysFile .ssh/authorized_keys
+Subsystem sftp /usr/lib/openssh/sftp-server

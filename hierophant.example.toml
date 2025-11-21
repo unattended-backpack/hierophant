@@ -1,22 +1,57 @@
-# REQUIRED
+# Example configuration for Hierophant.
+# Copy this file to hierophant.toml and adjust as needed.
 
-# publicly reachable address of this Hierophant for artifact uploads by the program requesting proofs
-this_hierophant_ip = ""
+# REQUIRED: Publicly reachable address of this Hierophant for artifact uploads.
+# This is used by clients to upload program inputs and download proofs.
+this_hierophant_ip = "hierophant"
 
-# OPTIONAL
-# Below is a list of all config variables
-# See hierophant/hierophant/config.rs for default values and explanations.
-#
-# grpc_port=
-# http_port=
-# worker_response_timeout_secs=
-# mock_mode=
-# artifact_store_directory=
-# max_stdin_artifacts_stored=
-# max_proof_artifacts_stored=
-# pub_key=
-# worker_registry.max_worker_strikes=
-# worker_registry.max_worker_heartbeat_interval_secs=
-# worker_registry.proof_timeout_mins=
-# worker_registry.worker_required_progress_interval_mins=
-# worker_registry.worker_max_execution_report_mins=
+# OPTIONAL: Port for gRPC service (default: 9000).
+# grpc_port = 9000
+
+# OPTIONAL: Port for HTTP and WebSocket service (default: 9010).
+# http_port = 9010
+
+# OPTIONAL: Timeout in seconds for worker responses (default: 30).
+# How long to wait for a response from a worker before evicting them.
+# worker_response_timeout_secs = 30
+
+# OPTIONAL: Public key for signing messages (default: zero address).
+# Key pair used for signing messages to the client and retrieving nonces.
+# pub_key = "0x0000000000000000000000000000000000000000"
+
+# OPTIONAL: Create mock proofs instead of real proofs (default: false).
+# Witness generation still happens, but proof generation is skipped.
+# mock_mode = false
+
+# OPTIONAL: Directory for storing artifacts on disk (default: "artifacts").
+# artifact_store_directory = "artifacts"
+
+# OPTIONAL: Maximum number of stdin artifacts stored (default: 50).
+# Artifacts can be large, so we limit how many are stored on disk.
+# max_stdin_artifacts_stored = 50
+
+# OPTIONAL: Maximum number of proof artifacts stored (default: 10).
+# max_proof_artifacts_stored = 10
+
+# Worker registry settings control when workers are evicted.
+
+# OPTIONAL: Number of strikes before eviction (default: 3).
+# Workers get strikes when they fail to respond to requests.
+# worker_registry.max_worker_strikes = 3
+
+# OPTIONAL: Maximum seconds between heartbeats before eviction (default: 180).
+# Workers must send heartbeats regularly to stay registered.
+# worker_registry.max_worker_heartbeat_interval_secs = 180
+
+# OPTIONAL: Maximum minutes a worker can spend on a proof (default: 300).
+# Workers taking longer than this are considered dead and evicted.
+# worker_registry.proof_timeout_mins = 300
+
+# OPTIONAL: Minutes between required progress updates (default: 0).
+# Workers must show at least 1% progress every N minutes or be evicted.
+# Set to 0 to disable progress checking.
+# worker_registry.worker_required_progress_interval_mins = 0
+
+# OPTIONAL: Maximum minutes for execution report phase (default: 45).
+# Time allowed for execution report before proof generation starts.
+# worker_registry.worker_max_execution_report_mins = 45

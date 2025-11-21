@@ -1,0 +1,46 @@
+services:
+  hierophant:
+    image: hierophant:latest
+    container_name: hierophant
+    networks:
+      - network
+    ports:
+      - "9000:9000"  # gRPC
+      - "9010:9010"  # HTTP + WebSocket
+    volumes:
+      - ./hierophant.toml:/home/hierophant/hierophant.toml:ro
+    env_file:
+      - .env
+    environment:
+      - RUST_LOG=info
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/9010' || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  contemplant:
+    image: contemplant:latest
+    container_name: contemplant
+    networks:
+      - network
+    volumes:
+      - ./contemplant.toml:/home/contemplant/contemplant.toml:ro
+    env_file:
+      - .env
+    environment:
+      - RUST_LOG=info
+    depends_on:
+      hierophant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep contemplant > /dev/null || exit 1"]
+      interval: 2s
+      timeout: 1s
+      retries: 5
+      start_period: 10s
+
+networks:
+  network:
+    driver: bridge

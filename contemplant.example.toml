@@ -1,17 +1,42 @@
-# REQUIRED
+# Example configuration for Contemplant.
+# Copy this file to contemplant.toml and adjust as needed.
 
-# websocket address in the form of <ws://127.0.0.1:9010/ws>
-# The port is usually the same as the Hierophant http port.
-hierophant_ws_address = "ws://127.0.0.1:9010/ws"
+# REQUIRED: WebSocket address of the Hierophant to connect to.
+# Format: ws://[host]:[port]/ws where port is the Hierophant HTTP port.
+hierophant_ws_address = "ws://hierophant:9010/ws"
 
-# OPTIONAL
-# Below is a list of all config variables
-# See hierophant/contemplant/config.rs for default values and explanations.
-#
-# contemplant_name =
-# moongate_endpoint =
-# heartbeat_interval_seconds =
-# max_proofs_stored =
-# magister_drop_endpoint =
-# assessor.moongate_log_path =
-# assessor.watcher_polling_interval_ms =
+# OPTIONAL: Prover type - "cpu" or "cuda" (default: "cpu").
+# CPU proving is slower but doesn't require a GPU.
+# prover_type = "cpu"
+
+# OPTIONAL: Human-readable name for this Contemplant (default: from names.txt).
+# contemplant_name = ""
+
+# OPTIONAL: Port for HTTP health check server (default: 9011).
+# http_port = 9011
+
+# OPTIONAL: Moongate CUDA prover endpoint (default: none).
+# Only used when prover_type is "cuda". If not set, Contemplant will spin up
+# a moongate-server Docker container automatically.
+# moongate_endpoint = ""
+
+# OPTIONAL: Heartbeat interval in seconds (default: 30).
+# How often to tell Hierophant that this Contemplant is still alive.
+# heartbeat_interval_seconds = 30
+
+# OPTIONAL: Maximum number of finished proofs stored in memory (default: 2).
+# max_proofs_stored = 2
+
+# OPTIONAL: Magister drop endpoint (default: none).
+# Endpoint to notify when this Contemplant should be dropped from its Magister.
+# Only set if this Contemplant is managed by a Magister.
+# magister_drop_endpoint = ""
+
+# Assessor settings control proof progress monitoring.
+
+# OPTIONAL: Path to log file for progress tracking (default: "./moongate.log").
+# assessor.moongate_log_path = "./moongate.log"
+
+# OPTIONAL: Log polling interval in milliseconds (default: 2000).
+# How frequently to check the moongate log file for progress updates.
+# assessor.watcher_polling_interval_ms = 2000

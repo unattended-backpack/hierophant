@@ -1,175 +1,106 @@
 # Hierophant
 
-Hierophant is an open-source SP1 prover network that is built to be a drop in replacement as a Succinct prover network endpoint.
+[![CodeQL](https://github.com/unattended-backpack/hierophant/actions/workflows/codeql.yml/badge.svg)](https://github.com/unattended-backpack/hierophant/actions/workflows/codeql.yml) [![Create Release](https://github.com/unattended-backpack/hierophant/actions/workflows/release.yml/badge.svg)](https://github.com/unattended-backpack/hierophant/actions/workflows/release.yml)
 
-[SP1](https://github.com/succinctlabs/sp1) is [Succinct's](https://www.succinct.xyz/) zero-knowledge virtual machine (zkVM).  Hierophant was built for direct compatibility for [op-succinct](https://github.com/succinctlabs/op-succinct/) but any program that utilizes Succinct's [sp1-sdk](https://crates.io/crates/sp1-sdk) rust crate to request proofs to the Succinct prover network can instead request proofs to a Hierophant instance.
+> Prove all things; hold fast that which is good. 
+
+Hierophant is an open-source SP1 prover network that is built to be a drop in replacement for a Succinct prover network endpoint.
+
+[SP1](https://github.com/succinctlabs/sp1) is [Succinct's](https://www.succinct.xyz/) zero-knowledge virtual machine (zkVM). Hierophant was built to be directly compatible with [op-succinct](https://github.com/succinctlabs/op-succinct/), but any program that utilizes the [sp1-sdk](https://crates.io/crates/sp1-sdk) to request proofs can instead use a Hierophant instance.
 
 Hierophant saves costs and maintains censorship-resistance over centralized prover network offerings, making it well-suited for truly-unstoppable applications.
 
-## Table of Contents
+## Hierophant and Contemplant
 
-- ["Hierophant" and "Contemplant"](#hierophant-and-contemplant)
-- [Quickstart](#quickstart)
-  - [Requirements](#requirements)
-  - [Starting and Stopping](#starting-and-stopping)
-  - [Wait, why isn't Contemplant being run locally?](#wait-why-isnt-contemplant-being-run-locally)
-- [Running Hierophant manually](#running-hierophant-manually)
-  - [Working with multiple Hierophant config files](#working-with-multiple-hierophant-config-files)
-- [Hierophant endpoints](#hierophant-endpoints)
-- [Running Contemplant manually](#running-contemplant-manually)
-  - [Working with multiple Contemplant config files](#working-with-multiple-contemplant-config-files)
-- [Architecture](#architecture)
-  - [state scheme](#state-scheme)
-  - [`contemplant` overview](#contemplant-overview)
-  - [`hierophant` overview](#hierophant-overview)
-  - [`network-lib` overview](#network-lib-overview)
-- [Building and developing](#building-and-developing)
-  - [Developing](#developing)
-    - [Integration test](#integration-test)
-  - [Building](#building)
-    - [Building Hierophant and Contemplant Docker images](#building-hierophant-and-contemplant-docker-images)
-  - [`contemplant_names.txt`](#contemplant_namestxt)
+> "A [hierophant](https://en.wikipedia.org/wiki/Hierophant) is an interpreter of sacred mysteries and arcane principles."
 
-## "Hierophant" and "Contemplant"
+The Hierophant is master of a self-hosted ZK prover network. The Hierophant receives proof requests and delegates them to any available Contemplants.
 
-> "A hierophant is an interpreter of sacred mysteries and arcane principles."
-[wikipedia](https://en.wikipedia.org/wiki/Hierophant)
+> "[Contemplant](https://en.wiktionary.org/wiki/contemplant): one who contemplates."
 
-> "Contemplant: One who contemplates."
-[wikipedia](https://en.wiktionary.org/wiki/contemplant)
-
-"Hierophant" and "Contemplant" are our versions of "coordinator" and "worker" or "master" and "slave".  The Hierophant receives proof requests and delegates them to be computed by the Contemplants.  "Contemplant" is used interchangeably with "worker" in this repo for brevity.
+The Contemplant is slave to a self-hosted ZK prover network. A Contemplant actually performs the work of generating a proof request that is forwarded from a Hierophant.
 
 # Quickstart
 
-This quickstart gets you up and running with a local Hierophant and [Magister](https://github.com/unattended-backpack/magister).  Magister is a binary that takes a vast.ai API key and automatically allocates and deallocates machines with GPUs running `contemplant`.  It is highly recommended to use this quickstart instead of manually running `contemplant` binaries.  In the future it will be easy to run using a local GPU.  If you really want this feature let the team know so we can prioritize.
+To get up and running quickly, we recommend visiting the [Scriptory](https://github.com/unattended-backpack/scriptory) to utilize our prepared setup for easily running a Hierophant, [Magister](https://github.com/unattended-backpack/magister), and a number of Contemplants.
 
-## Requirements
+If you would like to run a simple Hierophant and Contemplant pair, we provide a [setup here](./docker-compose.run.yml). Simply run `make init`, adjust your `hierophant.toml` and `contemplant.toml` files as desired, and run `make run` to use it. This will provide you with a working endpoint on the specified Docker network that you can use as the `NETWORK_RPC_URL` in programs that request proofs, such as the [Supplicant](https://github.com/unattended-backpack/supplicant/). Do note that you will also need to specify a `NETWORK_PRIVATE_KEY` as well.
 
-- [`docker-compose`](https://docs.docker.com/compose/install/)
-- [`Vast.ai`](https://vast.ai/) API key connected to an account with credits (they accept crypto).  This is for executing a ZK proof on a machine with a GPU.  A machine on Vast.ai will only costs $0.3/hour - $0.6/hour
+You can test a full example of this by running `make integration`, and check the test [program](./src/fibonacci/) or [compose file](./docker-compose.test.yml).
 
-## Starting and Stopping
+# Standalone Hierophant
 
-```bash
-# Copy .env file
-cp .env.example .env
-# Fill out required .env variables, `this_ip` and `vast_api_key`
+You can build a native version of Hierophant via `make build`. You can supply configuration to this Hierophant as either environment variables, or through a `hierophant.toml` created with `make init`. Please observe the available configuration in [`hierophant.example.toml`](./hierophant.example.toml).
 
-# Runs hierophant and magister locally in a docker-compose setup
-make prover-network
+Running Hierophant by itself doesn't do anything. Hierophant is the master who receives proof requests and assigns them to be executed by Contemplants. There is always just one Hierophant for many Contemplants, and you must run at least one Contemplant to successfully execute proofs.  
 
-# Stop any time with
-make stop-prover-network
-# IMPORTANT: make sure to manually destroy orphaned vast.ai instances on the vast.ai frontend after stopping
-```
+Once at least one Contemplant is connected, there is nothing else to do besides request a proof to the Hierophant. It will automatically route the proof to a Contemplant for work, and will return the proof when complete. Do note however that the execution loop of Hierophant is driven by receiving proof status requests from the [sp1-sdk](https://crates.io/crates/sp1-sdk), so make sure to poll for a proof status often. You likely don't have to worry about this as services that request SP1 proofs will by default poll frequently enough.
 
-You have a local SP1 prover network!  Use `http://<public-hierophant-ip>:<grpc-port>` (`9000` is the default grpc port) as the `NETWORK_RPC_URL` in programs that request SP1 proofs like [op-succinct](https://github.com/succinctlabs/op-succinct/).
+## Multiple Configuration Files
 
-Example: `NETWORK_RPC_URL=http://127.0.0.1:9000`
+If you're running in an environment with multiple configuration files (for example, running an integration test while debugging), you can specify a specific config file with `-- --config <file>`.
 
-Hierophant will automatically manage assigning proof requests to Contemplants.  Contemplants are running on vast.ai GPU machines.  Magister handles deallocating bad vast.ai machines and allocating instances to ensure Hierophant always has `NUMBER_PROVERS` (from `.env`) Contemplants connected.
+## Hierophant Endpoints
 
-## Wait, why isn't Contemplant being run locally?
-
-`contemplant` instances are being run on vast.ai GPU machines!  The [magister](https://github.com/unattended-backpack/magister) process is a vast.ai API wrapper that allocated and deallocates vast.ai instances to fit the needs of Hierophant.  These vast.ai instances run a vast.ai template that is pre-uploaded by the team and runs the `contemplant` binary for ease of use.
-
-# Running Hierophant manually
-
-If you want to use Hierophant as an SP1 prover network, it is recommended to follow the [Quickstart](#quickstart) instead of running manually.
-
-Make a `hierophant.toml` and fill in config values:
-
-```bash
-cp hierophant.example.toml hierophant.toml
-# Add your config values
-
-make hierophant
-# Request proofs to http://<public-hierophant-ip>:<grpc-port>
-# Example: `NETWORK_RPC_URL=http://127.0.0.1:9000`
-```
-
-Hierophant is an open source alternative to Succinct's prover network.  Hierophant is meant to be run with a program that requests Succinct sp1 proofs and takes a Succinct prover network rpc.  [`op-succinct`](https://github.com/succinctlabs/op-succinct/) is an example of a program that Hierophant works well for.  Anywhere that asks for a Succinct prover network rpc will be compatible with `http://<public-hierophant-ip>:<grpc-port>` (`9000` is the default grpc port).
-
-Running the Hierophant by itself doesn't do anything.  Hierophant is the manager who receives proof requests and assigns proofs to be executed by Contemplants.  See [Running Contemplant Manually](#running-contemplant-manually) below.  There is always just 1 Hierophant for many Contemplants, and you must run at least 1 Contemplant to successfully execute proofs.  
-
-Once at least 1 Contemplant is connected, there is nothing else to do besides request a proof to the Hierophant.  It will automatically route the proof and the Contemplant will start working on it and return it when it's done.  One note however is that the execution loop of Hierophant is driven on receiving proof status requests from the [sp1-sdk](https://crates.io/crates/sp1-sdk) library function call, so make sure to poll proof status's often.  Most likely you don't have to worry about this as `op-succinct` and other services that request SP1 proofs will poll for proof status updates often enough.
-
-## Working with multiple Hierophant config files
-
-If you're running in an environment with multiple `hierophant.toml` configuration files (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
-
-# Hierophant endpoints
-
-Hierophant has a few endpoints for basic status checking available at the http port (default `9010`).
-
-- `GET /contemplants` shows json information on all Contemplants connected to this Hierophant including ip, name, time alive, strikes, average proof completion time, current working proof, and progress on that proof.
-
-example curl request run locally on Hierophant machine:
+Hierophant exposes several endpoints for basic status checking. They are all available on the HTTP port (default `9010`).
 
 ```bash
 curl --request GET --url http://127.0.0.1:9010/contemplants
-```
-
-- `GET /dead-contemplants` shows json information on all Contemplants that have been dropped by this Hierophant.  Reasons for drop could be network disconnection, not making enough progress, or returning incorrect data.
-
-example curl request run locally on Hierophant machine:
-
-```bash
 curl --request GET --url http://127.0.0.1:9010/dead-contemplants
-```
-
-- `GET /proof-history` shows json information on all the proofs that this Hierophant has completed including the Contemplant who was assigned to the proof and the proof time.
-
-example curl request run locally on Hierophant machine:
-
-```bash
 curl --request GET --url http://127.0.0.1:9010/proof-history
 ```
 
-# Running Contemplant Manually
+- `GET /contemplants`: returns as JSON information on all Contemplants connected to this Hierophant. This includes IP, name, time alive, strikes, average proof completion time, the current in-progress proof, and progress on that proof.
+- `GET /dead-contemplants`: returns as JSON information on all Contemplants that have been dropped by this Hierophant. Reasons for drop could be network disconnection, not making fast enough progress, or returning incorrect data.
+- `GET /proof-history`: returns as JSON information on all proofs that this Hierophant has completed, including the Contemplant who was assigned to the proof, and the proof time.
 
-If you want to use this as an SP1 prover network, it is recommended to follow the [Quickstart](#quickstart) instead of running manually.
+# Standalone Contemplant
 
-It is *REQUIRED* that the Contemplant is run on a machine with a GPU.  This is because the Contemplant uses a GPU to accelerate proofs.  If you were only to use your CPU to execute a proof it will be 100-1000x slower than a GPU accelerated proof.
+You can build a native version of Contemplant via `make build`. You can supply configuration to this Contemplant as either environment variables, or through a `contemplant.toml` created with `make init`. Please observe the available configuration in [`contemplant.example.toml`](./contemplant.example.toml).
 
-Make a `contemplant.toml` and fill in config values:
+A Contemplant must have a Hierophant to connect to. If the machine running Contemplant does not have Docker, Contemplant has to be run with the `enable-native-gnark` feature. Otherwise, proofs will fail to verify. Building using this setting is the default behavior of our [Makefile](./Makefile).
 
-```bash
-cp contemplant.example.toml contemplant.toml
-# Add your config values
+## SSH Access
 
-make contemplant
-# Your Contemplant will automatically start executing proof requests from the Hierophant
-```
+To aid in debugging running Contemplant images, they make themselves accessible via SSH. Add your SSH keys to `container/authorized_keys` if you want SSH access inside Contemplant.
 
-Each Contemplant is connected to 1 Hierophant.  You're likely running a Hierophant from the [Running Hierophant](#running-hierophant) section above.  Use your Hierophant's public ip in the `contemplant.toml` file for the `hierophant_ws_address` variable like `"ws://<public-hierophant-ip>:<hierophant-http-port>/ws"` (default Hierophant http port is `9010`).
+## Prover Types
 
-The GPU proof accelerator is automatically run inside a Docker container.  
-If you're running Contemplant inside a Docker container see [Building Hierophant and Contemplant Docker images](#building-hierophant-and-contemplant-docker-images) section.
+Contemplant supports two prover types:
 
-If the machine running a Contemplant doesn't have Docker, Contemplant has to be run with the `enable-native-gnark` feature or else proofs will fail to verify:
+- **CPU proving** (`prover_type = "cpu"`, default): this uses the CPU for proving. No GPU is required, but proof generation will be **significantly** slower than GPU proving. This is suitable for development and testing.
+- **CUDA proving** (`prover_type = "cuda"`): this uses the GPU for proof acceleration. This requires a CUDA-capable GPU with compute capability 8.6 or higher (NVIDIA RTX 30-series or newer).
 
-```bash
-RUST_LOG=info RUST_BACKTRACE=1 cargo run --release --bin contemplant --features enable-native-gnark
-```
+### Progress Tracking Limitation
 
-## Working with multiple Contemplant config files
+**Progress tracking is only available when using `prover_type = "cuda"` with a remote `moongate_endpoint`.**
 
-If you're running in an environment with multiple configurations (for example, running an integration test while debugging), you can specify the config file with `-- --config <config file name>`.
+The following configurations do **not** support progress tracking:
+- CPU proving (`prover_type = "cpu"`)
+- Dockerized CUDA proving (`prover_type = "cuda"` without `moongate_endpoint`)
+- Mock proving (when proof requests have `mock = true`)
+
+**Important:** Hierophant's `worker_required_progress_interval_mins` configuration defaults to `0` (disabled). If you want Hierophant to drop workers that don't report progress within a certain interval, you must:
+1. Ensure all your Contemplants use `prover_type = "cuda"` with a `moongate_endpoint`.
+2. Set `worker_required_progress_interval_mins` to a non-zero value in your Hierophant configuration.
+
+## Multiple Configuration Files
+
+If you're running in an environment with multiple configuration files (for example, running an integration test while debugging), you can specify a specific config file with `-- --config <file>`.
 
 # Architecture
 
-Prover network architecture when running with Magister (See [Quickstart](#quickstart)).
-![Sigil prover network diagram](sigil-prover-network.png)
+This is what the general network architecture will look like when following the quickstart and using the [Scriptory](https://github.com/unattended-backpack/scriptory).
 
-## state scheme
+![Scriptory Diagram](media/sigil-prover-network.png)
 
-Most of the state is handled in a non-blocking actor pattern.  1 thread holds state and others interact with state by sending messages to that thread.
-Any module in this repo that contain files `client.rs` and `command.rs` is following this pattern.  These modules are `contemplant/proof_store`, `hierophant/artifact_store`, and `hierophant/worker_registry`.
-The flow of control for these modules are `Client method → Command → Handler → State update/read`.  To add a new state-touching function, I recommend first adding a new command to the enum in the appropriate `command.rs` file and letting the rust compiler guide you through the rest of the implementation.  In the future I'd like to move to a more robust actor library like Actix or Ractor.
+## State Scheme
 
-## `contemplant` overview
+Most of state is handled in a non-blocking actor pattern where one thread holds state and others interact with state by sending messages to that thread. Any module in this repo that contain the files `client.rs` and `command.rs` is following this pattern. These modules are `contemplant/proof_store`, `hierophant/artifact_store`, and `hierophant/worker_registry`.
+
+The flow of control for these modules are `client method → command → handler → state update/read`. To add a new state-touching function, first add a new command to the appropriate `command.rs` file. Let the Rust compiler guide you through the rest of the implementation. In the future we'd like to move to a more robust actor library like Actix or Ractor.
+
+### Contemplant
 
 ```bash
 src/
@@ -195,7 +126,7 @@ src/
 └── worker_state.rs                    # Global Contemplant state
 ```
 
-## `hierophant` overview
+### Hierophant
 
 ```bash
 src/
@@ -238,9 +169,7 @@ proto/
 └── network.proto                          # Protobuf definitions for ProverNetwork service
 ```
 
-## `network-lib` overview
-
-This is a library for types shared between both `hierophant` and `contemplant`.
+## Shared `network-lib`
 
 ```bash
 src/
@@ -249,54 +178,170 @@ src/
 └── protocol.rs            # Shared protocol constants
 ```
 
-# Building and developing
-
 ## Developing
 
-When making a breaking change in Hierophant/Contemplant compatability, increment
-the `CONTEMPLANT_VERSION` var in `network-lib/src/lib.rs`.  On each Contemplant
-connection, the Hierophant asserts that the `CONTEMPLANT_VERSION` that they have
-is the same as the `CONTEMPLANT_VERSION` being passed in by the Contemplant.
+When making a breaking change in inter-Hierophant-Contemplant communication, increment the `CONTEMPLANT_VERSION` variable in `network-lib/src/lib.rs`. On each Contemplant connection, the Hierophant asserts that the `CONTEMPLANT_VERSION` matches.
 
-If file structure is changed, kindly update the tree in the [Architecture](#architecture) section for readability.
+If file structure is changed, kindly update the architecture tree for readability.
 
-When a new release of SP1 comes out extract the new `moongate-server` binary from Succict's CUDA prover docker image and add it to `docker/moongate-server`.  This is Succinct's closed source CUDA proof accelerator.  The current `docker/moongate-server` was extracted from the image `https://public.ecr.aws/succinct-labs/moongate:v5.0.0`.
+When a new version of SP1 is released, extract the new `moongate-server` binary from Succict's CUDA prover docker image and update the checksum at `container/moongate-server.tar.gz.sha256`. Moongate is the name of Succinct's closed source CUDA proof accelerator. This checksum allows the actual binary to be downloaded from its supply-chain-hardened location at `VENDOR_BASE_URL`.
 
-When a change is made to the Contemplant template on vast.ai, copy the new template hash and add it to `.env.example`.
+When supporting a new version, you must also update the vendored [circuits](./circuits/) using their own detailed [instructions](./circuits/README.md). Then, update the `CIRCUITS_VERSION` in `.env.maintainer`.
 
 ### Integration test
 
-The integration test is a basic configuration that only tests minimal compatibility.  It runs a Hierophant with 1 Contemplant and requests a single small proof.
-
-```bash
-RUST_LOG=info cargo run --release --bin integration-test
-```
+The integration test is a basic configuration that only tests minimal compatibility. It runs a Hierophant with one Contemplant and requests a single small fibonacci proof. Run it with `make integration`.
 
 ## Building
 
-Install `protoc`: [https://protobuf.dev/installation/](https://protobuf.dev/installation/)
+To build both the Hierophant and Contemplant native binaries, you need to install [`protoc`](https://protobuf.dev/installation/) and [Go](https://go.dev/doc/install). Then, you should simply need to run `make`; you can see more in the [`Makefile`](./Makefile). This will default to building with the maintainer-provided details from [`.env.maintainer`](./.env.maintainer), which we will periodically update as details change.
 
-`cargo build --release`
-
-### Building Hierophant and Contemplant Docker images
-
-Before building a docker image make sure to build the binary:
-
+You can also build a Docker image using `make docker`, which uses a `BUILD_IMAGE` for building dependencies that are packaged to run in a `RUNTIME_IMAGE`. Configuration values in `.env.maintainer` may be overridden by specifying them as environment variables.
 ```bash
-cargo build --release --bin hierophant
-# If Contemplant is run inside Docker without this feature it will crash when verifying proofs
-cargo build --release --bin contemplant --features enable-native-gnark
+IMAGE_NAME=hierophant
+BUILD_IMAGE=registry.digitalocean.com/sigil/petros:latest make build
+RUNTIME_IMAGE=debian:bookworm-slim@sha256:... make build
 ```
 
-Then build the image:
+### Building Container Images
+
+You can build container images via either `make docker` or via `make ci` after building native binaries. Check the [Makefile](./Makefile) goals for more detailed information.
+
+## Configuration
+
+Our configuration follows a zero-trust model where all sensitive configuration is stored on the self-hosted runner, not in GitHub. This section documents the configuration required for automated releases via GitHub Actions.
+
+Running this project may require some sensitive configuration to be provided in `.env` and other files; you can generate the configuration files from the provided examples with `make init`. Review configuration files carefully and populate all required fields before proceeding.
+
+### Runner-Local Secrets
+
+All automated build secrets must be stored on the self-hosted runner at `/opt/github-runner/secrets/`. These files are mounted read-only into the release workflow container; they are never stored in git.
+
+#### Required Secrets
+
+**GitHub Access Tokens** (for creating releases and pushing to GHCR):
+- `ci_gh_pat` - A GitHub fine-grained personal access token with repository permissions.
+- `ci_gh_classic_pat` - A GitHub classic personal access token for GHCR authentication.
+
+**Registry Access Tokens** (for pushing container images):
+- `do_token` - A DigitalOcean API token with container registry write access.
+- `dh_token` - A Docker Hub access token.
+
+**GPG Signing Keys** (for signing release artifacts):
+- `gpg_private_key` - A base64-encoded GPG private key for signing digests.
+- `gpg_passphrase` - The passphrase for the GPG private key.
+- `gpg_public_key` - The base64-encoded GPG public key (included in release notes).
+
+**Registry Configuration** (`registry.env` file):
+
+This file contains non-sensitive registry identifiers and build configuration:
 
 ```bash
-docker build -f docker/Dockerfile.hierophant -t hierophant .
-docker build -f docker/Dockerfile.contemplant -t contemplant .
+# The Docker image to perform release builds with.
+# If not set, defaults to unattended/petros:latest from Docker Hub.
+# Examples:
+#   BUILD_IMAGE=registry.digitalocean.com/sigil/petros:latest
+#   BUILD_IMAGE=ghcr.io/your-org/petros:latest
+#   BUILD_IMAGE=unattended/petros:latest
+BUILD_IMAGE=unattended/petros:latest
+
+# The runtime base image for the final container.
+# If not set, uses the value from from .env.maintainer.
+# Example:
+#   RUNTIME_IMAGE=debian:trixie-slim@sha256:66b37a5078a77098bfc80175fb5eb881a3196809242fd295b25502854e12cbec
+RUNTIME_IMAGE=debian:trixie-slim@sha256:66b37a5078a77098bfc80175fb5eb881a3196809242fd295b25502854e12cbec
+
+# The name of the DigitalOcean registry to publish the built image to.
+DO_REGISTRY_NAME=
+
+# The username of the Docker Hub account to publish the built image to.
+DH_USERNAME=unattended
 ```
 
-Add your ssh keys to `docker/authorized_keys` if you want ssh access inside Contemplant.
+### Public Configuration
 
-## `contemplant_names.txt`
+Public configuration that anyone building this project needs is stored in the repository at [`.env.maintainer`](./.env.maintainer):
+- `HIEROPHANT_NAME` - The name of the Hierophant image.
+- `CONTEMPLANT_NAME` - The name of the Contemplant image.
+- `BUILD_IMAGE` - The builder image for compiling Rust code (default: `unattended/petros:latest`).
+- `RUNTIME_IMAGE` - The runtime base image (default: pinned `debian:trixie-slim@sha256:...`).
+- `VENDOR_BASE_URL` - The URL where large, specifically-vendored binaries are downloaded from.
+- `CIRCUITS_VERSION` - The SP1 circuits version to use in the build.
 
-List of biblical names to randomly draw from if a Contemplant is started without a name.
+This file is version-controlled and updated by maintainers as infrastructure details change.
+
+## Verifying Release Artifacts
+
+All releases include GPG-signed artifacts for verification. Each release contains:
+
+- `image-digests.txt` - A human-readable list of container image digests.
+- `image-digests.txt.asc` - A GPG signature for the digest list.
+- `ghcr-manifest.json` / `ghcr-manifest.json.asc` - A GitHub Container Registry OCI manifest and signature.
+- `dh-manifest.json` / `dh-manifest.json.asc` - A Docker Hub OCI manifest and signature.
+- `do-manifest.json` / `do-manifest.json.asc` - A DigitalOcean Container Registry OCI manifest and signature.
+
+### Quick Verification
+
+Download the artifacts and verify signatures:
+
+```bash
+# Import the GPG public key (base64-encoded in release notes).
+echo "<GPG_PUBLIC_KEY>" | base64 -d | gpg --import
+
+# Verify digest list.
+gpg --verify image-digests.txt.asc image-digests.txt
+
+# Verify image manifests.
+gpg --verify ghcr-manifest.json.asc ghcr-manifest.json
+gpg --verify dh-manifest.json.asc dh-manifest.json
+gpg --verify do-manifest.json.asc do-manifest.json
+```
+
+### Manifest Verification
+
+The manifest files contain the complete OCI image structure (layers, config, metadata). You can use these to verify that a registry hasn't tampered with an image.
+```bash
+# Pull the manifest from the registry.
+docker manifest inspect ghcr.io/unattended-backpack/...@sha256:... \
+  --verbose > registry-manifest.json
+
+# Compare to the signed manifest.
+diff ghcr-manifest.json registry-manifest.json
+```
+
+This provides cryptographic proof that the image structure (all layers and configuration) matches what was signed at release time.
+
+### Cosign Verification
+
+Images are also signed with [cosign](https://github.com/sigstore/cosign) using GitHub Actions OIDC for keyless signing. This provides automated verification and build provenance.
+
+To verify with cosign:
+```bash
+# Verify image signature (proves it was built by our workflow).
+cosign verify ghcr.io/unattended-backpack/...@sha256:... \
+  --certificate-identity-regexp='^https://github.com/unattended-backpack/.+' \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+```
+
+Cosign verification provides:
+- Automated verification (no manual GPG key management).
+- Build provenance (proves image was built by the GitHub Actions workflow).
+- Registry-native signatures (stored alongside images).
+
+**Note**: Cosign depends on external infrastructure (GitHub OIDC, Rekor). For maximum trust independence, rely on the GPG-signed manifests as your ultimate root of trust.
+
+## Local Testing
+
+This repository is configured to support testing the release workflow locally using the `act` tool. There is a corresponding goal in the Makefile, and instructions for further management of secrets [here](./docs/WORKFLOW_TESTING.md). This local testing file also shows how to configure the required secrets for building.
+
+# Security
+
+If you discover any bug; flaw; issue; dæmonic incursion; or other malicious, negligent, or incompetent action that impacts the security of any of these projects please responsibly disclose them to us; instructions are available [here](./SECURITY.md).
+
+# License
+
+The [license](./LICENSE) for all of our original work is `LicenseRef-VPL WITH AGPL-3.0-only`. This includes every asset in this repository: code, documentation, images, branding, and more. You are licensed to use all of it so long as you maintain _maximum possible virality_ and our copyleft licenses.
+
+Permissive open source licenses are tools for the corporate subversion of libre software; visible source licenses are an even more malignant scourge. All original works in this project are to be licensed under the most aggressive, virulently-contagious copyleft terms possible. To that end everything is licensed under the [Viral Public License](./licenses/LicenseRef-VPL) coupled with the [GNU Affero General Public License v3.0](./licenses/AGPL-3.0-only) for use in the event that some unaligned party attempts to weasel their way out of copyleft protections. In short: if you use or modify anything in this project for any reason, your project must be licensed under these same terms.
+
+For art assets specifically, in case you want to further split hairs or attempt to weasel out of this virality, we explicitly license those under the viral and copyleft [Free Art License 1.3](./licenses/FreeArtLicense-1.3).
