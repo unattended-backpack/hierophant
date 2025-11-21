@@ -1,8 +1,0 @@
-Port 22
-PermitRootLogin yes
-PasswordAuthentication no
-ChallengeResponseAuthentication no
-UsePAM no
-AuthorizedKeysFile .ssh/authorized_keys
-Subsystem sftp /usr/lib/openssh/sftp-server
-

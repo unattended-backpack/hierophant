@@ -1,0 +1,93 @@
+# Retrieve a specified image for building.
+ARG BUILD_IMAGE=unattended/petros:latest
+
+# Retrieve a specified image for final container runtime.
+ARG RUNTIME_IMAGE=debian:trixie-slim@sha256:66b37a5078a77098bfc80175fb5eb881a3196809242fd295b25502854e12cbec
+
+# Build from the base image.
+FROM ${BUILD_IMAGE} AS builder
+
+# Build type: "source" (default) or "prebuilt" (CI)
+ARG BUILD_TYPE=source
+
+# The `VENDOR_BASE_URL` specifies where to download vendored dependencies.
+ARG VENDOR_BASE_URL
+RUN test -n "${VENDOR_BASE_URL}" || ( \
+  echo "ERROR: VENDOR_BASE_URL build argument is required!" >&2 \
+  && exit 1)
+ENV VENDOR_BASE_URL=${VENDOR_BASE_URL}
+
+# Circuit version to use (matches SP1 SDK version).
+ARG CIRCUITS_VERSION
+RUN test -n "${CIRCUITS_VERSION}" || ( \
+  echo "ERROR: CIRCUITS_VERSION build argument is required!" >&2 \
+  && exit 1)
+ENV CIRCUITS_VERSION=${CIRCUITS_VERSION}
+
+# Prepare the build image.
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY src/ src/
+
+# Conditionally build from source or use a pre-built binary.
+COPY out/ /build/out/
+RUN if [ "$BUILD_TYPE" = "prebuilt" ]; then \
+  echo "Using pre-built binary from ./out/hierophant"; \
+  test -f /build/out/hierophant || (echo "ERROR: BUILD_TYPE=prebuilt but no binary found in ./out/hierophant" >&2 && exit 1); \
+  cp /build/out/hierophant /build/hierophant-binary; \
+else \
+  echo "Building from source ..."; \
+  cargo build --release --bin hierophant; \
+  cp /build/target/release/hierophant /build/hierophant-binary; \
+fi
+
+# Download the vendored circuit files.
+WORKDIR /tmp
+COPY container/vendor.sh /tmp/vendor.sh
+COPY circuits/ /tmp/circuits/
+RUN /tmp/vendor.sh "groth16.tar.gz" "circuits/${CIRCUITS_VERSION}/groth16" "${CIRCUITS_VERSION}/" && \
+  /tmp/vendor.sh "plonk.tar.gz" "circuits/${CIRCUITS_VERSION}/plonk" "${CIRCUITS_VERSION}/"
+RUN mkdir -p /home/petros/.sp1/circuits/groth16/${CIRCUITS_VERSION} && \
+  mkdir -p /home/petros/.sp1/circuits/plonk/${CIRCUITS_VERSION} && \
+  cp -r /tmp/extracted-groth16/${CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/groth16/${CIRCUITS_VERSION}/ && \
+  cp -r /tmp/extracted-plonk/${CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/plonk/${CIRCUITS_VERSION}/ && \
+  touch /home/petros/.sp1/circuits/groth16/.download_complete && \
+  touch /home/petros/.sp1/circuits/plonk/.download_complete
+
+# Prepare a runtime container.
+FROM ${RUNTIME_IMAGE}
+
+# OCI image labels for metadata and documentation.
+LABEL org.opencontainers.image.title="Hierophant"
+LABEL org.opencontainers.image.source=https://github.com/unattended-backpack/hierophant
+LABEL org.opencontainers.image.description="Prove all things; hold fast that which is good. Hierophant is the master of a self-hosted ZK prover network."
+LABEL org.opencontainers.image.vendor="Unattended Backpack, Inc."
+LABEL org.opencontainers.image.licenses="LicenseRef-VPL WITH AGPL-3.0-only"
+
+# Copy binaries from builder.
+COPY --from=builder /build/hierophant-binary /usr/local/bin/hierophant
+
+# Copy vendored circuit artifacts from build stage.
+COPY --from=builder /home/petros/.sp1/circuits /opt/sp1/circuits
+
+# Install runtime dependencies and fix binary interpreter.
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+    ca-certificates \
+    patchelf && \
+  patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/hierophant && \
+  apt-get remove -y patchelf && \
+  apt-get autoremove -y && \
+  rm -rf /var/lib/apt/lists/*
+
+# Prepare specific non-root user for security.
+RUN useradd --system --create-home --shell /bin/bash hierophant && \
+  chown hierophant:hierophant /usr/local/bin/hierophant && \
+  mkdir -p /home/hierophant/.sp1/circuits && \
+  cp -r /opt/sp1/circuits/* /home/hierophant/.sp1/circuits/ && \
+  chown -R hierophant:hierophant /home/hierophant/.sp1 && \
+  rm -rf /opt/sp1
+USER hierophant
+WORKDIR /home/hierophant
+ENV RUST_LOG=info RUST_LOG_STYLE=always RUST_BACKTRACE=1
+ENTRYPOINT ["/usr/local/bin/hierophant"]

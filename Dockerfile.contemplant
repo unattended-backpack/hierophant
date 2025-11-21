@@ -1,0 +1,129 @@
+# Retrieve a specified image for building.
+ARG BUILD_IMAGE=unattended/petros:latest
+
+# Retrieve a specified image for final container runtime.
+ARG RUNTIME_IMAGE=debian:trixie-slim@sha256:66b37a5078a77098bfc80175fb5eb881a3196809242fd295b25502854e12cbec
+
+# Build from the base image.
+FROM ${BUILD_IMAGE} AS builder
+
+# Build type: "source" (default) or "prebuilt" (CI)
+ARG BUILD_TYPE=source
+
+# The `VENDOR_BASE_URL` specifies where to download vendored dependencies.
+ARG VENDOR_BASE_URL
+RUN test -n "${VENDOR_BASE_URL}" || ( \
+  echo "ERROR: VENDOR_BASE_URL build argument is required!" >&2 \
+  && exit 1)
+ENV VENDOR_BASE_URL=${VENDOR_BASE_URL}
+
+# Circuit version to use (matches SP1 SDK version).
+ARG CIRCUITS_VERSION
+RUN test -n "${CIRCUITS_VERSION}" || ( \
+  echo "ERROR: CIRCUITS_VERSION build argument is required!" >&2 \
+  && exit 1)
+ENV CIRCUITS_VERSION=${CIRCUITS_VERSION}
+
+# Prepare the build image.
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY src/ src/
+
+# Conditionally build from source or use a pre-built binary.
+COPY out/ /build/out/
+RUN if [ "$BUILD_TYPE" = "prebuilt" ]; then \
+  echo "Using pre-built binary from ./out/contemplant"; \
+  test -f /build/out/contemplant || (echo "ERROR: BUILD_TYPE=prebuilt but no binary found in ./out/contemplant" >&2 && exit 1); \
+  cp /build/out/contemplant /build/contemplant-binary; \
+else \
+  echo "Building from source ..."; \
+  cargo build --release --bin contemplant --features enable-native-gnark; \
+  cp /build/target/release/contemplant /build/contemplant-binary; \
+fi
+
+# Download the vendored circuit files and moongate-server.
+WORKDIR /tmp
+COPY container/vendor.sh /tmp/vendor.sh
+COPY circuits/ /tmp/circuits/
+COPY container/moongate-server.tar.gz.sha256 /tmp/container/moongate-server.tar.gz.sha256
+RUN /tmp/vendor.sh "groth16.tar.gz" "circuits/${CIRCUITS_VERSION}/groth16" "${CIRCUITS_VERSION}/" && \
+  /tmp/vendor.sh "plonk.tar.gz" "circuits/${CIRCUITS_VERSION}/plonk" "${CIRCUITS_VERSION}/" && \
+  /tmp/vendor.sh "moongate-server.tar.gz" "container" ""
+RUN mkdir -p /home/petros/.sp1/circuits/groth16/${CIRCUITS_VERSION} && \
+  mkdir -p /home/petros/.sp1/circuits/plonk/${CIRCUITS_VERSION} && \
+  cp -r /tmp/extracted-groth16/${CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/groth16/${CIRCUITS_VERSION}/ && \
+  cp -r /tmp/extracted-plonk/${CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/plonk/${CIRCUITS_VERSION}/ && \
+  touch /home/petros/.sp1/circuits/groth16/.download_complete && \
+  touch /home/petros/.sp1/circuits/plonk/.download_complete && \
+  cp /tmp/extracted-moongate-server/moongate-server /home/petros/moongate-server
+
+# Prepare a runtime container.
+FROM ${RUNTIME_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# OCI image labels for metadata and documentation.
+LABEL org.opencontainers.image.title="Contemplant"
+LABEL org.opencontainers.image.source=https://github.com/unattended-backpack/hierophant
+LABEL org.opencontainers.image.description="Prove all things; hold fast that which is good. Contemplant is the slave for a self-hosted ZK prover network."
+LABEL org.opencontainers.image.vendor="Unattended Backpack, Inc."
+LABEL org.opencontainers.image.licenses="LicenseRef-VPL WITH AGPL-3.0-only"
+
+# Install runtime dependencies including tmux, supervisor, openssh-server.
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+    ca-certificates \
+    patchelf \
+    tmux \
+    supervisor \
+    openssh-server && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/*
+
+# Copy binaries from builder.
+COPY --from=builder /build/contemplant-binary /usr/local/bin/contemplant
+COPY --from=builder /home/petros/moongate-server /usr/local/bin/moongate-server
+
+# Copy vendored circuit artifacts from build stage.
+COPY --from=builder /home/petros/.sp1/circuits /opt/sp1/circuits
+
+# Fix binary interpreters.
+RUN patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/contemplant && \
+  patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/moongate-server
+
+# Prepare specific non-root user for security.
+RUN useradd --system --create-home --shell /bin/bash contemplant && \
+  chown contemplant:contemplant /usr/local/bin/contemplant /usr/local/bin/moongate-server
+
+# Copy names list with correct ownership (after user is created).
+COPY --chown=contemplant:contemplant src/names.txt /home/contemplant/names.txt
+
+# Set up SSH directory and host keys for contemplant user.
+RUN mkdir -p /home/contemplant/.ssh && \
+  chmod 700 /home/contemplant/.ssh && \
+  mkdir -p /home/contemplant/ssh_host_keys && \
+  chown -R contemplant:contemplant /home/contemplant/.ssh /home/contemplant/ssh_host_keys && \
+  chown -R contemplant:contemplant /home/contemplant
+
+# Set up circuit artifacts for contemplant user.
+RUN mkdir -p /home/contemplant/.sp1/circuits && \
+  cp -r /opt/sp1/circuits/* /home/contemplant/.sp1/circuits/ && \
+  chown -R contemplant:contemplant /home/contemplant/.sp1 && \
+  rm -rf /opt/sp1
+
+# Copy SSH authorized_keys if available.
+COPY --chown=contemplant:contemplant container/authorized_keys /home/contemplant/.ssh/authorized_keys
+RUN chmod 600 /home/contemplant/.ssh/authorized_keys
+
+# Copy configuration files.
+COPY --chown=contemplant:contemplant container/sshd_config /home/contemplant/sshd_config
+COPY --chown=contemplant:contemplant container/supervisord.conf /home/contemplant/supervisord.conf
+COPY --chmod=755 container/contemplant-entrypoint.sh /usr/local/bin/contemplant-entrypoint.sh
+
+# Run as the contemplant user.
+USER contemplant
+WORKDIR /home/contemplant
+EXPOSE 2222
+EXPOSE 3001
+ENV RUST_LOG=info RUST_LOG_STYLE=always RUST_BACKTRACE=1
+ENTRYPOINT ["/usr/local/bin/contemplant-entrypoint.sh"]

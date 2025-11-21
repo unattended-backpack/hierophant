@@ -1,14 +1,13 @@
 [workspace]
-members = ["hierophant", "contemplant", "network-lib", "integration-test"]
+members = ["src/hierophant", "src/contemplant", "src/network-lib"]
+exclude = ["src/fibonacci"]
 resolver = "2"
 
 [workspace.package]
-license = "AGPL-3.0-only"
+license = "LicenseRef-VPL WITH AGPL-3.0-only"
 authors = ["Joss Duff <jossduff.eth>", "Tim Clancy <tim-clancy.eth>"]
 edition = "2024"
 
-# Dependencies forked from https://github.com/succinctlabs/op-succinct tag v2.0.0
-# Uncomment dependencies as needed
 [workspace.dependencies]
 sha2 = "0.10.8"
 tokio-tungstenite = "0.24.0"

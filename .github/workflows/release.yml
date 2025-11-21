@@ -1,0 +1,796 @@
+name: Create Release
+
+on:
+  push:
+    branches: [ master ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+      - 'docs/**'
+      - '.github/workflows/codeql.yml'
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  authenticate:
+    runs-on: [ self-hosted, actions-runner ]
+    outputs:
+      build-image: ${{ steps.config.outputs.build-image }}
+      runtime-image: ${{ steps.config.outputs.runtime-image }}
+    steps:
+      - name: Find build and runtime images
+        id: config
+        run: |
+          . /opt/github-runner/secrets/registry.env
+          BUILD_IMAGE="${BUILD_IMAGE:-unattended/petros:latest}"
+          RUNTIME_IMAGE="${RUNTIME_IMAGE:-debian:trixie-slim@sha256:66b37a5078a77098bfc80175fb5eb881a3196809242fd295b25502854e12cbec}"
+          echo "build-image=$BUILD_IMAGE" >> $GITHUB_OUTPUT
+          echo "runtime-image=$RUNTIME_IMAGE" >> $GITHUB_OUTPUT
+          echo "Using build image: $BUILD_IMAGE"
+          echo "Using runtime image: $RUNTIME_IMAGE"
+
+      - name: Log into DigitalOcean Container Registry
+        if: >-
+          startsWith(
+            steps.config.outputs.build-image,
+            'registry.digitalocean.com'
+          )
+        run: |
+          DO_TOKEN=$(cat /opt/github-runner/secrets/do_token)
+          echo "::add-mask::$DO_TOKEN"
+          echo "$DO_TOKEN" | \
+            docker login registry.digitalocean.com \
+            --username oauth2 \
+            --password-stdin
+
+  build-binaries:
+    needs: authenticate
+    runs-on: [ self-hosted, actions-runner ]
+    container:
+      image: ${{ needs.authenticate.outputs.build-image }}
+      options: --user 1000:1000 --group-add 960 --group-add 987
+      volumes:
+        - /opt/github-runner/secrets:/opt/github-runner/secrets:ro
+    outputs:
+      build-timestamp: ${{ steps.metadata.outputs.timestamp }}
+      sha-short: ${{ steps.metadata.outputs.sha_short }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
+
+    - name: Generate build metadata
+      id: metadata
+      run: |
+        echo "timestamp=$(date +%s)" >> $GITHUB_OUTPUT
+        echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+    - name: Run tests
+      id: tests
+      env:
+        CARGO_HOME: ${{ github.workspace }}/.cargo
+      run: |
+        echo "Running tests using 'make test'..."
+
+        # Check if Makefile exists
+        if [ ! -f "Makefile" ]; then
+          echo "❌ No Makefile found in repository root"
+          echo "Please provide a Makefile with 'test' target"
+          exit 1
+        fi
+
+        # Check if test target exists
+        if ! make -n test &>/dev/null; then
+          echo "⚠️ Warning: No 'test' target found in Makefile"
+          echo "Skipping tests..."
+          echo "test_passed=skipped" >> $GITHUB_OUTPUT
+        else
+          # Run tests
+          if make test; then
+            echo "✅ Tests passed successfully"
+            echo "test_passed=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Tests failed with exit code $?"
+            echo "test_passed=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+        fi
+
+    - name: Build native binaries
+      id: build-native
+      env:
+        CARGO_HOME: ${{ github.workspace }}/.cargo
+      run: |
+        echo "Building binaries using Makefile..."
+
+        # Check if Makefile exists
+        if [ ! -f "Makefile" ]; then
+          echo "❌ No Makefile found in repository root"
+          echo "Please provide a Makefile that builds binaries and places them in ./out/"
+          exit 1
+        fi
+
+        # Run make and capture result
+        if make; then
+          echo "✅ Make completed successfully"
+
+          # Check if any binaries were actually produced in out/
+          if [ "$(ls -A ./out 2>/dev/null)" ]; then
+            echo "✅ Found binaries in ./out/"
+
+            # Get git short hash
+            GIT_HASH=$(git rev-parse --short HEAD)
+
+            # Compress binaries with platform-specific naming
+            echo "Compressing binaries..."
+            cd out
+            for file in *; do
+              if [ -f "$file" ]; then
+                # Skip if already compressed
+                if [[ ! "$file" =~ \.(tar\.gz|tgz|zip)$ ]]; then
+                  # Detect platform from binary (using 'file' command)
+                  PLATFORM=""
+                  FILE_INFO=$(file "$file" 2>/dev/null)
+
+                  # Detect OS and architecture
+                  if echo "$FILE_INFO" | grep -q "ELF.*Linux"; then
+                    if echo "$FILE_INFO" | grep -q "x86-64\|x86_64"; then
+                      PLATFORM="linux-amd64"
+                    elif echo "$FILE_INFO" | grep -q "aarch64\|ARM64"; then
+                      PLATFORM="linux-arm64"
+                    elif echo "$FILE_INFO" | grep -q "ARM"; then
+                      PLATFORM="linux-arm"
+                    else
+                      PLATFORM="linux-unknown"
+                    fi
+                  elif echo "$FILE_INFO" | grep -q "Mach-O"; then
+                    if echo "$FILE_INFO" | grep -q "x86_64"; then
+                      PLATFORM="darwin-amd64"
+                    elif echo "$FILE_INFO" | grep -q "arm64"; then
+                      PLATFORM="darwin-arm64"
+                    else
+                      PLATFORM="darwin-unknown"
+                    fi
+                  elif echo "$FILE_INFO" | grep -q "PE32\+"; then
+                    PLATFORM="windows-amd64"
+                  elif echo "$FILE_INFO" | grep -q "PE32"; then
+                    PLATFORM="windows-386"
+                  else
+                    PLATFORM="unknown-unknown"
+                  fi
+
+                  # Create tarball with new name: original_githash_platform.tar.gz
+                  TAR_NAME="${file}_${GIT_HASH}_${PLATFORM}.tar.gz"
+                  tar -czf "$TAR_NAME" "$file"
+                  echo "Compressed: $TAR_NAME"
+                fi
+              fi
+            done
+            cd ..
+
+            # List final artifacts
+            echo "Final artifacts:"
+            ls -la ./out/
+
+            echo "build_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Make succeeded but no binaries found in ./out/"
+            echo "Please ensure your Makefile places binaries in the ./out/ directory"
+            echo "build_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+        else
+          echo "❌ Make failed with exit code $?"
+          echo "build_success=false" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+    - name: Upload binary artifacts
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: binaries
+        path: out/
+        retention-days: 1
+
+  discover-images:
+    needs: [authenticate]
+    runs-on: [ self-hosted, actions-runner ]
+    container:
+      image: ${{ needs.authenticate.outputs.build-image }}
+      options: --user 1000:1000 --group-add 960 --group-add 987
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
+
+    - name: Discover images from .env.maintainer
+      id: discover
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: |
+        set -e
+
+        # Working directory is now set to workspace
+        ENV_FILE=".env.maintainer"
+        if [ ! -f "$ENV_FILE" ]; then
+          echo "❌ .env.maintainer not found!"
+          echo "Current directory: $(pwd)"
+          echo "Files in current directory:"
+          ls -la
+          exit 1
+        fi
+
+        . "$ENV_FILE"
+
+        # Find all *_NAME variables using grep on the file directly
+        # This is more reliable than compgen which may not work in all shells
+        images=()
+        while IFS='=' read -r var value; do
+          # Skip comments and empty lines
+          [[ "$var" =~ ^[[:space:]]*# ]] && continue
+          [[ -z "$var" ]] && continue
+
+          # Check if variable ends with _NAME
+          if [[ "$var" =~ _NAME$ ]]; then
+            # Extract the image name (everything before _NAME, lowercase)
+            image_name=$(echo "$var" | sed 's/_NAME$//' | tr '[:upper:]' '[:lower:]')
+
+            echo "Checking for Dockerfile.${image_name}..."
+            # Check if corresponding Dockerfile exists
+            if [ -f "Dockerfile.${image_name}" ]; then
+              images+=("\"${image_name}\"")
+              echo "✅ Found image: ${image_name} (Dockerfile.${image_name} exists)"
+            else
+              echo "⚠️  Skipping ${image_name}: Dockerfile.${image_name} not found"
+            fi
+          fi
+        done < "$ENV_FILE"
+
+        # Build JSON array for matrix
+        if [ ${#images[@]} -eq 0 ]; then
+          echo "❌ No valid images found!"
+          exit 1
+        fi
+
+        # Join array elements with commas
+        matrix_json="{\"image\":["
+        first=true
+        for img in "${images[@]}"; do
+          if [ "$first" = true ]; then
+            matrix_json="${matrix_json}${img}"
+            first=false
+          else
+            matrix_json="${matrix_json},${img}"
+          fi
+        done
+        matrix_json="${matrix_json}]}"
+
+        echo "Matrix JSON: $matrix_json"
+
+        # Set output (with fallback for act compatibility)
+        if [ -n "$GITHUB_OUTPUT" ]; then
+          echo "matrix=$matrix_json" >> $GITHUB_OUTPUT
+        else
+          echo "::set-output name=matrix::$matrix_json"
+        fi
+
+  build-images:
+    needs: [authenticate, build-binaries, discover-images]
+    runs-on: [ self-hosted, actions-runner ]
+    container:
+      image: ${{ needs.authenticate.outputs.build-image }}
+      options: --user 1000:1000 --group-add 960 --group-add 987
+      volumes:
+        - /opt/github-runner/secrets:/opt/github-runner/secrets:ro
+    strategy:
+      matrix: ${{ fromJson(needs.discover-images.outputs.matrix) }}
+      fail-fast: false
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
+
+    - name: Download binary artifacts
+      uses: actions/download-artifact@f093f21ca4cfa7c75ccbbc2be54da76a0c7e1f05
+      with:
+        name: binaries
+        path: out/
+
+    - name: Resolve image names
+      id: resolve-names
+      run: |
+        # Get matrix image (source identifier: Dockerfile/binary name)
+        MATRIX_IMAGE="${{ matrix.image }}"
+        echo "MATRIX_IMAGE=$MATRIX_IMAGE" >> $GITHUB_ENV
+
+        # Get published image name from .env.maintainer
+        . "$GITHUB_WORKSPACE/.env.maintainer"
+        MATRIX_IMAGE_UPPER=$(echo "$MATRIX_IMAGE" | tr '[:lower:]' '[:upper:]')
+        IMAGE_NAME_VAR="${MATRIX_IMAGE_UPPER}_NAME"
+        IMAGE_NAME="${!IMAGE_NAME_VAR}"
+        echo "IMAGE_NAME=$IMAGE_NAME" >> $GITHUB_ENV
+
+        echo "Matrix: $MATRIX_IMAGE -> Published: $IMAGE_NAME"
+
+    - name: Load secrets and configuration
+      id: load-config
+      run: |
+        # Load registry tokens
+        DO_TOKEN=$(cat /opt/github-runner/secrets/do_token)
+        DH_TOKEN=$(cat /opt/github-runner/secrets/dh_token)
+        CI_GH_CLASSIC_PAT=$(cat /opt/github-runner/secrets/ci_gh_classic_pat)
+        echo "::add-mask::$DO_TOKEN"
+        echo "::add-mask::$DH_TOKEN"
+        echo "::add-mask::$CI_GH_CLASSIC_PAT"
+        echo "DO_TOKEN=$DO_TOKEN" >> $GITHUB_ENV
+        echo "DH_TOKEN=$DH_TOKEN" >> $GITHUB_ENV
+        echo "CI_GH_CLASSIC_PAT=$CI_GH_CLASSIC_PAT" >> $GITHUB_ENV
+
+        # Load public config from repository
+        . "$GITHUB_WORKSPACE/.env.maintainer"
+
+        # Export all *_NAME variables to environment
+        for var in $(compgen -v | grep '_NAME$'); do
+          echo "${var}=${!var}" >> $GITHUB_ENV
+        done
+
+        # Load registry configuration
+        . /opt/github-runner/secrets/registry.env
+        echo "DO_REGISTRY_NAME=$DO_REGISTRY_NAME" >> $GITHUB_ENV
+        echo "DH_USERNAME=$DH_USERNAME" >> $GITHUB_ENV
+
+    - name: Build Docker image
+      id: build
+      env:
+        DOCKER_BUILD_ARGS: ${{ env.DOCKER_BUILD_ARGS }}
+        DOCKER_CONFIG: ${{ github.workspace }}/.docker
+      run: |
+        echo "Building $MATRIX_IMAGE (will publish as: $IMAGE_NAME)"
+
+        # Build image using the Dockerfile for this matrix entry
+        docker build \
+          ${DOCKER_BUILD_ARGS} \
+          --build-arg BUILD_TYPE=prebuilt \
+          --build-arg BUILD_IMAGE="${{ needs.authenticate.outputs.build-image }}" \
+          --build-arg RUNTIME_IMAGE="${{ needs.authenticate.outputs.runtime-image }}" \
+          -f Dockerfile.$MATRIX_IMAGE \
+          -t $IMAGE_NAME:${{ github.sha }} \
+          .
+        echo "build_success=true" >> $GITHUB_OUTPUT
+
+    - name: Log into DigitalOcean Container Registry
+      if: steps.build.outputs.build_success == 'true'
+      env:
+        DOCKER_CONFIG: ${{ github.workspace }}/.docker
+      run: |
+        echo "${{ env.DO_TOKEN }}" | \
+          docker login registry.digitalocean.com \
+          --username oauth2 \
+          --password-stdin
+
+    - name: Log into GitHub Container Registry
+      if: steps.build.outputs.build_success == 'true'
+      env:
+        DOCKER_CONFIG: ${{ github.workspace }}/.docker
+      run: |
+        echo "${{ env.CI_GH_CLASSIC_PAT }}" | \
+          docker login ghcr.io \
+          --username ${{ github.actor }} \
+          --password-stdin
+
+    - name: Log into Docker Hub
+      if: steps.build.outputs.build_success == 'true'
+      env:
+        DOCKER_CONFIG: ${{ github.workspace }}/.docker
+      run: |
+        echo "${{ env.DH_TOKEN }}" | \
+          docker login \
+          --username ${{ env.DH_USERNAME }} \
+          --password-stdin
+
+    - name: Push to DigitalOcean
+      id: push-do
+      if: steps.build.outputs.build_success == 'true'
+      timeout-minutes: 30
+      env:
+        DOCKER_CONFIG: ${{ github.workspace }}/.docker
+      run: |
+        DO_IMAGE="registry.digitalocean.com/${{ env.DO_REGISTRY_NAME }}/$IMAGE_NAME"
+        docker tag $IMAGE_NAME:${{ github.sha }} ${DO_IMAGE}:${{ github.sha }}
+        PUSH_OUTPUT=$(docker push ${DO_IMAGE}:${{ github.sha }} 2>&1)
+        echo "$PUSH_OUTPUT"
+        DIGEST=$(echo "$PUSH_OUTPUT" | sed -n 's/.*digest: \([^ ]*\).*/\1/p' | head -1)
+        echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+        echo "Pushed to DO: ${DO_IMAGE}@${DIGEST}"
+
+    - name: Push to GitHub Container Registry
+      id: push-ghcr
+      if: steps.build.outputs.build_success == 'true'
+      timeout-minutes: 30
+      env:
+        DOCKER_CONFIG: ${{ github.workspace }}/.docker
+      run: |
+        GHCR_IMAGE="ghcr.io/${{ github.repository }}/$IMAGE_NAME"
+        docker tag $IMAGE_NAME:${{ github.sha }} ${GHCR_IMAGE}:${{ github.sha }}
+        PUSH_OUTPUT=$(docker push ${GHCR_IMAGE}:${{ github.sha }} 2>&1)
+        echo "$PUSH_OUTPUT"
+        DIGEST=$(echo "$PUSH_OUTPUT" | sed -n 's/.*digest: \([^ ]*\).*/\1/p' | head -1)
+        echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+        echo "Pushed to GHCR: ${GHCR_IMAGE}@${DIGEST}"
+
+    - name: Push to Docker Hub
+      id: push-dh
+      if: steps.build.outputs.build_success == 'true'
+      timeout-minutes: 30
+      env:
+        DOCKER_CONFIG: ${{ github.workspace }}/.docker
+      run: |
+        DH_IMAGE="${{ env.DH_USERNAME }}/$IMAGE_NAME"
+        docker tag $IMAGE_NAME:${{ github.sha }} ${DH_IMAGE}:${{ github.sha }}
+        PUSH_OUTPUT=$(docker push ${DH_IMAGE}:${{ github.sha }} 2>&1)
+        echo "$PUSH_OUTPUT"
+        DIGEST=$(echo "$PUSH_OUTPUT" | sed -n 's/.*digest: \([^ ]*\).*/\1/p' | head -1)
+        echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
+        echo "Pushed to DH: ${DH_IMAGE}@${DIGEST}"
+
+    - name: Verify consistent digests
+      id: verify-digests
+      env:
+        DOCKER_CONFIG: ${{ github.workspace }}/.docker
+      run: |
+        DO_DIGEST="${{ steps.push-do.outputs.digest }}"
+        GHCR_DIGEST="${{ steps.push-ghcr.outputs.digest }}"
+        DH_DIGEST="${{ steps.push-dh.outputs.digest }}"
+
+        echo "Registry Digests for $MATRIX_IMAGE (published as $IMAGE_NAME):"
+        echo "  DO:   ${DO_DIGEST}"
+        echo "  GHCR: ${GHCR_DIGEST}"
+        echo "  DH:   ${DH_DIGEST}"
+
+        # Verify all pushes succeeded
+        if [ -z "${DO_DIGEST}" ] || [ -z "${GHCR_DIGEST}" ] || [ -z "${DH_DIGEST}" ]; then
+          echo "ERROR: One or more pushes failed!"
+          exit 1
+        fi
+
+        # Get local image ID
+        LOCAL_ID=$(docker inspect $IMAGE_NAME:${{ github.sha }} --format='{{.Id}}')
+        echo "image_id=${LOCAL_ID}" >> $GITHUB_OUTPUT
+        echo "✅ All pushes completed for $IMAGE_NAME"
+
+    - name: Sign images with cosign
+      if: env.ACT != 'true'
+      env:
+        COSIGN_EXPERIMENTAL: "true"
+        DOCKER_CONFIG: ${{ github.workspace }}/.docker
+      run: |
+        echo "Signing $IMAGE_NAME with cosign..."
+
+        cosign sign --yes \
+          "ghcr.io/${{ github.repository }}/$IMAGE_NAME@${{ steps.push-ghcr.outputs.digest }}"
+
+        cosign sign --yes \
+          "${{ env.DH_USERNAME }}/$IMAGE_NAME@${{ steps.push-dh.outputs.digest }}"
+
+        cosign sign --yes \
+          "registry.digitalocean.com/${{ env.DO_REGISTRY_NAME }}/$IMAGE_NAME@${{ steps.push-do.outputs.digest }}"
+
+        echo "✅ Signed $IMAGE_NAME across all registries"
+
+    - name: Save digest outputs
+      id: save-outputs
+      run: |
+        mkdir -p image-outputs
+
+        # Save using matrix name as key (for discovery) but include published name
+        cat > image-outputs/$MATRIX_IMAGE-digests.env <<EOF
+        ${MATRIX_IMAGE}_DO_DIGEST=${{ steps.push-do.outputs.digest }}
+        ${MATRIX_IMAGE}_GHCR_DIGEST=${{ steps.push-ghcr.outputs.digest }}
+        ${MATRIX_IMAGE}_DH_DIGEST=${{ steps.push-dh.outputs.digest }}
+        ${MATRIX_IMAGE}_IMAGE_ID=${{ steps.verify-digests.outputs.image_id }}
+        ${MATRIX_IMAGE}_PUBLISHED_NAME=$IMAGE_NAME
+        EOF
+
+        cat image-outputs/$MATRIX_IMAGE-digests.env
+
+    - name: Upload digest outputs
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: digests-${{ matrix.image }}
+        path: image-outputs/
+        retention-days: 1
+
+  sign-and-release:
+    needs: [authenticate, build-binaries, build-images]
+    runs-on: [ self-hosted, actions-runner ]
+    container:
+      image: ${{ needs.authenticate.outputs.build-image }}
+      options: --user 1000:1000 --group-add 960 --group-add 987
+      volumes:
+        - /opt/github-runner/secrets:/opt/github-runner/secrets:ro
+    if: success()
+    outputs:
+      release-created: ${{ steps.create-release.outputs.RELEASE_SUCCESS }}
+    permissions:
+      contents: write
+    env:
+      DOCKER_CONFIG: ${{ github.workspace }}/.docker
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
+
+    - name: Download binary artifacts
+      uses: actions/download-artifact@f093f21ca4cfa7c75ccbbc2be54da76a0c7e1f05
+      with:
+        name: binaries
+        path: out/
+
+    - name: Download digest artifacts
+      uses: actions/download-artifact@f093f21ca4cfa7c75ccbbc2be54da76a0c7e1f05
+      with:
+        pattern: digests-*
+        path: digest-outputs/
+        merge-multiple: true
+
+    - name: Load secrets and configuration
+      id: load-config
+      run: |
+        # Load GitHub tokens
+        CI_GH_PAT=$(cat /opt/github-runner/secrets/ci_gh_pat)
+        CI_GH_CLASSIC_PAT=$(cat /opt/github-runner/secrets/ci_gh_classic_pat)
+        echo "::add-mask::$CI_GH_PAT"
+        echo "::add-mask::$CI_GH_CLASSIC_PAT"
+        echo "CI_GH_PAT=$CI_GH_PAT" >> $GITHUB_ENV
+        echo "CI_GH_CLASSIC_PAT=$CI_GH_CLASSIC_PAT" >> $GITHUB_ENV
+
+        # Load registry tokens
+        DO_TOKEN=$(cat /opt/github-runner/secrets/do_token)
+        DH_TOKEN=$(cat /opt/github-runner/secrets/dh_token)
+        echo "::add-mask::$DO_TOKEN"
+        echo "::add-mask::$DH_TOKEN"
+        echo "DO_TOKEN=$DO_TOKEN" >> $GITHUB_ENV
+        echo "DH_TOKEN=$DH_TOKEN" >> $GITHUB_ENV
+
+        # Load GPG secrets
+        GPG_PRIVATE_KEY=$(cat /opt/github-runner/secrets/gpg_private_key)
+        GPG_PASSPHRASE=$(cat /opt/github-runner/secrets/gpg_passphrase)
+        GPG_PUBLIC_KEY=$(cat /opt/github-runner/secrets/gpg_public_key)
+        echo "::add-mask::$GPG_PRIVATE_KEY"
+        echo "::add-mask::$GPG_PASSPHRASE"
+        echo "GPG_PRIVATE_KEY=$GPG_PRIVATE_KEY" >> $GITHUB_ENV
+        echo "GPG_PASSPHRASE=$GPG_PASSPHRASE" >> $GITHUB_ENV
+        echo "GPG_PUBLIC_KEY=$GPG_PUBLIC_KEY" >> $GITHUB_ENV
+
+        # Load public config from repository
+        . "$GITHUB_WORKSPACE/.env.maintainer"
+
+        # Export all *_NAME variables to environment
+        for var in $(compgen -v | grep '_NAME$'); do
+          echo "${var}=${!var}" >> $GITHUB_ENV
+        done
+
+        # Load registry configuration
+        . /opt/github-runner/secrets/registry.env
+        echo "DO_REGISTRY_NAME=$DO_REGISTRY_NAME" >> $GITHUB_ENV
+        echo "DH_USERNAME=$DH_USERNAME" >> $GITHUB_ENV
+        echo "GITHUB_REPOSITORY_OWNER=${{ github.repository_owner }}" >> $GITHUB_ENV
+
+    - name: Load digest environment variables
+      run: |
+        # Dynamically load all digest files without knowing image names
+        echo "Loading digest environment variables..."
+        for file in digest-outputs/*.env; do
+          if [ -f "$file" ]; then
+            echo "Loading $file"
+            cat "$file"
+            # Append all variables directly to GITHUB_ENV
+            cat "$file" >> $GITHUB_ENV
+          fi
+        done
+
+    - name: Log into registries
+      run: |
+        echo "${{ env.DO_TOKEN }}" | \
+          docker login registry.digitalocean.com \
+          --username oauth2 \
+          --password-stdin
+
+        echo "${{ env.CI_GH_CLASSIC_PAT }}" | \
+          docker login ghcr.io \
+          --username ${{ github.actor }} \
+          --password-stdin
+
+        echo "${{ env.DH_TOKEN }}" | \
+          docker login \
+          --username ${{ env.DH_USERNAME }} \
+          --password-stdin
+
+    - name: Generate release notes
+      id: release-notes
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+      with:
+        github-token: ${{ env.CI_GH_PAT }}
+        script: |
+          const generateReleaseNotes = require(
+            './.github/scripts/generate-release-notes.js'
+          );
+          const releaseNotes = await generateReleaseNotes({
+            github, context, core
+          });
+          core.setOutput('RELEASE_NOTES', releaseNotes);
+
+    - name: Sign release artifacts with GPG
+      id: gpg-sign
+      env:
+        BUILD_TIMESTAMP: ${{ needs.build-binaries.outputs.build-timestamp }}
+        BUILD_SHA_SHORT: ${{ needs.build-binaries.outputs.sha-short }}
+        GITHUB_SHA: ${{ github.sha }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: sh .github/scripts/sign-release-artifacts.sh
+
+    - name: Create release
+      id: create-release
+      if: steps.gpg-sign.outputs.signing_success == 'true'
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+      env:
+        BUILD_TIMESTAMP: ${{ needs.build-binaries.outputs.build-timestamp }}
+        BUILD_SHA_SHORT: ${{ needs.build-binaries.outputs.sha-short }}
+        RELEASE_NOTES: ${{ steps.release-notes.outputs.RELEASE_NOTES }}
+      with:
+        github-token: ${{ env.CI_GH_PAT }}
+        script: |
+          const createRelease = require('./.github/scripts/create-release.js');
+          await createRelease({ github, context, core });
+
+    - name: Tag as latest after verification
+      if: steps.create-release.outputs.RELEASE_SUCCESS == 'true'
+      env:
+        DOCKER_CONFIG: ${{ github.workspace }}/.docker
+      run: |
+        # Dynamically tag all images as latest by discovering them from digest files
+        # Use crane to tag without pulling (much faster for large images)
+        for file in digest-outputs/*-digests.env; do
+          # Source the file to get published name
+          . "$file"
+
+          # Get matrix image name (source identifier)
+          MATRIX_IMAGE=$(basename "$file" | sed 's/-digests.env$//')
+
+          # Get the published image name (use lowercase to match digest file vars)
+          PUBLISHED_NAME_VAR="${MATRIX_IMAGE}_PUBLISHED_NAME"
+          IMAGE_NAME="${!PUBLISHED_NAME_VAR}"
+
+          echo "Tagging $MATRIX_IMAGE (published as $IMAGE_NAME) as latest..."
+
+          # DO Registry - use crane to copy tag without pulling
+          DO_IMAGE="registry.digitalocean.com/${{ env.DO_REGISTRY_NAME }}/${IMAGE_NAME}"
+          crane tag ${DO_IMAGE}:${{ github.sha }} latest
+
+          # GHCR - use crane to copy tag without pulling
+          GHCR_IMAGE="ghcr.io/${{ github.repository }}/${IMAGE_NAME}"
+          crane tag ${GHCR_IMAGE}:${{ github.sha }} latest
+
+          # Docker Hub - use crane to copy tag without pulling
+          DH_IMAGE="${{ env.DH_USERNAME }}/${IMAGE_NAME}"
+          crane tag ${DH_IMAGE}:${{ github.sha }} latest
+
+          echo "✅ Tagged $IMAGE_NAME as latest across all registries"
+        done
+
+  rollback:
+    needs: [authenticate, build-binaries, build-images, sign-and-release]
+    runs-on: [ self-hosted, actions-runner ]
+    container:
+      image: ${{ needs.authenticate.outputs.build-image }}
+      options: --user 1000:1000 --group-add 960 --group-add 987
+      volumes:
+        - /opt/github-runner/secrets:/opt/github-runner/secrets:ro
+    if: >-
+      always() &&
+      (failure() || cancelled()) &&
+      needs.build-binaries.result == 'success' &&
+      needs.build-images.result == 'success'
+    env:
+      DOCKER_CONFIG: ${{ github.workspace }}/.docker
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
+
+    - name: Download digest artifacts
+      continue-on-error: true
+      uses: actions/download-artifact@f093f21ca4cfa7c75ccbbc2be54da76a0c7e1f05
+      with:
+        pattern: digests-*
+        path: digest-outputs/
+        merge-multiple: true
+
+    - name: Load secrets and configuration
+      continue-on-error: true
+      run: |
+        CI_GH_CLASSIC_PAT=$(cat /opt/github-runner/secrets/ci_gh_classic_pat)
+        DO_TOKEN=$(cat /opt/github-runner/secrets/do_token)
+        DH_TOKEN=$(cat /opt/github-runner/secrets/dh_token)
+        echo "::add-mask::$CI_GH_CLASSIC_PAT"
+        echo "::add-mask::$DO_TOKEN"
+        echo "::add-mask::$DH_TOKEN"
+        echo "CI_GH_CLASSIC_PAT=$CI_GH_CLASSIC_PAT" >> $GITHUB_ENV
+        echo "DO_TOKEN=$DO_TOKEN" >> $GITHUB_ENV
+        echo "DH_TOKEN=$DH_TOKEN" >> $GITHUB_ENV
+
+        . /opt/github-runner/secrets/registry.env
+        echo "DO_REGISTRY_NAME=$DO_REGISTRY_NAME" >> $GITHUB_ENV
+        echo "DH_USERNAME=$DH_USERNAME" >> $GITHUB_ENV
+
+    - name: Load digest environment variables
+      continue-on-error: true
+      run: |
+        if [ -d digest-outputs ]; then
+          for file in digest-outputs/*.env; do
+            if [ -f "$file" ]; then
+              cat "$file" >> $GITHUB_ENV
+            fi
+          done
+        fi
+
+    - name: Rollback all images
+      continue-on-error: true
+      run: |
+        # Dynamically rollback all images by discovering them from digest files
+        if [ -d digest-outputs ]; then
+          for file in digest-outputs/*-digests.env; do
+            if [ -f "$file" ]; then
+              IMAGE=$(basename "$file" | sed 's/-digests.env$//')
+              echo "Rolling back $IMAGE..."
+
+              # Source the digest file to get variables
+              . "$file"
+
+              # Set environment variables for this specific image
+              eval DO_DIGEST=\$${IMAGE}_DO_DIGEST
+              eval GHCR_DIGEST=\$${IMAGE}_GHCR_DIGEST
+              eval DH_DIGEST=\$${IMAGE}_DH_DIGEST
+
+              # Get the published image name (not the matrix name)
+              PUBLISHED_NAME_VAR="${IMAGE}_PUBLISHED_NAME"
+              eval PUBLISHED_NAME=\$${PUBLISHED_NAME_VAR}
+
+              # Export for the rollback script
+              export IMAGE_NAME="$PUBLISHED_NAME"
+              export DO_DIGEST
+              export GHCR_DIGEST
+              export DH_DIGEST
+              export ROLLBACK_IMAGE_KEY="$IMAGE"
+
+              # Run rollback for this image
+              sh .github/scripts/rollback-registries.sh || echo "⚠️ Rollback failed for $IMAGE"
+            fi
+          done
+        else
+          echo "⚠️ No digest outputs found, skipping rollback"
+        fi
+
+    - name: Create rollback record
+      continue-on-error: true
+      uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+      env:
+        BUILD_SHA_SHORT: ${{ needs.build-binaries.outputs.sha-short }}
+        BUILD_TIMESTAMP: ${{ needs.build-binaries.outputs.build-timestamp }}
+        BUILD_SUCCESS: ${{ needs.build-binaries.result == 'success' }}
+        RELEASE_SUCCESS: ${{ needs.sign-and-release.outputs.release-created == 'true' }}
+      with:
+        github-token: ${{ env.CI_GH_CLASSIC_PAT }}
+        script: |
+          const createRollbackRecord = require(
+            './.github/scripts/create-rollback-record.js'
+          );
+          await createRollbackRecord({ github, context, core });

@@ -1,0 +1,8 @@
+# This is an act configuration to test GitHub Actions locally.
+# See docs/WORKFLOW_TESTING.md for more details.
+
+# Use minimal Ubuntu image for self-hosted runners (authenticate job).
+# The release job uses its own explicit container specification.
+# Pinned to specific digest for supply-chain security.
+-P self-hosted=catthehacker/ubuntu@sha256:421db41052a1c9eb3c62668e04cbfbd353855619a9771657d9a8a370655db04a
+-P actions-runner=catthehacker/ubuntu@sha256:421db41052a1c9eb3c62668e04cbfbd353855619a9771657d9a8a370655db04a

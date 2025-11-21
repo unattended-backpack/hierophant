@@ -1,5 +1,11 @@
 hierophant.toml
 contemplant.toml
 .env
-/target
+.act-secrets/
+target/
+out/
 **/run-contemplant.sh
+
+# Vendored binaries (checksums only, not the binaries themselves)
+docker/moongate-server
+docker/moongate-server.tar.gz

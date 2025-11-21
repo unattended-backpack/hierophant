@@ -1,0 +1,49 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [ master ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+      - 'docs/**'
+  pull_request:
+    branches: [ master ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+      - 'docs/**'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: [ self-hosted, actions-runner ]
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ rust ]
+    steps:
+      - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
+
+      - name: Setup CodeQL
+        run: echo "/opt/codeql" >> $GITHUB_PATH
+
+      - uses: >-
+          github/codeql-action/init@777daa0c71818e7f377c8adc5415f74544c87142
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - uses: >-
+          github/codeql-action/analyze@777daa0c71818e7f377c8adc5415f74544c87142
+        with:
+          category: "/language:${{ matrix.language }}"
+        continue-on-error: true
