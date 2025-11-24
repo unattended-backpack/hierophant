@@ -298,6 +298,8 @@ act:
 		echo "WARNING: .act-secrets/ directory not found" >&2; \
 		echo "See docs/WORKFLOW_TESTING.md for setup instructions" >&2; \
 	fi
+	@echo "Cleaning previous act artifacts to prevent cross-repo contamination ..."
+	@rm -rf /tmp/act-artifacts/*
 	@echo "Setting up temporary secrets mount ..."
 	@sudo mkdir -p /opt/github-runner
 	@sudo rm -rf /opt/github-runner/secrets

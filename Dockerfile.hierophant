@@ -75,6 +75,7 @@ RUN apt-get update && \
   apt-get install -y --no-install-recommends \
     ca-certificates \
     patchelf && \
+  chmod +x /usr/local/bin/hierophant && \
   patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/hierophant && \
   apt-get remove -y patchelf && \
   apt-get autoremove -y && \
