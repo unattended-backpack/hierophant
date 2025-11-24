@@ -198,7 +198,7 @@ To build both the Hierophant and Contemplant native binaries, you need to instal
 
 You can also build a Docker image using `make docker`, which uses a `BUILD_IMAGE` for building dependencies that are packaged to run in a `RUNTIME_IMAGE`. Configuration values in `.env.maintainer` may be overridden by specifying them as environment variables.
 ```bash
-IMAGE_NAME=hierophant
+HIEROPHANT_NAME=hierophant
 BUILD_IMAGE=registry.digitalocean.com/sigil/petros:latest make build
 RUNTIME_IMAGE=debian:bookworm-slim@sha256:... make build
 ```
@@ -246,7 +246,7 @@ This file contains non-sensitive registry identifiers and build configuration:
 BUILD_IMAGE=unattended/petros:latest
 
 # The runtime base image for the final container.
-# If not set, uses the value from from .env.maintainer.
+# If not set, uses the value from .env.maintainer.
 # Example:
 #   RUNTIME_IMAGE=debian:trixie-slim@sha256:66b37a5078a77098bfc80175fb5eb881a3196809242fd295b25502854e12cbec
 RUNTIME_IMAGE=debian:trixie-slim@sha256:66b37a5078a77098bfc80175fb5eb881a3196809242fd295b25502854e12cbec

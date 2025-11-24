@@ -88,7 +88,8 @@ COPY --from=builder /home/petros/moongate-server /usr/local/bin/moongate-server
 COPY --from=builder /home/petros/.sp1/circuits /opt/sp1/circuits
 
 # Fix binary interpreters.
-RUN patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/contemplant && \
+RUN chmod +x /usr/local/bin/contemplant /usr/local/bin/moongate-server && \
+  patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/contemplant && \
   patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/moongate-server
 
 # Prepare specific non-root user for security.
