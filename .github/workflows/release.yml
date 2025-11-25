@@ -298,6 +298,20 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
+    - name: Clean up Docker resources
+      run: |
+        echo "Current disk usage:"
+        df -h
+        docker system df || true
+
+        echo "Cleaning up Docker resources..."
+        docker builder prune -af || true
+        docker container prune -f || true
+        docker image prune -af || true
+
+        echo "After cleanup:"
+        df -h
+
     - name: Download binary artifacts
       uses: actions/download-artifact@f093f21ca4cfa7c75ccbbc2be54da76a0c7e1f05
       with:
