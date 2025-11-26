@@ -125,6 +125,6 @@ COPY --chmod=755 container/contemplant-entrypoint.sh /usr/local/bin/contemplant-
 USER contemplant
 WORKDIR /home/contemplant
 EXPOSE 2222
-EXPOSE 3001
+EXPOSE 9011
 ENV RUST_LOG=info RUST_LOG_STYLE=always RUST_BACKTRACE=1
 ENTRYPOINT ["/usr/local/bin/contemplant-entrypoint.sh"]
