@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+# Set tmux to use user-writable socket directory
+export TMUX_TMPDIR=$HOME/.tmux
+mkdir -p $TMUX_TMPDIR
+
 # Generate SSH host keys in user-writable location.
 ssh-keygen -t rsa -f ~/ssh_host_keys/ssh_host_rsa_key -N '' -q
 ssh-keygen -t ecdsa -f ~/ssh_host_keys/ssh_host_ecdsa_key -N '' -q
@@ -36,6 +40,10 @@ ENV_EXPORTS=""
 [ -n "$MAX_PROOFS_STORED" ] && ENV_EXPORTS="$ENV_EXPORTS export MAX_PROOFS_STORED=\"$MAX_PROOFS_STORED\";"
 [ -n "$MOONGATE_LOG_PATH" ] && ENV_EXPORTS="$ENV_EXPORTS export MOONGATE_LOG_PATH=\"$MOONGATE_LOG_PATH\";"
 [ -n "$WATCHER_POLLING_INTERVAL_MS" ] && ENV_EXPORTS="$ENV_EXPORTS export WATCHER_POLLING_INTERVAL_MS=\"$WATCHER_POLLING_INTERVAL_MS\";"
+
+# Unset TMUX variable if we're running inside an existing tmux session
+# This ensures we create a new independent tmux server
+unset TMUX
 
 # Only start moongate-server if using CUDA with a moongate endpoint.
 if [ "$PROVER_TYPE" = "cuda" ] && [ -n "$MOONGATE_ENDPOINT" ]; then
