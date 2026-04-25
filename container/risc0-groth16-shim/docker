@@ -1,0 +1,257 @@
+#!/bin/sh
+# risc0-groth16-shim: intercepts the specific `docker run` invocation that
+# risc0-groth16-3.x emits from src/prove/docker.rs when wrapping a STARK seal
+# into a Groth16 proof:
+#
+#   docker run --rm -v <work_dir>:/mnt risczero/risc0-groth16-prover:<tag>
+#
+# Instead of actually spawning a nested container, we dispatch directly to the
+# extracted stark_verify + prover binaries installed under
+# /opt/risc0-groth16-prover/. This is the file named `docker` that
+# Dockerfile.contemplant installs at /usr/local/bin/docker so it wins PATH
+# lookup over any real docker CLI.
+#
+# The image tag is ignored: the extracted binaries are pinned by the
+# committed container/risc0-groth16-prover.tar.gz.sha256 and the tag only
+# matters for reproducing the extraction itself.
+#
+# Also honors `docker --version` so risc0-groth16's is_docker_installed()
+# probe (src/prove/docker.rs) returns true.
+
+set -eu
+
+PROVER_DIR=/opt/risc0-groth16-prover
+
+# Tagged log helper.  Always writes to /home/contemplant/risc0-shim.log so
+# output is visible DURING a shim run via `docker exec ... cat`; critical
+# because risc0-groth16 spawns us with Stdio::piped() for stdout+stderr,
+# which means anything we write to those only surfaces to the parent after
+# we exit.  A hanging shim would otherwise produce zero diagnostic output.
+# Also tees to stderr so the lines additionally appear in docker-compose
+# logs once the shim finally exits, preserving the old behavior for
+# successful runs.
+SHIM_LOG_FILE=${SHIM_LOG_FILE:-/home/contemplant/risc0-shim.log}
+shim_log() {
+  line="[risc0-shim $(date -u +%H:%M:%S) pid=$$] $*"
+  echo "$line" >> "$SHIM_LOG_FILE" 2>/dev/null || true
+  echo "$line" >&2
+}
+
+# Log every non-probe invocation immediately so we can see the shim was
+# entered even if it later hangs. --version is noisy (called once at worker
+# startup and potentially per proof) so we skip logging it.
+if [ "${1:-}" != "--version" ]; then
+  shim_log "ENTER argv: $*"
+fi
+
+case "${1:-}" in
+  --version)
+
+    # Format loosely matches what `docker version` would produce; risc0 only
+    # checks exit code, not the string.
+    echo "risc0-groth16-shim 1.0 (masquerading as docker for risc0-groth16)"
+    exit 0
+    ;;
+  run)
+    shift
+    ;;
+  "")
+    echo "risc0-groth16-shim: missing docker subcommand" >&2
+    exit 1
+    ;;
+  *)
+    echo "risc0-groth16-shim: unsupported docker subcommand '$1'" >&2
+
+    # Single-quoted so the backticks + <tag> don't trip dash's command-sub
+    # parser. dash reads the entire script at load time; an unescaped
+    # backtick pair in a double-quoted string here caused the whole file to
+    # fail with "Syntax error: end of file unexpected" on line 1, making
+    # `docker --version` exit non-zero and triggering risc0-groth16's
+    # "Please install docker first." error.
+    echo "risc0-groth16-shim: only 'docker run ... \
+risczero/risc0-groth16-prover:<tag>' is intercepted" >&2
+    exit 1
+    ;;
+esac
+
+# Parse the expected args for risc0-groth16's invocation.
+work_dir=""
+image_seen=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --rm)
+      shift
+      ;;
+    -v)
+
+      # Host-to-container mount: <host>:<guest>. risc0-groth16 always uses
+      # <work_dir>:/mnt, so we just take the host half.
+      work_dir="${2%%:*}"
+      shift 2
+      ;;
+    risczero/risc0-groth16-prover:*)
+      image_seen=1
+      shift
+      ;;
+    *)
+      echo "risc0-groth16-shim: unexpected arg '$1' in docker run" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ "$image_seen" -ne 1 ]; then
+  echo "risc0-groth16-shim: invocation did not target" \
+    "risczero/risc0-groth16-prover" >&2
+  exit 1
+fi
+if [ -z "$work_dir" ]; then
+  echo "risc0-groth16-shim: no -v <work_dir>:/mnt mount supplied" >&2
+  exit 1
+fi
+if [ ! -d "$PROVER_DIR" ] \
+  || [ ! -x "$PROVER_DIR/stark_verify" ] \
+  || [ ! -x "$PROVER_DIR/prover" ]; then
+  echo "risc0-groth16-shim: $PROVER_DIR is missing required binaries" >&2
+  echo "risc0-groth16-shim: the Dockerfile vendor step probably failed" >&2
+  exit 1
+fi
+
+shim_log "invocation entered (work_dir=$work_dir)"
+input_sz=$(stat -c%s "$work_dir/input.json" 2>/dev/null || echo '<missing>')
+shim_log "input.json size: $input_sz bytes"
+
+# Save a copy of input.json outside work_dir so the user can reproduce this
+# specific invocation against the upstream docker image post-mortem (the
+# TempDir risc0_zkvm wraps work_dir in disappears on shrink_wrap return).
+input_copy=/home/contemplant/risc0-shim-input.json
+if [ -f "$work_dir/input.json" ]; then
+  cp "$work_dir/input.json" "$input_copy" 2>/dev/null || true
+  shim_log "saved input.json copy at $input_copy for post-mortem"
+fi
+
+# Disable `set -e` from here on: we want to ALWAYS reach the `wait` + cleanup
+# block so the subshell can't become an orphaned pipe-holder and deadlock
+# the parent's Command::output() read. We check exit codes explicitly below.
+set +e
+
+# Reproduces /app/prover.sh from the upstream docker image.
+#   - witness FIFO lets stark_verify and prover run concurrently, streaming
+#     the witness from one to the other without a 2+ GB intermediate file
+#   - ulimit -s 16384 matches upstream; stark_verify is deeply recursive
+ulimit -s 16384
+
+# stark_verify dispatches witness output format on the file-extension of its
+# second argument: a `.wtns` suffix produces the gnark binary witness format
+# that the groth16 prover expects, while any other suffix (including none)
+# produces a different format that prover rejects with
+# "failed to load witness: invalid file format". mktemp -u's default suffix
+# is empty, so we must give it an explicit template that preserves .wtns.
+# Upstream's /app/prover.sh sidesteps this by hardcoding /tmp/output.wtns.
+witness="$(mktemp -u).wtns"
+mkfifo "$witness"
+
+# Capture per-binary stderr to files outside the work_dir; risc0-groth16
+# wraps work_dir in a Rust `TempDir` which unlink-on-drop as soon as
+# shrink_wrap returns, so anything we write inside it disappears before the
+# user can `docker exec cat` it post-mortem. /home/contemplant persists for
+# the container's lifetime.
+err_dir="/home/contemplant/risc0-shim-errs"
+mkdir -p "$err_dir" 2>/dev/null || true
+sv_err="$err_dir/stark_verify.err"
+prover_err="$err_dir/prover.err"
+: > "$sv_err" 2>/dev/null || true
+: > "$prover_err" 2>/dev/null || true
+trap 'rm -f "$witness"' EXIT
+
+cd "$PROVER_DIR"
+
+shim_log "forking stark_verify subshell (witness=$witness, err=$sv_err)"
+sv_start=$(date +%s)
+
+# Close stdout+stderr inside the subshell and redirect to /dev/null and the
+# per-binary err file.  This is the critical fix for the deadlock: without
+# these redirections, the subshell inherits the stderr/stdout pipes
+# risc0-groth16 set up via Stdio::piped(), and if the main shim exits first
+# the subshell keeps those pipes open → parent's .output() hangs forever.
+(
+  exec >/dev/null 2>"$sv_err"
+  if ./stark_verify "$work_dir/input.json" "$witness"; then
+    shim_log "stark_verify finished in $(( $(date +%s) - sv_start ))s"
+  else
+    rc=$?
+    shim_log "stark_verify FAILED (exit=$rc); see $sv_err"
+
+    # Write a sentinel so prover's read side unblocks and errors out cleanly
+    # instead of hanging on the FIFO forever.
+    echo "stark_verify failed" > "$witness"
+  fi
+) &
+sv_pid=$!
+
+shim_log "starting gnark prover (err=$prover_err)"
+prover_start=$(date +%s)
+
+# Same fd-hygiene treatment for prover: its stderr goes to a file, not the
+# inherited pipe. Output/exit code are still captured here in the main shim.
+./prover \
+  stark_verify.cs \
+  stark_verify_final.pk.dmp \
+  "$witness" \
+  "$work_dir/proof.json" 2>"$prover_err"
+prover_rc=$?
+prover_elapsed=$(( $(date +%s) - prover_start ))
+shim_log "gnark prover finished in ${prover_elapsed}s (exit=$prover_rc)"
+
+# On prover failure, dump the tail of its stderr into the shim log so we
+# can see the actual reason without docker exec'ing into a live container.
+if [ "$prover_rc" -ne 0 ]; then
+  shim_log "=== prover stderr tail ==="
+  tail -n 40 "$prover_err" 2>/dev/null | while IFS= read -r line; do
+    shim_log "    $line"
+  done
+  shim_log "=== end prover stderr ==="
+fi
+
+# Always dump stark_verify's stderr tail too; even on "success" it's the
+# primary suspect when prover complains about witness format, and its stderr
+# is usually more diagnostic than prover's (prover only sees the output
+# bytes, stark_verify knows what happened during witness generation).
+if [ -s "$sv_err" ]; then
+  shim_log "=== stark_verify stderr tail ==="
+  tail -n 40 "$sv_err" 2>/dev/null | while IFS= read -r line; do
+    shim_log "    $line"
+  done
+  shim_log "=== end stark_verify stderr ==="
+fi
+
+# Give the subshell a bounded window to exit; if it's still blocked on the
+# sentinel write (e.g., prover died before opening the fifo for read), drain
+# the fifo ourselves so the subshell can finish. Not using `wait` unbounded
+# because the whole point of this refactor is to never deadlock on a stuck
+# child.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if ! kill -0 "$sv_pid" 2>/dev/null; then break; fi
+  sleep 1
+done
+if kill -0 "$sv_pid" 2>/dev/null; then
+  shim_log "stark_verify still alive after 10s; draining fifo"
+
+  # If the subshell is trying to write to the fifo with no reader, reading
+  # the fifo once will let its write complete. If it's genuinely stuck on
+  # something else, we'll kill it below.
+  timeout 5 cat "$witness" >/dev/null 2>&1 || true
+
+  # Last resort: kill it so we don't leave an orphan holding fds.
+  if kill -0 "$sv_pid" 2>/dev/null; then
+    shim_log "killing sv_pid=$sv_pid after drain timeout"
+    kill -KILL "$sv_pid" 2>/dev/null || true
+  fi
+  wait "$sv_pid" 2>/dev/null || true
+else
+  wait "$sv_pid" 2>/dev/null || true
+fi
+
+proof_sz=$(stat -c%s "$work_dir/proof.json" 2>/dev/null || echo '<missing>')
+shim_log "shim exit (proof.json=${proof_sz} bytes, prover_rc=$prover_rc)"
+exit "$prover_rc"

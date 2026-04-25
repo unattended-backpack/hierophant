@@ -1,6 +1,11 @@
 [workspace]
-members = ["src/hierophant", "src/contemplant", "src/network-lib"]
-exclude = ["src/fibonacci"]
+members = [
+  "src/hierophant",
+  "src/contemplant",
+  "src/network-lib",
+  "src/fibonacci",
+]
+exclude = ["src/sp1-fibonacci", "src/risc0-fibonacci"]
 resolver = "2"
 
 [workspace.package]
@@ -35,4 +40,5 @@ alloy-primitives = { version = "1.0.0", default-features = false, features = [
 	"getrandom",
 ] }
 clap = "4.5.41"
-sp1-sdk = { version = "5.0.0" }
+sp1-sdk = { version = "=5.0.4" }
+risc0-zkvm = { version = "3.0", default-features = false, features = ["prove", "client"] }

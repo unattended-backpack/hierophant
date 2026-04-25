@@ -8,10 +8,42 @@ use sp1_sdk::network::proto::network::ExecutionStatus;
 use sp1_sdk::{SP1ProofWithPublicValues, SP1Stdin, network::proto::network::ProofMode};
 use std::{cmp::Ordering, fmt::Display};
 
+// Which ZK VM a proof request targets, and which VMs a given contemplant is
+// configured to serve.  Registry uses this to filter idle workers when routing.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub enum VmKind {
+    Sp1,
+    Risc0,
+}
+
+impl VmKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Sp1 => "SP1",
+            Self::Risc0 => "RISC0",
+        }
+    }
+}
+
+impl Display for VmKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WorkerRegisterInfo {
     pub name: String,
     pub contemplant_version: String,
+    pub supported_vms: Vec<VmKind>,
+    // Whether this contemplant can produce RISC Zero Groth16 proofs (fresh
+    // or as a STARK → Groth16 wrap). Opt-in because the groth16 path needs
+    // the vendored prover assets under /opt/risc0-groth16-prover/ and the
+    // docker shim the contemplant image installs; a worker without those
+    // assets leaves this false so hierophant won't route Groth16 work to it.
+    // Meaningful only when supported_vms contains VmKind::Risc0.
+    #[serde(default)]
+    pub groth16_enabled: bool,
     // endpoint to hit to drop this contemplant from it's Magister.
     // Only Some if this contemplant has a Magister
     pub magister_drop_endpoint: Option<String>,
@@ -23,16 +55,31 @@ impl Display for WorkerRegisterInfo {
             Some(x) => format!(" with Magister drop endpoint {x}"),
             None => "".to_string(),
         };
+        let vms = self
+            .supported_vms
+            .iter()
+            .map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let groth16 = if self.groth16_enabled { ", groth16" } else { "" };
         write!(
             f,
-            "{} CONTEMPLANT_VERSION {}{}",
-            self.name, self.contemplant_version, magister_info
+            "{} CONTEMPLANT_VERSION {} [VMs: {}{}]{}",
+            self.name, self.contemplant_version, vms, groth16, magister_info
         )
     }
 }
 
+// VM-tagged proof request.  The enum discriminant is the routing key used by
+// the worker registry to match requests against workers' supported_vms.
 #[derive(Clone, Serialize, Deserialize)]
-pub struct ContemplantProofRequest {
+pub enum ContemplantProofRequest {
+    Sp1(Sp1ProofRequest),
+    Risc0(Risc0ProofRequest),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Sp1ProofRequest {
     pub request_id: B256,
     pub elf: Vec<u8>,
     pub mock: bool,
@@ -40,17 +87,99 @@ pub struct ContemplantProofRequest {
     pub sp1_stdin: SP1Stdin,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Risc0ProofRequest {
+    pub request_id: B256,
+    pub elf: Vec<u8>,
+    // Raw input bytes to be written into the guest's ExecutorEnv.  Hierophant
+    // treats this opaquely; contemplant's Risc0Executor writes it via
+    // ExecutorEnvBuilder::write_slice.
+    pub input: Vec<u8>,
+    pub mode: Risc0ProofMode,
+    pub mock: bool,
+    // If set, this is a two-step STARK → Groth16 wrap, not a fresh proof.
+    // The contemplant's Risc0Executor deserializes these bytes as a prior
+    // Receipt and runs `prover.compress(&receipt, &ProverOpts::groth16())`
+    // instead of `prove_with_opts(elf, input, ...)`. When present, `elf` and
+    // `input` are ignored (but must be valid bincode-wise because they're
+    // part of the struct; typically passed as empty Vecs).
+    //
+    // This backs the Bonsai `POST /snark/create` flow: a client finishes a
+    // STARK session, then asks us to wrap its receipt into a Groth16 seal
+    // suitable for onchain verification.
+    #[serde(default)]
+    pub wrap_of: Option<Vec<u8>>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub enum Risc0ProofMode {
+    Composite,
+    Succinct,
+    Groth16,
+}
+
+impl Risc0ProofMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Composite => "COMPOSITE",
+            Self::Succinct => "SUCCINCT",
+            Self::Groth16 => "GROTH16",
+        }
+    }
+}
+
+impl ContemplantProofRequest {
+    pub fn request_id(&self) -> B256 {
+        match self {
+            Self::Sp1(r) => r.request_id,
+            Self::Risc0(r) => r.request_id,
+        }
+    }
+
+    pub fn vm(&self) -> VmKind {
+        match self {
+            Self::Sp1(_) => VmKind::Sp1,
+            Self::Risc0(_) => VmKind::Risc0,
+        }
+    }
+
+    pub fn is_mock(&self) -> bool {
+        match self {
+            Self::Sp1(r) => r.mock,
+            Self::Risc0(r) => r.mock,
+        }
+    }
+
+    pub fn mode_name(&self) -> String {
+        match self {
+            Self::Sp1(r) => r.mode.as_str_name().to_string(),
+            Self::Risc0(r) => r.mode.as_str().to_string(),
+        }
+    }
+
+    // Returns true when serving this request requires the worker to have the
+    // RISC Zero Groth16 toolchain available (vendored assets + docker shim).
+    // Covers both fresh Groth16 proofs and STARK → Groth16 wrap jobs (which
+    // always target Groth16). Used by the worker registry to skip workers
+    // that registered with groth16_enabled=false.
+    pub fn needs_groth16(&self) -> bool {
+        match self {
+            Self::Sp1(_) => false,
+            Self::Risc0(r) => r.mode == Risc0ProofMode::Groth16 || r.wrap_of.is_some(),
+        }
+    }
+}
+
 impl Display for ContemplantProofRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let request_id = self.request_id;
-        let mock = self.mock;
-        let mode = self.mode.as_str_name();
-
-        if mock {
-            write!(f, "{mode} mock proof with request id {request_id}")
-        } else {
-            write!(f, "{mode} proof with request id {request_id}")
-        }
+        let mock = if self.is_mock() { "mock " } else { "" };
+        write!(
+            f,
+            "{vm} {mock}{mode} proof with request id {id}",
+            vm = self.vm(),
+            mode = self.mode_name(),
+            id = self.request_id()
+        )
     }
 }
 

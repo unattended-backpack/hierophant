@@ -2,9 +2,8 @@ use crate::config::WorkerRegistryConfig;
 use alloy_primitives::B256;
 use anyhow::Result;
 use log::{debug, warn};
-use network_lib::{ProgressUpdate, messages::FromHierophantMessage};
+use network_lib::{ProgressUpdate, VmKind, messages::FromHierophantMessage};
 use serde::{Serialize, Serializer};
-use sp1_sdk::network::proto::network::ProofMode;
 use std::fmt::Display;
 use std::time::SystemTime;
 use tokio::{sync::mpsc, time::Instant};
@@ -13,7 +12,15 @@ use tokio::{sync::mpsc, time::Instant};
 pub struct WorkerState {
     pub name: String,
     pub status: WorkerStatus,
+    pub supported_vms: Vec<VmKind>,
+    // Whether this worker can produce RISC Zero Groth16 proofs. Reported by
+    // the contemplant at registration; used by `handle_assign_proof` to skip
+    // workers that would reject a Groth16 request.
+    pub groth16_enabled: bool,
     pub strikes: usize,
+    // Tracks the running average over SP1 Compressed proofs (the canonical
+    // "span proof" for SP1 op-succinct workloads); RISC Zero Composite proofs
+    // also roll into this metric.
     pub num_completed_span_proofs: usize,
     pub average_span_proof_time: f32,
     #[serde(skip_serializing)]
@@ -26,12 +33,16 @@ pub struct WorkerState {
 impl WorkerState {
     pub(super) fn new(
         name: String,
+        supported_vms: Vec<VmKind>,
+        groth16_enabled: bool,
         magister_drop_endpoint: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) -> Self {
         Self {
             name,
             status: WorkerStatus::Idle,
+            supported_vms,
+            groth16_enabled,
             strikes: 0,
             num_completed_span_proofs: 0,
             average_span_proof_time: 0.0,
@@ -45,28 +56,42 @@ impl WorkerState {
         self.status != WorkerStatus::Idle
     }
 
+    pub(super) fn supports(&self, vm: VmKind) -> bool {
+        self.supported_vms.contains(&vm)
+    }
+
+    // True iff this worker can serve the given request. Combines the VM-kind
+    // filter with the Groth16 capability filter so `handle_assign_proof` has
+    // a single predicate to check.
+    pub(super) fn can_serve(&self, request: &network_lib::ContemplantProofRequest) -> bool {
+        if !self.supports(request.vm()) {
+            return false;
+        }
+        if request.needs_groth16() && !self.groth16_enabled {
+            return false;
+        }
+        true
+    }
+
     pub(super) fn completed_proof(&mut self, minutes_to_complete: f32) {
-        match self.status {
-            // it is never idle if we get here
-            WorkerStatus::Idle => (),
-            WorkerStatus::Busy { proof_mode, .. } => {
-                // if it was a span proof, add it to the average
-                if let ProofMode::Compressed = proof_mode {
-                    let n = self.num_completed_span_proofs as f32 + 1.0;
-                    let old_average = self.average_span_proof_time;
-                    let new_element = minutes_to_complete;
-
-                    let new_average = add_to_average(n, old_average, new_element);
-
-                    self.average_span_proof_time = new_average;
-                    self.num_completed_span_proofs += 1;
-                }
+        if let WorkerStatus::Busy { vm, mode_name, .. } = &self.status {
+            // span-proof tracking: SP1 Compressed and RISC Zero Composite are
+            // the respective "default recursion-segment" modes that op-succinct
+            // -style workloads issue in bulk.  Average those together.
+            let is_span = matches!(
+                (vm, mode_name.as_str()),
+                (VmKind::Sp1, "COMPRESSED") | (VmKind::Risc0, "COMPOSITE")
+            );
+            if is_span {
+                let n = self.num_completed_span_proofs as f32 + 1.0;
+                let old_average = self.average_span_proof_time;
+                let new_average = add_to_average(n, old_average, minutes_to_complete);
+                self.average_span_proof_time = new_average;
+                self.num_completed_span_proofs += 1;
             }
-        };
+        }
 
-        // set them to idle
         self.status = WorkerStatus::Idle;
-        // they've been good, reset their proofs
         self.strikes = 0;
     }
 
@@ -75,15 +100,15 @@ impl WorkerState {
         debug!("Strike added to worker.  New strikes: {}", self.strikes);
     }
 
-    pub(super) fn assigned_proof(&mut self, request_id: B256, proof_mode: ProofMode) {
+    pub(super) fn assigned_proof(&mut self, request_id: B256, vm: VmKind, mode_name: String) {
         self.status = WorkerStatus::Busy {
             request_id,
-            proof_mode,
+            vm,
+            mode_name,
             start_time: Instant::now(),
             progress: None,
             time_of_last_update: SystemTime::now(),
         };
-        // This worker has been good.  Reset their strikes
         self.strikes = 0;
     }
 
@@ -91,10 +116,6 @@ impl WorkerState {
         self.last_heartbeat = Instant::now();
     }
 
-    // drop worker if they have too many strikes OR
-    // if it's been too long since their last heartbeat OR
-    // if they've been working on a proof for too long OR
-    // if it's been too long since their proof made progress
     pub(super) fn should_drop(&self, config: &WorkerRegistryConfig) -> bool {
         if self.strikes >= config.max_worker_strikes {
             warn!(
@@ -115,10 +136,9 @@ impl WorkerState {
             time_of_last_update,
             progress,
             ..
-        } = self.status
+        } = &self.status
         {
             let mins_on_this_proof = (start_time.elapsed().as_secs_f32() / 60.0) as u64;
-            // if they've been working on this proof for too long
             if mins_on_this_proof > config.proof_timeout_mins {
                 warn!(
                     "Dropping contemplant {} because they have been working on proof request {} for {} mins.  Max proof time is set to {} mins.",
@@ -126,12 +146,10 @@ impl WorkerState {
                 );
                 true
             } else if let Ok(duration_since_last_update) =
-                SystemTime::now().duration_since(time_of_last_update)
+                SystemTime::now().duration_since(*time_of_last_update)
             {
                 let mins_since_last_update =
                     (duration_since_last_update.as_secs_f64() / 60.0) as u64;
-                // if it's been too long since this contemplant has reported progress on this proof
-                // (disabled if worker_required_progress_interval_mins is 0)
                 if config.worker_required_progress_interval_mins > 0
                     && mins_since_last_update > config.worker_required_progress_interval_mins
                 {
@@ -144,9 +162,6 @@ impl WorkerState {
                     false
                 }
             } else if progress.is_none() {
-                // progress starts as None and moves to Some when the execution report is done
-                // and the proof starts executing.  Progress never moves from Some to None.
-                // If the contemplant takes too long on the execution report, drop them.
                 if mins_on_this_proof > config.worker_max_execution_report_mins {
                     warn!(
                         "Dropping contemplant {} of proof {} because they've been running the execution report for {} mins.  Max time allowed {} mins.",
@@ -167,25 +182,33 @@ impl WorkerState {
         }
     }
 
-    // returns the proof it's currently working on, if any
-    pub(super) fn current_proof(&self) -> Option<(B256, ProofMode)> {
-        match self.status {
+    // returns (request_id, vm, mode_name) of the current proof, if any
+    pub(super) fn current_proof(&self) -> Option<(B256, VmKind, String)> {
+        match &self.status {
             WorkerStatus::Idle => None,
             WorkerStatus::Busy {
                 request_id,
-                proof_mode,
+                vm,
+                mode_name,
                 ..
-            } => Some((request_id, proof_mode)),
+            } => Some((*request_id, *vm, mode_name.clone())),
         }
     }
 }
 
 impl Display for WorkerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let vms = self
+            .supported_vms
+            .iter()
+            .map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let groth16 = if self.groth16_enabled { ", Groth16" } else { "" };
         write!(
             f,
-            "name: {} status: {}, strikes: {}",
-            self.name, self.status, self.strikes
+            "name: {} [VMs: {}{}] status: {}, strikes: {}",
+            self.name, vms, groth16, self.status, self.strikes
         )
     }
 }
@@ -195,7 +218,8 @@ pub enum WorkerStatus {
     Idle,
     Busy {
         request_id: B256,
-        proof_mode: ProofMode,
+        vm: VmKind,
+        mode_name: String,
         #[serde(serialize_with = "serialize_instant_as_minutes")]
         start_time: Instant,
         progress: Option<ProgressUpdate>,
@@ -219,7 +243,8 @@ impl Display for WorkerStatus {
             Self::Idle => write!(f, "Idle"),
             Self::Busy {
                 request_id,
-                proof_mode,
+                vm,
+                mode_name,
                 start_time,
                 progress,
                 ..
@@ -233,8 +258,7 @@ impl Display for WorkerStatus {
                 };
                 write!(
                     f,
-                    "{} proof {request_id} is {progress}. Computing for {minutes} minutes",
-                    proof_mode.as_str_name()
+                    "{vm} {mode_name} proof {request_id} is {progress}. Computing for {minutes} minutes"
                 )
             }
         }

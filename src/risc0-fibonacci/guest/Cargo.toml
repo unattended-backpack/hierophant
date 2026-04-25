@@ -1,0 +1,26 @@
+[package]
+name = "fibonacci-guest"
+version = "0.1.0"
+edition = "2021"
+
+# Guest is its own workspace root so `cargo risczero build` / `cargo metadata`
+# don't keep walking up the tree and find the repo-root workspace.
+[workspace]
+
+[dependencies]
+risc0-zkvm = { version = "3.0", default-features = false, features = ["std"] }
+# Shared fibonacci(n) implementation. The guest here is its own cargo
+# workspace root (see [workspace] above), so this path-dep reaches out of
+# the risc0-fibonacci subtree and across into the main repo's
+# `src/fibonacci` crate. Keeping the function in one place is the whole
+# purpose of that shared crate.
+fibonacci = { path = "../../fibonacci" }
+
+[profile.release]
+
+# risc0-build emits the guest into ./target/riscv32im-risc0-zkvm-elf/docker/
+# under the release profile by default. Opt levels chosen for the guest-side
+# cycle count trade-off; mirror upstream risc0 templates.
+opt-level = 3
+lto = "thin"
+debug = 0

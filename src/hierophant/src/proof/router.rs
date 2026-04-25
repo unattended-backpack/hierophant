@@ -6,7 +6,9 @@ use crate::{
 use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{error, warn};
-use network_lib::ContemplantProofRequest;
+use network_lib::{
+    ContemplantProofRequest, Risc0ProofMode, Risc0ProofRequest, Sp1ProofRequest,
+};
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use tokio::time::Duration;
 
@@ -30,20 +32,15 @@ impl ProofRouter {
         }
     }
 
-    // looks on-disk for the proof, checks for contemplants currently working on the proof,
-    // or routes the proof request to an idle contemplant.
-    // returns a proof request id
-    pub async fn route_proof(
+    // SP1 path: fetches the bincode-serialized SP1 ELF and SP1Stdin artifacts
+    // out of the local store, assembles a Sp1ProofRequest, and hands it to the
+    // worker registry for assignment.
+    pub async fn route_sp1_proof(
         &self,
         request_id: B256,
-        // uri of the ELF previously stored
         program_uri: ArtifactUri,
-        // uri of the stdin previously stored
         stdin_uri: ArtifactUri,
-        // Type of proof being requested
         mode: ProofMode,
-        // Need to get Program and Stdin artifacts to request the proof, so we have to use the
-        // artifact_store
         artifact_store_client: ArtifactStoreClient,
     ) -> Result<()> {
         let stdin_artifact_bytes = match artifact_store_client
@@ -57,8 +54,7 @@ impl ProofRouter {
 
         let sp1_stdin: SP1Stdin = bincode::deserialize(&stdin_artifact_bytes)?;
 
-        // get the elf
-        let elf = match artifact_store_client
+        let elf: Vec<u8> = match artifact_store_client
             .get_artifact_bytes(program_uri.clone())
             .await
         {
@@ -67,13 +63,44 @@ impl ProofRouter {
             Err(e) => return Err(anyhow!("Error getting program artifact {program_uri}: {e}")),
         };
 
-        let proof_request = ContemplantProofRequest {
+        let proof_request = ContemplantProofRequest::Sp1(Sp1ProofRequest {
             request_id,
             mock: self.mock_mode,
             mode,
             sp1_stdin,
             elf,
-        };
+        });
+
+        self.worker_registry_client
+            .assign_proof_request(proof_request)
+            .await
+    }
+
+    // RISC Zero path: callers (the Bonsai REST handlers) provide the ELF bytes
+    // and the opaque input blob directly, since Bonsai's wire protocol uploads
+    // those as discrete resources rather than wrapped like SP1's do.
+    //
+    // `wrap_of` is for the two-step Bonsai `POST /snark/create` flow: when
+    // Some, we're asking the contemplant to take an existing receipt (the
+    // bytes) and wrap it into the requested `mode` (typically Groth16). In
+    // that case `elf` and `input` are ignored by the contemplant and should
+    // be passed as empty Vecs.
+    pub async fn route_risc0_proof(
+        &self,
+        request_id: B256,
+        elf: Vec<u8>,
+        input: Vec<u8>,
+        mode: Risc0ProofMode,
+        wrap_of: Option<Vec<u8>>,
+    ) -> Result<()> {
+        let proof_request = ContemplantProofRequest::Risc0(Risc0ProofRequest {
+            request_id,
+            elf,
+            input,
+            mode,
+            mock: self.mock_mode,
+            wrap_of,
+        });
 
         self.worker_registry_client
             .assign_proof_request(proof_request)
@@ -86,19 +113,12 @@ impl ProofRouter {
             .proof_status_request(proof_request_id, self.proof_status_timeout)
             .await
         {
-            // we got a proof status from the contemplant assigned to this proof
-            // or we timed out when trying to contact the worker assigned to this proof,
-            // in which case the client should re-request the proof_status at a later time
             Ok(Some(status)) => Ok(status),
-            // No worker is assigned to this proof (will be hit eventually if a worker
-            // continues to time out after multiple proof_status request)
             Ok(None) => {
                 warn!("Can't find proof request {proof_request_id}");
                 Ok(ProofStatus::lost())
             }
             Err(e) => {
-                // We didn't reach the timeout but the sender was dropped
-                // This most likely means our worker_registry service shut down and is unrecoverable
                 error!("Can't get proof status of request {proof_request_id} from worker: {e}");
                 Ok(ProofStatus::lost())
             }

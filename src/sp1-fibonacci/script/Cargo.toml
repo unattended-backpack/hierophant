@@ -1,0 +1,31 @@
+[package]
+version = "0.1.0"
+name = "fibonacci-script"
+edition = "2021"
+default-run = "evm"
+
+[[bin]]
+name = "evm"
+path = "src/bin/evm.rs"
+
+[dependencies]
+# `native-gnark` links gnark-go into the binary via CGO instead of shelling
+# out to `docker run risczero/...`-style containers for SNARK verification.
+# Without it, client.verify(&proof, &vk) on a Plonk/Groth16 proof panics
+# with "Failed to run `docker info`" because the test-client image has no
+# docker CLI. The petros base image provides the CGO toolchain (go + gcc)
+# that this feature's build.rs needs.
+sp1-sdk = { version = "5.0.8", features = ["native-gnark"] }
+clap = { version = "4.0", features = ["derive", "env"] }
+# Used by create_proof_fixture in src/bin/evm.rs to dump a JSON fixture
+# alongside each Plonk/Groth16 test run. The fixture is for out-of-band
+# Solidity verification; the output dir is gitignored so it never lands
+# in a commit.
+serde = { version = "1.0.200", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+hex = "0.4.3"
+alloy-sol-types = { workspace = true }
+fibonacci-lib = { path = "../lib" }
+
+[build-dependencies]
+sp1-build = "5.0.8"

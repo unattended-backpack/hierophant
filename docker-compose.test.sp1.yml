@@ -1,0 +1,121 @@
+services:
+  hierophant:
+    image: hierophant:latest
+    container_name: test-hierophant
+    networks:
+      - test-network
+    ports:
+      - "9000:9000"  # gRPC
+      - "9010:9010"  # HTTP + WebSocket
+    environment:
+      - RUST_LOG=info
+      - THIS_HIEROPHANT_IP=hierophant
+      - WORKER_REQUIRED_PROGRESS_INTERVAL_MINS=0
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/9010' || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  contemplant:
+    image: contemplant:latest
+    container_name: test-contemplant
+    networks:
+      - test-network
+    environment:
+      - RUST_LOG=info
+      - HIEROPHANT_WS_ADDRESS=ws://hierophant:9010/ws
+
+      # Declare which VMs this contemplant serves. The env-var fallback in
+      # config.rs expands CONTEMPLANT_VMS into `[[provers]]` entries when no
+      # contemplant.toml is mounted. Backend defaults to cpu.
+      - CONTEMPLANT_VMS=sp1
+
+      # BACKEND plumbed from `make test-sp1 BACKEND=...`. When cuda, the
+      # entrypoint auto-starts moongate-server on :3000 (tmux'd alongside
+      # the contemplant) because CONTEMPLANT_SP1_BACKEND=cuda +
+      # MOONGATE_ENDPOINT are both set. CPU leaves both unset.
+      - CONTEMPLANT_SP1_BACKEND=${CONTEMPLANT_SP1_BACKEND:-}
+      - MOONGATE_ENDPOINT=${MOONGATE_ENDPOINT:-}
+    depends_on:
+      hierophant:
+        condition: service_healthy
+
+    # Gate readiness on the contemplant's HTTP /health endpoint returning
+    # `true`, which happens only after WorkerState::new has finished and the
+    # websocket handshake with hierophant completed (api/connect_to_hierophant
+    # flips the ready flag). A plain `pgrep contemplant` passes as soon as
+    # the binary starts, long before it has registered; which fails our SP1
+    # CUDA path because SP1Prover::new + CudaProver ready-poll together take
+    # ~35 s, and test-client otherwise sends its proof request to hierophant
+    # before any worker is assigned and bails on UNFULFILLABLE.
+    # No curl/wget in the runtime image, so probe with bash's /dev/tcp.
+    # Runtime image is debian:trixie-slim where /bin/sh is dash, which does
+    # not implement the /dev/tcp/ special path; so we spell out `bash -c`
+    # in CMD form to force the shell that does.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - |
+          exec 3<>/dev/tcp/localhost/9011 || exit 1
+          printf 'GET /health HTTP/1.0\r\n\r\n' >&3
+          grep -q '^true$' <&3 || exit 1
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+    # GPU reservation. On CPU-only hosts (no nvidia-container-runtime),
+    # docker-compose up will error with a clear "could not select device
+    # driver 'nvidia'" message; intentional: BACKEND=cuda runs need real
+    # GPU access, and BACKEND=cpu runs that happen to land on GPU hosts
+    # just ignore the reservation. The Makefile derives CONTEMPLANT_FEATURES
+    # from BACKEND, so a BACKEND=cpu build doesn't link libcudart at all and
+    # runs anywhere; BACKEND=cuda builds link it and then require the host
+    # to satisfy this reservation.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Build context is the repo root (not ./src/sp1-fibonacci) so the
+  # Dockerfile can COPY container/vendor.sh and provers/, which it uses
+  # to vendor SP1 Groth16+Plonk circuit artifacts for client-side proof
+  # verification. Paths inside the Dockerfile are adjusted accordingly.
+  test-client:
+    build:
+      context: .
+      dockerfile: src/sp1-fibonacci/Dockerfile
+      args:
+        BUILD_IMAGE: ${BUILD_IMAGE:-unattended/petros:latest}
+        VENDOR_BASE_URL: ${VENDOR_BASE_URL}
+        SP1_CIRCUITS_VERSION: ${SP1_CIRCUITS_VERSION}
+    container_name: test-client
+    networks:
+      - test-network
+    depends_on:
+      hierophant:
+        condition: service_healthy
+      contemplant:
+        condition: service_healthy
+    environment:
+      - RUST_LOG=info
+
+      # SP1_PROOF_SYSTEM is plumbed from `make test-sp1 MODE=...`
+      # (core|compressed|plonk|groth16); the evm binary's --system flag
+      # selects the corresponding prover.prove(..).<mode>().run() call.
+      - SP1_PROOF_SYSTEM=${SP1_PROOF_SYSTEM:-plonk}
+    command:
+      - sh
+      - -c
+      - cargo run --release --bin evm -- --n 10 --system "$$SP1_PROOF_SYSTEM"
+
+networks:
+  test-network:
+    driver: bridge

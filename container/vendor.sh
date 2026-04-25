@@ -40,8 +40,8 @@ vendor() {
     exit 1
   fi
 
-  log "Verifying checksum for $archive_path..."
   # Copy checksum to /tmp for verification
+  log "Verifying checksum for $archive_path..."
   cp "$checksum_file" "/tmp/${archive_name}.sha256"
   if (cd /tmp && sha256sum -c "${archive_name}.sha256"); then
     log "Checksum verified for $archive_path"
@@ -51,11 +51,18 @@ vendor() {
     exit 1
   fi
 
+  # Extract to a unique directory based on archive name. Strip both
+  # `.tar.gz` and `.tar.xz` suffixes so the directory name is readable
+  # regardless of compression (the rzup-shaped risc0-groth16 tarball ships
+  # as .tar.xz while the SP1 / moongate / legacy-risc0 tarballs are .tar.gz).
   log "Extracting $archive_path..."
-  # Extract to a unique directory based on archive name
-  local extract_dir="/tmp/extracted-$(basename ${archive_name} .tar.gz)"
+  local base
+  base=$(basename "$archive_name")
+  base=${base%.tar.gz}
+  base=${base%.tar.xz}
+  local extract_dir="/tmp/extracted-${base}"
   mkdir -p "$extract_dir"
-  tar -xzf "$archive_path" -C "$extract_dir"
+  tar -xf "$archive_path" -C "$extract_dir"
   rm -f "$archive_path" "/tmp/${archive_name}.sha256"
   touch "$extract_marker"
   log "Extracted and verified: $archive_name to $extract_dir"

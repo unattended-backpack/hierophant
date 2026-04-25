@@ -18,16 +18,46 @@ RUN test -n "${VENDOR_BASE_URL}" || ( \
 ENV VENDOR_BASE_URL=${VENDOR_BASE_URL}
 
 # Circuit version to use (matches SP1 SDK version).
-ARG CIRCUITS_VERSION
-RUN test -n "${CIRCUITS_VERSION}" || ( \
-  echo "ERROR: CIRCUITS_VERSION build argument is required!" >&2 \
+ARG SP1_CIRCUITS_VERSION
+RUN test -n "${SP1_CIRCUITS_VERSION}" || ( \
+  echo "ERROR: SP1_CIRCUITS_VERSION build argument is required!" >&2 \
   && exit 1)
-ENV CIRCUITS_VERSION=${CIRCUITS_VERSION}
+ENV SP1_CIRCUITS_VERSION=${SP1_CIRCUITS_VERSION}
 
-# Prepare the build image.
+# Download the vendored SP1 circuit files FIRST, before the cargo build.
+# Placing vendoring above the source COPY + compile means docker's layer
+# cache holds the 2.5 GB of circuit artifacts across routine source edits ;
+# only a prover/ or vendor.sh change (or a vendor-arg bump) re-downloads.
+# Remote: ${VENDOR_BASE_URL}/sp1/${SP1_CIRCUITS_VERSION}/{groth16,plonk}.tar.gz
+WORKDIR /tmp
+COPY container/vendor.sh /tmp/vendor.sh
+COPY provers/ /tmp/provers/
+RUN /tmp/vendor.sh "groth16.tar.gz" "provers/sp1/${SP1_CIRCUITS_VERSION}" "sp1/${SP1_CIRCUITS_VERSION}/" && \
+  /tmp/vendor.sh "plonk.tar.gz" "provers/sp1/${SP1_CIRCUITS_VERSION}" "sp1/${SP1_CIRCUITS_VERSION}/"
+RUN mkdir -p /home/petros/.sp1/circuits/groth16/${SP1_CIRCUITS_VERSION} && \
+  mkdir -p /home/petros/.sp1/circuits/plonk/${SP1_CIRCUITS_VERSION} && \
+  cp -r /tmp/extracted-groth16/${SP1_CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/groth16/${SP1_CIRCUITS_VERSION}/ && \
+  cp -r /tmp/extracted-plonk/${SP1_CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/plonk/${SP1_CIRCUITS_VERSION}/ && \
+  touch /home/petros/.sp1/circuits/groth16/.download_complete && \
+  touch /home/petros/.sp1/circuits/plonk/.download_complete
+
+# Prepare the build image. COPY only the workspace members that cargo
+# actually resolves (see Cargo.toml's `[workspace] members = [...]`). The
+# test-client crates under src/sp1-fibonacci/ and src/risc0-fibonacci/ are
+# excluded from the workspace and are irrelevant to building the
+# hierophant binary; copying them in would make any test-client edit
+# invalidate this layer and every layer below it. Cargo still requires
+# every workspace member directory to exist at resolution time, so all
+# of them must be present even when the hierophant binary doesn't
+# transitively depend on every member (e.g. `src/fibonacci` is consumed
+# only by the integration-test guests / hosts but is listed as a member
+# to keep it in the repo's one workspace lockfile).
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
-COPY src/ src/
+COPY src/hierophant/ src/hierophant/
+COPY src/contemplant/ src/contemplant/
+COPY src/network-lib/ src/network-lib/
+COPY src/fibonacci/ src/fibonacci/
 
 # Conditionally build from source or use a pre-built binary.
 COPY out/ /build/out/
@@ -37,22 +67,9 @@ RUN if [ "$BUILD_TYPE" = "prebuilt" ]; then \
   cp /build/out/hierophant /build/hierophant-binary; \
 else \
   echo "Building from source ..."; \
-  cargo build --release --bin hierophant; \
+  cargo build --release --bin hierophant --locked; \
   cp /build/target/release/hierophant /build/hierophant-binary; \
 fi
-
-# Download the vendored circuit files.
-WORKDIR /tmp
-COPY container/vendor.sh /tmp/vendor.sh
-COPY circuits/ /tmp/circuits/
-RUN /tmp/vendor.sh "groth16.tar.gz" "circuits/${CIRCUITS_VERSION}/groth16" "${CIRCUITS_VERSION}/" && \
-  /tmp/vendor.sh "plonk.tar.gz" "circuits/${CIRCUITS_VERSION}/plonk" "${CIRCUITS_VERSION}/"
-RUN mkdir -p /home/petros/.sp1/circuits/groth16/${CIRCUITS_VERSION} && \
-  mkdir -p /home/petros/.sp1/circuits/plonk/${CIRCUITS_VERSION} && \
-  cp -r /tmp/extracted-groth16/${CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/groth16/${CIRCUITS_VERSION}/ && \
-  cp -r /tmp/extracted-plonk/${CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/plonk/${CIRCUITS_VERSION}/ && \
-  touch /home/petros/.sp1/circuits/groth16/.download_complete && \
-  touch /home/petros/.sp1/circuits/plonk/.download_complete
 
 # Prepare a runtime container.
 FROM ${RUNTIME_IMAGE}
