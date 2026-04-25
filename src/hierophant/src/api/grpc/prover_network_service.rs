@@ -266,7 +266,7 @@ impl ProverNetwork for ProverNetworkService {
             if let Err(e) = self
                 .state
                 .proof_router
-                .route_proof(
+                .route_sp1_proof(
                     request_id,
                     program_uri.clone(),
                     stdin_uri.clone(),
@@ -469,7 +469,7 @@ impl ProverNetwork for ProverNetworkService {
             );
         }
 
-        // Succinct's prover network is integrated on-chain but ours isn't
+        // Succinct's prover network is integrated onchain but ours isn't
         let request_tx_hash = vec![];
         let fulfill_tx_hash = None;
         let public_values_hash = None;
@@ -632,28 +632,40 @@ async fn download_artifacts_and_route_proof(
         path.to_str().unwrap_or("unknown")
     );
 
-    // Remove from pending artifacts
-    state
-        .proofs_pending_artifacts
-        .lock()
-        .await
-        .remove(&request_id);
-
-    // Now route the proof to a worker
-    if let Err(e) = state
+    // Route the proof FIRST, then remove the pending_artifacts marker. We
+    // hold the marker over the full route call (which is async; it fetches
+    // the ELF + stdin from the artifact store and sends AssignProofRequest to
+    // the registry) so that any GetProofRequestStatus from the client that
+    // arrives while we're mid-routing still resolves to "Requested" via the
+    // pending_artifacts branch in the status handler, rather than to
+    // "Unfulfillable" via the registry reporting no worker yet assigned.
+    //
+    // Without this ordering the SP1 SDK would see an UNFULFILLABLE status on
+    // its first poll; which it treats as terminal; and give up before the
+    // AssignProofRequest command had a chance to land on the registry's mpsc.
+    // The race is tiny on paper but ~always fires when circuit artifacts are
+    // already on disk (download completes in microseconds), which is the
+    // common case.
+    let route_res = state
         .proof_router
-        .route_proof(
+        .route_sp1_proof(
             request_id,
             program_uri,
             stdin_uri,
             mode,
             state.artifact_store_client.clone(),
         )
+        .await;
+
+    state
+        .proofs_pending_artifacts
+        .lock()
         .await
-    {
-        error!("Error routing proof {request_id} after downloading artifacts: {e}");
-    } else {
-        info!("Successfully routed proof {request_id} after artifact download");
+        .remove(&request_id);
+
+    match route_res {
+        Ok(()) => info!("Successfully routed proof {request_id} after artifact download"),
+        Err(e) => error!("Error routing proof {request_id} after downloading artifacts: {e}"),
     }
 }
 

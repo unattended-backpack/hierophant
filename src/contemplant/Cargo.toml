@@ -4,8 +4,6 @@ version = "0.1.0"
 license.workspace = true
 edition.workspace = true
 authors.workspace = true
-# homepage.workspace = true
-# repository.workspace = true
 
 [dependencies]
 tokio.workspace = true
@@ -17,6 +15,7 @@ regex = "1"
 futures-util.workspace = true
 tokio-tungstenite.workspace = true
 sp1-sdk.workspace = true
+risc0-zkvm.workspace = true
 network-lib = { path = "../network-lib" }
 toml.workspace = true
 anyhow.workspace = true
@@ -31,6 +30,6 @@ tracing-subscriber.workspace = true
 tracing.workspace = true
 clap.workspace = true
 
-# use `cargo build --features enable-native-gnark` when building a binary that uses undockerized cudaProver
 [features]
 enable-native-gnark = ["sp1-sdk/native-gnark"]
+enable-risc0-cuda = ["risc0-zkvm/cuda"]

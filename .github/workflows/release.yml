@@ -358,7 +358,9 @@ jobs:
 
         # Export build configuration variables
         echo "VENDOR_BASE_URL=${VENDOR_BASE_URL}" >> $GITHUB_ENV
-        echo "CIRCUITS_VERSION=${CIRCUITS_VERSION}" >> $GITHUB_ENV
+        echo "SP1_CIRCUITS_VERSION=${SP1_CIRCUITS_VERSION}" >> $GITHUB_ENV
+        echo "RISC0_GROTH16_PROVER_TAG=${RISC0_GROTH16_PROVER_TAG}" >> $GITHUB_ENV
+        echo "RISC0_GROTH16_RZUP_VERSION=${RISC0_GROTH16_RZUP_VERSION}" >> $GITHUB_ENV
 
         # Load registry configuration
         . /opt/github-runner/secrets/registry.env
@@ -380,7 +382,9 @@ jobs:
           --build-arg BUILD_IMAGE="${{ needs.authenticate.outputs.build-image }}" \
           --build-arg RUNTIME_IMAGE="${{ needs.authenticate.outputs.runtime-image }}" \
           --build-arg VENDOR_BASE_URL="${{ env.VENDOR_BASE_URL }}" \
-          --build-arg CIRCUITS_VERSION="${{ env.CIRCUITS_VERSION }}" \
+          --build-arg SP1_CIRCUITS_VERSION="${{ env.SP1_CIRCUITS_VERSION }}" \
+          --build-arg RISC0_GROTH16_PROVER_TAG="${{ env.RISC0_GROTH16_PROVER_TAG }}" \
+          --build-arg RISC0_GROTH16_RZUP_VERSION="${{ env.RISC0_GROTH16_RZUP_VERSION }}" \
           -f Dockerfile.$MATRIX_IMAGE \
           -t $IMAGE_NAME:${{ github.sha }} \
           .

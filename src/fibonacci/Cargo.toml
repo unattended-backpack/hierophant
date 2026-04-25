@@ -1,10 +1,20 @@
-[workspace]
-members = [
-    "lib",
-    "program",
-    "script",
-]
-resolver = "2"
+[package]
+name = "fibonacci"
+version = "0.1.0"
+edition = "2021"
+license = "LicenseRef-VPL WITH AGPL-3.0-only"
 
-[workspace.dependencies]
-alloy-sol-types = "1.0"
+# Shared, no_std, zero-dependency implementation of `fibonacci(n)` used by
+# both the SP1 and RISC Zero integration-test guests (and their hosts, for
+# cross-checking the committed journal / public values). The point of this
+# crate is to demonstrate that identical business logic can be shared
+# verbatim across ZK VMs; rebuilding the same function twice per VM would
+# defeat that.
+#
+# Kept deliberately dependency-free so it compiles under every zkVM
+# toolchain (SP1 RISC-V, risc0 RISC-V, ordinary host) without any feature
+# juggling. `edition = "2021"` rather than the workspace's 2024 because the
+# Succinct + risc0 guest toolchains ship older rustc versions that don't
+# recognize edition 2024; sticking to 2021 keeps this crate buildable from
+# every sub-workspace that path-deps to it.
+[dependencies]

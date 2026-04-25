@@ -1,0 +1,109 @@
+services:
+  hierophant:
+    image: hierophant:latest
+    container_name: test-hierophant-risc0
+    networks:
+      - test-network
+    ports:
+      - "9000:9000"  # gRPC (unused for RISC Zero but exposed for parity)
+      - "9010:9010"  # HTTP + WebSocket + Bonsai
+    environment:
+      - RUST_LOG=info
+      - THIS_HIEROPHANT_IP=hierophant
+      - WORKER_REQUIRED_PROGRESS_INTERVAL_MINS=0
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/9010' || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  contemplant:
+    image: contemplant:latest
+    container_name: test-contemplant-risc0
+    networks:
+      - test-network
+    environment:
+      - RUST_LOG=info
+      - HIEROPHANT_WS_ADDRESS=ws://hierophant:9010/ws
+
+      # Declare this contemplant serves the RISC Zero VM. CONTEMPLANT_RISC0_*
+      # are plumbed from `make test-risc0`: BACKEND={cpu,cuda} picks runtime
+      # proving backend (in-process for both); MODE={composite,succinct,
+      # groth16,groth16-direct} determines whether Groth16 capability is
+      # needed, flipped via CONTEMPLANT_RISC0_GROTH16.
+      - CONTEMPLANT_VMS=risc0
+      - CONTEMPLANT_RISC0_BACKEND=${CONTEMPLANT_RISC0_BACKEND:-cpu}
+      - CONTEMPLANT_RISC0_GROTH16=${CONTEMPLANT_RISC0_GROTH16:-false}
+    depends_on:
+      hierophant:
+        condition: service_healthy
+
+    # Gate readiness on the contemplant's HTTP /health endpoint returning
+    # `true`, which flips only after WorkerState::new finishes and the
+    # websocket handshake with hierophant completes. `pgrep contemplant`
+    # passes as soon as the binary starts, before it has registered. No
+    # curl/wget in the runtime image, so probe via bash's /dev/tcp.
+    # Runtime image is debian:trixie-slim where /bin/sh is dash, which does
+    # not implement the /dev/tcp/ special path; so we spell out `bash -c`
+    # in CMD form to force the shell that does.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - |
+          exec 3<>/dev/tcp/localhost/9011 || exit 1
+          printf 'GET /health HTTP/1.0\r\n\r\n' >&3
+          grep -q '^true$' <&3 || exit 1
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+    # GPU reservation. On CPU-only hosts (no nvidia-container-runtime),
+    # docker-compose up will error with a clear "could not select device
+    # driver 'nvidia'" message; intentional: BACKEND=cuda runs need real
+    # GPU access, and BACKEND=cpu runs that happen to land on GPU hosts
+    # just ignore the reservation. The Makefile derives CONTEMPLANT_FEATURES
+    # from BACKEND, so a BACKEND=cpu build doesn't link libcudart at all and
+    # runs anywhere; BACKEND=cuda builds link it and then require the host
+    # to satisfy this reservation.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Build context is the repo root (not ./src/risc0-fibonacci) so the
+  # Dockerfile can COPY src/fibonacci/, the shared no_std crate that the
+  # guest and host both path-dep to. Paths inside the Dockerfile are
+  # adjusted accordingly.
+  test-client:
+    build:
+      context: .
+      dockerfile: src/risc0-fibonacci/Dockerfile
+      args:
+        BUILD_IMAGE: ${BUILD_IMAGE:-unattended/petros:latest}
+    container_name: test-client-risc0
+    networks:
+      - test-network
+    depends_on:
+      hierophant:
+        condition: service_healthy
+      contemplant:
+        condition: service_healthy
+    environment:
+      - RUST_LOG=info
+
+      # Drive the host's flags via env vars so `make test-risc0 MODE=...` works
+      # without having to reshape the compose command line each run.
+      - PROOF_MODE=${PROOF_MODE:-composite}
+      - WRAP_SNARK=${WRAP_SNARK:-false}
+    command: ["sh", "-c", "cargo run --release --locked --bin evm -- --n 10"]
+
+networks:
+  test-network:
+    driver: bridge

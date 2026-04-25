@@ -5,20 +5,51 @@
 # Format: ws://[host]:[port]/ws where port is the Hierophant HTTP port.
 hierophant_ws_address = "ws://hierophant:9010/ws"
 
-# OPTIONAL: Prover type - "cpu" or "cuda" (default: "cpu").
-# CPU proving is slower but doesn't require a GPU.
-# prover_type = "cpu"
+# REQUIRED: declare which VM(s) this contemplant serves and with which backend.
+# At least one entry must be present. A contemplant processes one proof at a
+# time regardless of how many VMs it supports; declare multiple entries to let
+# this worker serve either kind of request as it becomes idle.
+#
+# Fields:
+#   vm                = "sp1" | "risc0"
+#   backend           = "cpu" | "cuda"   (default: "cpu")
+#   moongate_endpoint = "http://host:3000/twirp/"  (SP1 CUDA only; optional)
+#   groth16_enabled   = true | false     (risc0 only; default: false)
+#
+# Notes:
+#   - RISC Zero + CUDA requires building the contemplant binary with
+#     `--features enable-risc0-cuda` AND launching its container with GPU
+#     access (e.g. `docker run --gpus all`, or compose's `deploy.resources.
+#     reservations.devices`). CPU-only contemplant images won't load a
+#     CUDA-feature binary; build a separate image variant for GPU deployments.
+#   - SP1 + CUDA with `moongate_endpoint` requires the binary to be built with
+#     `--features enable-native-gnark`. Omit the endpoint to use the dockerized
+#     moongate-server instead. The endpoint must terminate in `/twirp/` ;
+#     moongate's prover service router is mounted under that prefix, and
+#     twirp-rs's client joins the method path onto the base URL verbatim. The
+#     contemplant appends `/twirp/` automatically when missing, so either
+#     `http://host:3000` or `http://host:3000/twirp/` is accepted.
+#   - `groth16_enabled = true` opts a risc0 prover into producing Groth16
+#     (onchain-verifiable) proofs. Requires the 2.5 GB of vendored Groth16
+#     assets under /opt/risc0-groth16-prover/ plus the /usr/local/bin/docker
+#     shim that Dockerfile.contemplant installs. CPU Groth16 proofs take
+#     minutes per proof; leave this off for STARK-only deployments.
+
+[[provers]]
+vm = "sp1"
+backend = "cpu"
+
+# [[provers]]
+# vm = "risc0"
+# backend = "cpu"
+# Enable to accept onchain-capable Groth16 requests.
+# groth16_enabled = false
 
 # OPTIONAL: Human-readable name for this Contemplant (default: from names.txt).
 # contemplant_name = ""
 
 # OPTIONAL: Port for HTTP health check server (default: 9011).
 # http_port = 9011
-
-# OPTIONAL: Moongate CUDA prover endpoint (default: none).
-# Only used when prover_type is "cuda". If not set, Contemplant will spin up
-# a moongate-server Docker container automatically.
-# moongate_endpoint = ""
 
 # OPTIONAL: Heartbeat interval in seconds (default: 30).
 # How often to tell Hierophant that this Contemplant is still alive.
@@ -32,7 +63,7 @@ hierophant_ws_address = "ws://hierophant:9010/ws"
 # Only set if this Contemplant is managed by a Magister.
 # magister_drop_endpoint = ""
 
-# Assessor settings control proof progress monitoring.
+# Assessor settings control SP1 proof progress monitoring (CUDA + moongate only).
 
 # OPTIONAL: Path to log file for progress tracking (default: "./moongate.log").
 # assessor.moongate_log_path = "./moongate.log"

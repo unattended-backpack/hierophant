@@ -1,4 +1,5 @@
 use crate::artifact_store::{ArtifactStoreClient, ArtifactUri};
+use crate::bonsai::BonsaiState;
 use crate::config::Config;
 use crate::network::{Program, RequestProofRequestBody};
 use crate::proof::ProofRouter;
@@ -25,6 +26,8 @@ pub struct HierophantState {
     pub cpu_prover: Arc<CpuProver>,
     // request IDs of proofs waiting for circuit artifacts to download before they can be assigned to workers
     pub proofs_pending_artifacts: Arc<Mutex<HashSet<B256>>>,
+    // Per-session state backing the Bonsai-shaped REST surface for RISC Zero clients.
+    pub bonsai: Arc<BonsaiState>,
 }
 
 impl HierophantState {
@@ -44,6 +47,7 @@ impl HierophantState {
             proof_router,
             cpu_prover,
             proofs_pending_artifacts: Arc::new(Mutex::new(HashSet::new())),
+            bonsai: Arc::new(BonsaiState::new()),
         }
     }
 

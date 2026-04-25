@@ -8,7 +8,7 @@ use log::{error, info, trace, warn};
 use network_lib::{
     WorkerRegisterInfo, messages::FromContemplantMessage, protocol::CONTEMPLANT_VERSION,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::Duration;
 use tokio_tungstenite::{
     connect_async_with_config,
@@ -24,7 +24,11 @@ use tokio_tungstenite::{
 //  - start task that sends a Heartbeat messages to Hierophant
 //  - if all the above is successful and Hierophant is aware of this Contemplant,
 //    send register message to the Magister (if this Contemplant has a Magister)
-pub async fn connect_to_hierophant(config: Config, worker_state: WorkerState) -> Result<()> {
+pub async fn connect_to_hierophant(
+    config: Config,
+    worker_state: WorkerState,
+    mut shutdown_rx: broadcast::Receiver<()>,
+) -> Result<()> {
     let hierophant_ws_address = config.hierophant_ws_address.clone();
 
     let ws_config = Some(WebSocketConfig {
@@ -54,6 +58,8 @@ pub async fn connect_to_hierophant(config: Config, worker_state: WorkerState) ->
     let worker_register_info = WorkerRegisterInfo {
         contemplant_version: CONTEMPLANT_VERSION.into(),
         name: config.contemplant_name.clone(),
+        supported_vms: worker_state.supported_vms(),
+        groth16_enabled: worker_state.groth16_enabled(),
         magister_drop_endpoint: config.magister_drop_endpoint.clone(),
     };
 
@@ -199,6 +205,31 @@ pub async fn connect_to_hierophant(config: Config, worker_state: WorkerState) ->
             recv_task.abort();
             send_task.abort();
             heartbeat_task.abort();
+        }
+        _ = shutdown_rx.recv() => {
+            // SIGINT/SIGTERM broadcast from main; perform a clean WebSocket
+            // close instead of letting docker SIGKILL tear the TCP connection
+            // down mid-frame. Sequence matters: abort the tasks that hold
+            // sender clones, then drop our own response_sender, so the
+            // receive end of the response channel gets EOF and send_task's
+            // while-loop exits. send_task then emits `Message::Close(None)`
+            // which hierophant logs at INFO instead of the alarming
+            // "Connection reset without closing handshake" ERROR.
+            info!("Shutdown signal received; closing hierophant WebSocket cleanly");
+            recv_task.abort();
+            heartbeat_task.abort();
+            exit_task.abort();
+            drop(response_sender);
+            // Bounded wait; if hierophant is already gone the sendpath may
+            // fail; either way we shouldn't block shutdown for longer than
+            // docker's default grace period.
+            match tokio::time::timeout(Duration::from_secs(3), &mut send_task).await {
+                Ok(_) => info!("send task finished after clean close"),
+                Err(_) => {
+                    warn!("send task didn't finish within 3s; aborting");
+                    send_task.abort();
+                }
+            }
         }
     }
 

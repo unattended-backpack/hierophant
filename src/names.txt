@@ -100,6 +100,7 @@ saul
 seth
 simeon
 solomon
+tim
 uriah
 zachary
 zebadiah

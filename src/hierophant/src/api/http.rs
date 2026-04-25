@@ -1,3 +1,4 @@
+use crate::bonsai::bonsai_routes;
 use crate::hierophant_state::HierophantState;
 use crate::worker_registry::WorkerState;
 use crate::{artifact_store::ArtifactUri, proof::CompletedProofInfo};
@@ -27,8 +28,6 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         // Artifact upload endpoint
         .route("/upload/:uri", post(handle_artifact_upload))
         .route("/upload/:uri", put(handle_artifact_upload))
-        // Artifact download endpoint
-        .route("/:uri", get(handle_artifact_download))
         // Get all healthy contemplants
         .route("/contemplants", get(contemplants))
         // Get all dead contemplants
@@ -37,6 +36,12 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         .route("/proof-history", get(handle_proof_history))
         // Health check.  Returns true indicating that http has started
         .route("/health", get(handle_health))
+        // Bonsai-shaped REST surface for RISC Zero clients.  Mounted before
+        // the catch-all `/:uri` so its nested paths aren't swallowed by the
+        // SP1 artifact download handler.
+        .nest("/bonsai", bonsai_routes())
+        // Artifact download endpoint (catch-all; keep last).
+        .route("/:uri", get(handle_artifact_download))
         .with_state(state)
 }
 

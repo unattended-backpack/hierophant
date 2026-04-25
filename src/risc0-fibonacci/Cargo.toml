@@ -1,0 +1,9 @@
+# Detached from the main /home/tim/ub/hierophant workspace (which excludes
+# this path in its root Cargo.toml). The guest/ subdirectory is further
+# excluded from *this* workspace because it cross-compiles to the RISC Zero
+# riscv32im-risc0-zkvm-elf target via `cargo risczero build` and cannot be
+# built with the host toolchain.
+[workspace]
+members = ["host"]
+exclude = ["guest"]
+resolver = "2"

@@ -1,0 +1,16 @@
+[package]
+version = "0.1.0"
+name = "fibonacci-program"
+edition = "2021"
+
+[dependencies]
+alloy-sol-types = { workspace = true }
+sp1-zkvm = "5.0.8"
+fibonacci-lib = { path = "../lib" }
+
+# Shared fibonacci(n) implementation. Lives one workspace up; the SP1
+# fibonacci subtree has its own `[workspace]`, so this path-dep reaches
+# across into the main repo's `src/fibonacci` crate. Keeping the function
+# in one place is the whole purpose of that shared crate; if you find
+# yourself adding a local copy here again, use this dep instead.
+fibonacci = { path = "../../fibonacci" }

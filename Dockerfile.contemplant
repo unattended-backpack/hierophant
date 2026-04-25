@@ -10,6 +10,17 @@ FROM ${BUILD_IMAGE} AS builder
 # Build type: "source" (default) or "prebuilt" (CI)
 ARG BUILD_TYPE=source
 
+# Cargo features to enable when building from source. Default matches the
+# historical behavior (SP1 Groth16 in-process via native-gnark). Operators
+# who want a GPU-capable contemplant should append `,enable-risc0-cuda`:
+#
+#   CONTEMPLANT_FEATURES="enable-native-gnark,enable-risc0-cuda" make docker-c
+#
+# Note: an image built with enable-risc0-cuda requires CUDA runtime libs at
+# load time (supplied by nvidia-container-runtime / --gpus all). Don't enable
+# it on images that will run on CPU-only hosts.
+ARG CONTEMPLANT_FEATURES=enable-native-gnark
+
 # The `VENDOR_BASE_URL` specifies where to download vendored dependencies.
 ARG VENDOR_BASE_URL
 RUN test -n "${VENDOR_BASE_URL}" || ( \
@@ -18,16 +29,167 @@ RUN test -n "${VENDOR_BASE_URL}" || ( \
 ENV VENDOR_BASE_URL=${VENDOR_BASE_URL}
 
 # Circuit version to use (matches SP1 SDK version).
-ARG CIRCUITS_VERSION
-RUN test -n "${CIRCUITS_VERSION}" || ( \
-  echo "ERROR: CIRCUITS_VERSION build argument is required!" >&2 \
+ARG SP1_CIRCUITS_VERSION
+RUN test -n "${SP1_CIRCUITS_VERSION}" || ( \
+  echo "ERROR: SP1_CIRCUITS_VERSION build argument is required!" >&2 \
   && exit 1)
-ENV CIRCUITS_VERSION=${CIRCUITS_VERSION}
+ENV SP1_CIRCUITS_VERSION=${SP1_CIRCUITS_VERSION}
 
-# Prepare the build image.
+# Tag of the upstream risc0-groth16-prover docker image whose contents were
+# extracted into the vendored tarball under provers/risc0/<tag>/. Pins the
+# Groth16 proving key + gnark prover byte-for-byte.
+ARG RISC0_GROTH16_PROVER_TAG
+RUN test -n "${RISC0_GROTH16_PROVER_TAG}" || ( \
+  echo "ERROR: RISC0_GROTH16_PROVER_TAG build argument is required!" >&2 \
+  && exit 1)
+ENV RISC0_GROTH16_PROVER_TAG=${RISC0_GROTH16_PROVER_TAG}
+
+# Version of the rzup-distributed risc0-groth16 component vendored for the
+# CUDA Groth16 path. Distinct from the CPU-path tarball above; this one
+# holds Groth16 proving-key/constraint/witness-graph artifacts that
+# risc0-groth16-sys reads in-process via risc0_groth16_cuda_prove.
+ARG RISC0_GROTH16_RZUP_VERSION
+RUN test -n "${RISC0_GROTH16_RZUP_VERSION}" || ( \
+  echo "ERROR: RISC0_GROTH16_RZUP_VERSION build argument is required!" >&2 \
+  && exit 1)
+ENV RISC0_GROTH16_RZUP_VERSION=${RISC0_GROTH16_RZUP_VERSION}
+
+# CUDA build-env wiring (only exercised when CONTEMPLANT_FEATURES includes
+# enable-risc0-cuda; harmless otherwise; these vars are ignored by the
+# non-CUDA code paths).
+#
+#   CUDA_PATH / CUDA_HOME ; petros's buildEnv links cudatoolkit into /petros,
+#                            so nvcc, headers, and libs are all rooted there.
+#   NVCC_CCBIN            ; petros ships clang/lld (no gcc), and CUDA 12.9
+#                            officially supports Clang up to 19. Point nvcc
+#                            at petros's clang++ so it uses a supported host
+#                            compiler instead of probing for gcc.
+#   CPATH / LIBRARY_PATH  ; sppark's build.rs invokes nvcc via `cc-rs` with
+#                            its own -I flags that elide nvcc's default
+#                            install-relative search paths. Explicitly
+#                            injecting /petros/include + /petros/lib through
+#                            these classic env hooks ensures cuda_runtime.h
+#                            and libcudart are findable regardless of who
+#                            builds the command line.
+# Build a shim directory tree that mirrors the layout the `find_cuda_helper`
+# Rust crate (pulled in transitively by risc0-sys → cust_raw) hardcodes when
+# locating a CUDA installation. That crate only recognizes CUDA roots
+# matching one of two layouts:
+#   1. $root/lib64 for libraries, $root/lib64/stubs for driver stubs
+#   2. $root/targets/x86_64-linux/{include,lib}
+# Nixpkgs packages CUDA under $root/lib/ and $root/include/; no lib64 dir,
+# no targets/ subtree; so find_cuda_helper returns empty regardless of
+# CUDA_PATH and the build aborts with "Could not find a cuda installation".
+#
+# The shim at /opt/cuda-shim presents petros's CUDA install in the layout
+# find_cuda_helper wants, using symlinks so no bytes are duplicated.
+RUN mkdir -p /home/petros/cuda-shim \
+  && ln -sf /petros/include /home/petros/cuda-shim/include \
+  && ln -sf /petros/lib /home/petros/cuda-shim/lib64 \
+  && ln -sf /petros/bin /home/petros/cuda-shim/bin
+
+# CUDA build-env wiring (only exercised when CONTEMPLANT_FEATURES includes
+# enable-risc0-cuda; harmless otherwise; these vars are ignored by the
+# non-CUDA code paths).
+#
+#   CUDA_PATH / CUDA_HOME ; point at the shim so find_cuda_helper and
+#                            other CUDA locators see the expected layout.
+#                            Also honored by nvcc's own discovery paths.
+#   CUDA_LIBRARY_PATH     ; explicit candidate path for find_cuda_helper;
+#                            it iterates these + common defaults and
+#                            appends /lib64, which the shim provides.
+#   NVCC_CCBIN            ; petros ships clang/lld (no gcc), and CUDA 12.9
+#                            officially supports Clang up to 19. Point nvcc
+#                            at petros's clang++ so it uses a supported host
+#                            compiler instead of probing for gcc.
+#   CPATH / LIBRARY_PATH  ; sppark's build.rs invokes nvcc via cc-rs with
+#                            its own -I flags that elide nvcc's default
+#                            install-relative search paths. Explicitly
+#                            injecting /petros/include + /petros/lib through
+#                            these classic env hooks ensures cuda_runtime.h
+#                            and libcudart are findable regardless of who
+#                            builds the command line.
+ENV CUDA_PATH=/home/petros/cuda-shim
+ENV CUDA_HOME=/home/petros/cuda-shim
+ENV CUDA_LIBRARY_PATH=/home/petros/cuda-shim
+ENV NVCC_CCBIN=/petros/bin/clang++
+ENV CPATH=/petros/include
+ENV LIBRARY_PATH=/petros/lib
+
+# sppark's and risc0-sys's build.rs scripts hardcode `-arch=native` in their
+# nvcc invocations. Inside a Docker builder there is no GPU to probe, so
+# nvcc warns "Cannot find valid GPU for '-arch=native'" and falls back to
+# a default arch (typically sm_52) that's too old for risc0's kernels,
+# which use features (atomic-scope ops, wmma-style mma instructions)
+# introduced in sm_60+. The build then aborts at ptxas.
+#
+# Override by appending explicit -gencode flags. nvcc's "last wins" rule
+# for conflicting -arch= flags means these defeat the hardcoded -arch=native.
+# Coverage:
+#   sm_75 ; Turing (RTX 20-series, including Tim's dev box 2060 SUPER)
+#   sm_80 ; Ampere datacenter (A100)
+#   sm_86 ; Ampere consumer (RTX 30-series)
+#   sm_89 ; Ada (RTX 40-series)
+#   sm_90 ; Hopper (H100, H200, GB100)
+#   sm_120; Blackwell consumer (RTX 50-series); the reason we bumped to CUDA 12.9
+#   compute_120 (PTX); forward-compat fallback for future archs via driver JIT
+#
+# Each -gencode adds a fatbin entry, so the resulting binary is larger but
+# runs natively on every arch we care about today plus PTX-JITs on anything
+# future. Add/remove as deployment targets change.
+ENV NVCC_APPEND_FLAGS="-gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_90,code=sm_90 -gencode=arch=compute_120,code=sm_120 -gencode=arch=compute_120,code=compute_120"
+
+# Download the vendored prover assets FIRST, before the cargo build. The
+# cargo build doesn't consume any of these artifacts, so placing vendoring
+# above the source COPY + compile means docker's layer cache holds the
+# ~5 GB of vendored tarballs across routine source edits; only a provers/
+# or vendor.sh change (or a vendor-arg bump) re-downloads. Remote URLs:
+#   SP1 circuits:              ${VENDOR_BASE_URL}/sp1/${SP1_CIRCUITS_VERSION}/{groth16,plonk}.tar.gz
+#   moongate-server:           ${VENDOR_BASE_URL}/sp1/${SP1_CIRCUITS_VERSION}/moongate-server.tar.gz
+#   risc0-groth16-prover (CPU): ${VENDOR_BASE_URL}/risc0/${RISC0_GROTH16_PROVER_TAG}/risc0-groth16-prover.tar.gz
+#   risc0-groth16-rzup (CUDA): ${VENDOR_BASE_URL}/risc0/groth16-rzup/${RISC0_GROTH16_RZUP_VERSION}/risc0-groth16.tar.xz
+WORKDIR /tmp
+COPY container/vendor.sh /tmp/vendor.sh
+COPY provers/ /tmp/provers/
+RUN /tmp/vendor.sh "groth16.tar.gz" "provers/sp1/${SP1_CIRCUITS_VERSION}" "sp1/${SP1_CIRCUITS_VERSION}/" && \
+  /tmp/vendor.sh "plonk.tar.gz" "provers/sp1/${SP1_CIRCUITS_VERSION}" "sp1/${SP1_CIRCUITS_VERSION}/" && \
+  /tmp/vendor.sh "moongate-server.tar.gz" "provers/sp1/${SP1_CIRCUITS_VERSION}" "sp1/${SP1_CIRCUITS_VERSION}/" && \
+  /tmp/vendor.sh "risc0-groth16-prover.tar.gz" \
+    "provers/risc0/${RISC0_GROTH16_PROVER_TAG}" \
+    "risc0/${RISC0_GROTH16_PROVER_TAG}/" && \
+  /tmp/vendor.sh "risc0-groth16.tar.xz" \
+    "provers/risc0/groth16-rzup/${RISC0_GROTH16_RZUP_VERSION}" \
+    "risc0/groth16-rzup/${RISC0_GROTH16_RZUP_VERSION}/"
+RUN mkdir -p /home/petros/.sp1/circuits/groth16/${SP1_CIRCUITS_VERSION} && \
+  mkdir -p /home/petros/.sp1/circuits/plonk/${SP1_CIRCUITS_VERSION} && \
+  mkdir -p /home/petros/risc0-groth16-prover && \
+  mkdir -p /home/petros/risc0-groth16-rzup && \
+  cp -r /tmp/extracted-groth16/${SP1_CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/groth16/${SP1_CIRCUITS_VERSION}/ && \
+  cp -r /tmp/extracted-plonk/${SP1_CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/plonk/${SP1_CIRCUITS_VERSION}/ && \
+  touch /home/petros/.sp1/circuits/groth16/.download_complete && \
+  touch /home/petros/.sp1/circuits/plonk/.download_complete && \
+  cp /tmp/extracted-moongate-server/moongate-server /home/petros/moongate-server && \
+  cp -r /tmp/extracted-risc0-groth16-prover/* /home/petros/risc0-groth16-prover/ && \
+  cp -r /tmp/extracted-risc0-groth16/* /home/petros/risc0-groth16-rzup/
+
+# Prepare the build image. COPY only the workspace members that cargo
+# actually resolves (see Cargo.toml's `[workspace] members = [...]`). The
+# test-client crates under src/sp1-fibonacci/ and src/risc0-fibonacci/ are
+# excluded from the workspace and are irrelevant to building the
+# contemplant binary; copying them in would make any test-client edit
+# invalidate this layer and every layer below it (including the 30-minute
+# CUDA kernel compile). Cargo still requires every workspace member
+# directory to exist at resolution time, so all of them must be present
+# even when the contemplant binary doesn't transitively depend on every
+# member (e.g. `src/fibonacci` is consumed only by the integration-test
+# guests / hosts but is listed as a member to keep it in the repo's one
+# workspace lockfile).
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
-COPY src/ src/
+COPY src/hierophant/ src/hierophant/
+COPY src/contemplant/ src/contemplant/
+COPY src/network-lib/ src/network-lib/
+COPY src/fibonacci/ src/fibonacci/
 
 # Conditionally build from source or use a pre-built binary.
 COPY out/ /build/out/
@@ -36,29 +198,20 @@ RUN if [ "$BUILD_TYPE" = "prebuilt" ]; then \
   test -f /build/out/contemplant || (echo "ERROR: BUILD_TYPE=prebuilt but no binary found in ./out/contemplant" >&2 && exit 1); \
   cp /build/out/contemplant /build/contemplant-binary; \
 else \
-  echo "Building from source ..."; \
-  cargo build --release --bin contemplant --features enable-native-gnark; \
+  echo "Building from source with features: $CONTEMPLANT_FEATURES ..."; \
+  cargo build --release --bin contemplant --features "$CONTEMPLANT_FEATURES" --locked; \
   cp /build/target/release/contemplant /build/contemplant-binary; \
 fi
 
-# Download the vendored circuit files and moongate-server.
-WORKDIR /tmp
-COPY container/vendor.sh /tmp/vendor.sh
-COPY circuits/ /tmp/circuits/
-COPY container/moongate-server.tar.gz.sha256 /tmp/container/moongate-server.tar.gz.sha256
-RUN /tmp/vendor.sh "groth16.tar.gz" "circuits/${CIRCUITS_VERSION}/groth16" "${CIRCUITS_VERSION}/" && \
-  /tmp/vendor.sh "plonk.tar.gz" "circuits/${CIRCUITS_VERSION}/plonk" "${CIRCUITS_VERSION}/" && \
-  /tmp/vendor.sh "moongate-server.tar.gz" "container" ""
-RUN mkdir -p /home/petros/.sp1/circuits/groth16/${CIRCUITS_VERSION} && \
-  mkdir -p /home/petros/.sp1/circuits/plonk/${CIRCUITS_VERSION} && \
-  cp -r /tmp/extracted-groth16/${CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/groth16/${CIRCUITS_VERSION}/ && \
-  cp -r /tmp/extracted-plonk/${CIRCUITS_VERSION}/* /home/petros/.sp1/circuits/plonk/${CIRCUITS_VERSION}/ && \
-  touch /home/petros/.sp1/circuits/groth16/.download_complete && \
-  touch /home/petros/.sp1/circuits/plonk/.download_complete && \
-  cp /tmp/extracted-moongate-server/moongate-server /home/petros/moongate-server
-
 # Prepare a runtime container.
 FROM ${RUNTIME_IMAGE}
+
+# ARGs don't cross stage boundaries; redeclare the one we reference in
+# runtime-stage RUN commands so they resolve to their value at image-build
+# time. (Re-assigning ENV from the same ARG exposes it to shell invocations
+# inside this stage.)
+ARG RISC0_GROTH16_RZUP_VERSION
+ENV RISC0_GROTH16_RZUP_VERSION=${RISC0_GROTH16_RZUP_VERSION}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -70,13 +223,16 @@ LABEL org.opencontainers.image.vendor="Unattended Backpack, Inc."
 LABEL org.opencontainers.image.licenses="LicenseRef-VPL WITH AGPL-3.0-only"
 
 # Install runtime dependencies including tmux, supervisor, openssh-server.
+# libgmp10 is a runtime dep of the vendored stark_verify binary used by the
+# risc0-groth16 CPU prover path.
 RUN apt-get update && \
   apt-get install -y --no-install-recommends \
     ca-certificates \
     patchelf \
     tmux \
     supervisor \
-    openssh-server && \
+    openssh-server \
+    libgmp10 && \
   apt-get clean && \
   rm -rf /var/lib/apt/lists/*
 
@@ -87,14 +243,34 @@ COPY --from=builder /home/petros/moongate-server /usr/local/bin/moongate-server
 # Copy vendored circuit artifacts from build stage.
 COPY --from=builder /home/petros/.sp1/circuits /opt/sp1/circuits
 
-# Fix binary interpreters.
-RUN chmod +x /usr/local/bin/contemplant /usr/local/bin/moongate-server && \
+# Copy the vendored risc0-groth16 prover assets. These replace the
+# `docker run risczero/risc0-groth16-prover:v2025-04-03.1` invocation that
+# risc0-groth16-3.x emits; see /usr/local/bin/docker below.
+COPY --from=builder /home/petros/risc0-groth16-prover /opt/risc0-groth16-prover
+
+# Copy the rzup-distributed risc0-groth16 component used by the CUDA
+# Groth16 path. risc0-groth16-3.x's src/prove/cuda.rs calls
+# `Rzup::new().get_version_dir(&Component::Risc0Groth16, &Version::new(0,1,0))`
+# which resolves to $HOME/.risc0/extensions/v0.1.0-risc0-groth16/. The
+# rzup lookup refuses to descend symlinks (Paths::find_version_dir_inner
+# filters is_symlink), so it must be a REAL directory with the four
+# proving-key/graph files directly inside; we `cp -r` rather than symlink.
+# This sidesteps needing an `rzup install` at runtime: the contemplant
+# already has every byte rzup would have fetched, pinned + hash-verified.
+COPY --from=builder /home/petros/risc0-groth16-rzup /opt/risc0-groth16-rzup
+
+# Fix binary interpreters for the contemplant binary + vendored provers.
+RUN chmod +x /usr/local/bin/contemplant /usr/local/bin/moongate-server \
+    /opt/risc0-groth16-prover/stark_verify /opt/risc0-groth16-prover/prover && \
   patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/contemplant && \
-  patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/moongate-server
+  patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/moongate-server && \
+  patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /opt/risc0-groth16-prover/stark_verify
+  # NOTE: /opt/risc0-groth16-prover/prover is a static Go binary; no interpreter to patch.
 
 # Prepare specific non-root user for security.
 RUN useradd --system --create-home --shell /bin/bash contemplant && \
-  chown contemplant:contemplant /usr/local/bin/contemplant /usr/local/bin/moongate-server
+  chown contemplant:contemplant /usr/local/bin/contemplant /usr/local/bin/moongate-server && \
+  chown -R contemplant:contemplant /opt/risc0-groth16-prover
 
 # Copy names list with correct ownership (after user is created).
 COPY --chown=contemplant:contemplant src/names.txt /home/contemplant/names.txt
@@ -106,6 +282,24 @@ RUN mkdir -p /home/contemplant/.ssh && \
   chown -R contemplant:contemplant /home/contemplant/.ssh /home/contemplant/ssh_host_keys && \
   chown -R contemplant:contemplant /home/contemplant
 
+# Set up rzup-layout dir for the risc0-groth16 CUDA component. rzup's
+# Paths::find_version_dir_inner filters entries that are symlinks; must be
+# a real dir populated with the four files the component ships. Placed
+# directly under contemplant's HOME so rzup discovery (which reads
+# $HOME/.risc0/) finds it without needing the rzup CLI at runtime.
+#
+# The rzup version-dir naming convention is `v<semver>-<component>`, and
+# risc0-groth16-3.x's cuda.rs hard-codes Version::new(0,1,0); so the
+# target directory is literally `v0.1.0-risc0-groth16`. `.env.maintainer`
+# stores RISC0_GROTH16_RZUP_VERSION with a leading `v` for consistency with
+# the display style used everywhere else (`v2025-04-03.1`, `v5.0.0`, etc),
+# so we strip that leading `v` here before re-prefixing rzup's own `v`.
+RUN RZUP_VER="${RISC0_GROTH16_RZUP_VERSION#v}" && \
+  mkdir -p "/home/contemplant/.risc0/extensions/v${RZUP_VER}-risc0-groth16" && \
+  cp -r /opt/risc0-groth16-rzup/* "/home/contemplant/.risc0/extensions/v${RZUP_VER}-risc0-groth16/" && \
+  chown -R contemplant:contemplant /home/contemplant/.risc0 && \
+  rm -rf /opt/risc0-groth16-rzup
+
 # Set up circuit artifacts for contemplant user.
 RUN mkdir -p /home/contemplant/.sp1/circuits && \
   cp -r /opt/sp1/circuits/* /home/contemplant/.sp1/circuits/ && \
@@ -115,6 +309,14 @@ RUN mkdir -p /home/contemplant/.sp1/circuits && \
 # Copy SSH authorized_keys if available.
 COPY --chown=contemplant:contemplant container/authorized_keys /home/contemplant/.ssh/authorized_keys
 RUN chmod 600 /home/contemplant/.ssh/authorized_keys
+
+# Install the risc0-groth16 shim as /usr/local/bin/docker. risc0-groth16's
+# docker-based shrink_wrap (src/prove/docker.rs) does
+# `Command::new("docker").arg("run")...`; since PATH lookup resolves to this
+# shim instead of any real docker, we intercept the single invocation pattern
+# that crate emits and dispatch to the binaries in /opt/risc0-groth16-prover/.
+# The contemplant image does NOT otherwise need a docker CLI, so this is safe.
+COPY --chmod=755 container/risc0-groth16-shim/docker /usr/local/bin/docker
 
 # Copy configuration files.
 COPY --chown=contemplant:contemplant container/sshd_config /home/contemplant/sshd_config

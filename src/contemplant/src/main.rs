@@ -41,19 +41,43 @@ async fn main() -> Result<()> {
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
     let shutdown_tx_clone = shutdown_tx.clone();
 
-    // Spawn a task to listen for ctrl+c and broadcast shutdown
+    // Spawn a task to listen for SIGINT or SIGTERM and broadcast shutdown.
+    // Handling SIGTERM gives us a chance to send a clean WebSocket Close
+    // frame to hierophant on `docker stop` / `docker-compose down` before
+    // docker's 10s grace period elapses and SIGKILL's us; otherwise
+    // hierophant logs the TCP reset as an ERROR.
     tokio::spawn(async move {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install CTRL+C signal handler");
-        info!("Received shutdown signal, stopping services...");
+        use tokio::signal::unix::{SignalKind, signal};
+        let sigterm = signal(SignalKind::terminate());
+        let mut sigterm = match sigterm {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("Failed to install SIGTERM handler: {e}. Only SIGINT will trigger graceful shutdown.");
+                let _ = tokio::signal::ctrl_c().await;
+                info!("Received SIGINT, stopping services...");
+                let _ = shutdown_tx_clone.send(());
+                return;
+            }
+        };
+        tokio::select! {
+            r = tokio::signal::ctrl_c() => {
+                if let Err(e) = r {
+                    log::warn!("SIGINT handler error: {e}");
+                }
+                info!("Received SIGINT, stopping services...");
+            }
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, stopping services...");
+            }
+        }
         let _ = shutdown_tx_clone.send(());
     });
 
     let worker_state_clone = worker_state.clone();
     let config_clone = config.clone();
+    let ws_shutdown_rx = shutdown_tx.subscribe();
     let hierophant_ws = tokio::spawn(async move {
-        if let Err(e) = api::connect_to_hierophant(config_clone, worker_state_clone)
+        if let Err(e) = api::connect_to_hierophant(config_clone, worker_state_clone, ws_shutdown_rx)
             .await
             .context("hierophant ws connection")
         {

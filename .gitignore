@@ -6,6 +6,7 @@ target/
 out/
 **/run-contemplant.sh
 
-# Vendored binaries (checksums only, not the binaries themselves)
-docker/moongate-server
-docker/moongate-server.tar.gz
+# The SP1 integration test client writes plonk/groth16 fixtures here on
+# every run for out-of-band Solidity verification. Generated artifacts;
+# never commit.
+src/sp1-fibonacci/contracts/src/fixtures/

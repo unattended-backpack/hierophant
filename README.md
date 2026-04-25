@@ -4,9 +4,9 @@
 
 > Prove all things; hold fast that which is good. 
 
-Hierophant is an open-source SP1 prover network that is built to be a drop in replacement for a Succinct prover network endpoint.
+Hierophant is an open-source ZK prover network that serves both SP1 and RISC Zero proof requests. It is built to be a drop in replacement for a Succinct [SP1](https://github.com/succinctlabs/sp1) prover network endpoint as well as a drop in replacement for a [Bonsai](https://dev.bonsai.xyz/) RISC Zero proving endpoint.
 
-[SP1](https://github.com/succinctlabs/sp1) is [Succinct's](https://www.succinct.xyz/) zero-knowledge virtual machine (zkVM). Hierophant was built to be directly compatible with [op-succinct](https://github.com/succinctlabs/op-succinct/), but any program that utilizes the [sp1-sdk](https://crates.io/crates/sp1-sdk) to request proofs can instead use a Hierophant instance.
+[SP1](https://github.com/succinctlabs/sp1) is [Succinct's](https://www.succinct.xyz/) zero-knowledge virtual machine (zkVM). [RISC Zero](https://risczero.com/) is a separate zkVM with its own proof format and its own SDK. Hierophant was built to be directly compatible with [op-succinct](https://github.com/succinctlabs/op-succinct/), and any program that uses the [sp1-sdk](https://crates.io/crates/sp1-sdk) or the [bonsai-sdk](https://crates.io/crates/bonsai-sdk) to request proofs can instead use a Hierophant instance.
 
 Hierophant saves costs and maintains censorship-resistance over centralized prover network offerings, making it well-suited for truly-unstoppable applications.
 
@@ -26,7 +26,7 @@ To get up and running quickly, we recommend visiting the [Scriptory](https://git
 
 If you would like to run a simple Hierophant and Contemplant pair, we provide a [setup here](./docker-compose.run.yml). Simply run `make init`, adjust your `hierophant.toml` and `contemplant.toml` files as desired, and run `make run` to use it. This will provide you with a working endpoint on the specified Docker network that you can use as the `NETWORK_RPC_URL` in programs that request proofs, such as the [Supplicant](https://github.com/unattended-backpack/supplicant/). Do note that you will also need to specify a `NETWORK_PRIVATE_KEY` as well.
 
-You can test a full example of this by running `make integration`, and check the test [program](./src/fibonacci/) or [compose file](./docker-compose.test.yml).
+You can test a full example of this by running `make test-sp1` (or `make test-risc0` for the RISC Zero variant). Inspect the corresponding test programs ([SP1](./src/sp1-fibonacci/), [RISC Zero](./src/risc0-fibonacci/)) and compose files ([SP1](./docker-compose.test.sp1.yml), [RISC Zero](./docker-compose.test.risc0.yml)).
 
 # Standalone Hierophant
 
@@ -60,29 +60,46 @@ You can build a native version of Contemplant via `make build`. You can supply c
 
 A Contemplant must have a Hierophant to connect to. If the machine running Contemplant does not have Docker, Contemplant has to be run with the `enable-native-gnark` feature. Otherwise, proofs will fail to verify. Building using this setting is the default behavior of our [Makefile](./Makefile).
 
+Contemplant also exposes a second cargo feature, `enable-risc0-cuda`, that links `risc0-zkvm`'s CUDA kernels into the binary for in-process GPU RISC Zero proving. Turning this on produces a binary that requires a CUDA runtime at load time (supplied at deploy time by `nvidia-container-runtime` or an equivalent host CUDA stack), so leave it off for CPU-only or mixed-deployment images. A binary built with the feature won't load on hosts that don't provide CUDA. The Makefile turns `enable-risc0-cuda` on automatically when `BACKEND=cuda` is passed (e.g. `make test-risc0 BACKEND=cuda`) and leaves it off for the default `BACKEND=cpu` build.
+
 ## SSH Access
 
 To aid in debugging running Contemplant images, they make themselves accessible via SSH. Add your SSH keys to `container/authorized_keys` if you want SSH access inside Contemplant.
 
-## Prover Types
+## Prover VMs and Backends
 
-Contemplant supports two prover types:
+A Contemplant declares which ZK VMs it serves, and with which backend, through a `[[provers]]` array in `contemplant.toml`. A single Contemplant may declare multiple entries so that it will serve either VM as it becomes idle. A Contemplant only processes one proof at a time regardless of how many entries it declares.
 
-- **CPU proving** (`prover_type = "cpu"`, default): this uses the CPU for proving. No GPU is required, but proof generation will be **significantly** slower than GPU proving. This is suitable for development and testing.
-- **CUDA proving** (`prover_type = "cuda"`): this uses the GPU for proof acceleration. This requires a CUDA-capable GPU with compute capability 8.6 or higher (NVIDIA RTX 30-series or newer).
+The available fields per entry are:
+
+- `vm = "sp1" | "risc0"` (required).
+- `backend = "cpu" | "cuda"` (default `"cpu"`). CPU uses no GPU and is **significantly** slower than CUDA. CUDA requires a CUDA-capable NVIDIA GPU on the host and for the container to be launched with GPU access (e.g. `docker run --gpus all`, or through `nvidia-container-runtime`). For SP1 specifically, the vendored moongate-server binary is compiled for Ada (`sm_89`), so a CUDA backend needs an RTX 40-series or newer card. A binary built with `enable-risc0-cuda` covers every NVIDIA architecture from Turing (`sm_75`) through Blackwell (`sm_120`).
+- `moongate_endpoint = "http://host:3000/twirp/"` (SP1 CUDA only, optional). When supplied, the Contemplant talks to an external moongate server at that address instead of spinning up a Dockerized moongate container. The URL must terminate in `/twirp/` because moongate mounts its prover service router under that prefix. The Contemplant appends `/twirp/` automatically when the configured URL does not already contain it, so either `http://host:3000` or `http://host:3000/twirp/` is accepted. Omit the endpoint to have the SP1 SDK spin up a Dockerized moongate container instead.
+- `groth16_enabled = true | false` (RISC Zero only, default `false`). Opts this worker into producing Groth16 wrapped proofs, the onchain verifiable flavor. Requires the 2.5 GB of vendored Groth16 prover assets baked into the Contemplant image by [`Dockerfile.contemplant`](./Dockerfile.contemplant).
+
+See [`contemplant.example.toml`](./contemplant.example.toml) for a complete annotated configuration.
 
 ### Progress Tracking Limitation
 
-**Progress tracking is only available when using `prover_type = "cuda"` with a remote `moongate_endpoint`.**
+**Progress tracking is only available for SP1 proofs using `backend = "cuda"` with a remote `moongate_endpoint`.**
 
 The following configurations do **not** support progress tracking:
-- CPU proving (`prover_type = "cpu"`)
-- Dockerized CUDA proving (`prover_type = "cuda"` without `moongate_endpoint`)
-- Mock proving (when proof requests have `mock = true`)
+- CPU proving for either VM.
+- Dockerized SP1 CUDA proving (`backend = "cuda"` without `moongate_endpoint`).
+- RISC Zero proving in any configuration.
+- Mock proving (when proof requests have `mock = true`).
 
 **Important:** Hierophant's `worker_required_progress_interval_mins` configuration defaults to `0` (disabled). If you want Hierophant to drop workers that don't report progress within a certain interval, you must:
-1. Ensure all your Contemplants use `prover_type = "cuda"` with a `moongate_endpoint`.
+1. Ensure all your Contemplants serve SP1 with `backend = "cuda"` and a `moongate_endpoint`.
 2. Set `worker_required_progress_interval_mins` to a non-zero value in your Hierophant configuration.
+
+## Proof Modes
+
+SP1 clients request one of four modes via the `sp1-sdk` proof builder: `core` (raw STARK, not EVM verifiable), `compressed` (recursive STARK), `plonk` (EVM verifiable Plonk SNARK), or `groth16` (EVM verifiable Groth16 SNARK).
+
+RISC Zero clients request one of three session modes via the Bonsai REST surface that Hierophant exposes at `/bonsai/` on its HTTP port: `composite` (the default, raw STARK), `succinct` (recursive STARK in a single segment), or `groth16` (direct onchain Groth16 seal, requires a `groth16_enabled` Contemplant). For the canonical Bonsai onchain flow, request a `composite` STARK session and then wrap it into a Groth16 seal with a separate `POST /bonsai/snark/create` call. The wrap also requires a `groth16_enabled` Contemplant.
+
+The [`src/sp1-fibonacci/`](./src/sp1-fibonacci/) and [`src/risc0-fibonacci/`](./src/risc0-fibonacci/) integration tests exercise every mode on either VM. See `make test-sp1` and `make test-risc0` below.
 
 ## Multiple Configuration Files
 
@@ -178,19 +195,45 @@ src/
 └── protocol.rs            # Shared protocol constants
 ```
 
+## Shared `fibonacci`
+
+```bash
+src/
+└── lib.rs                 # no_std `fibonacci(n) -> (u32, u32)`
+```
+
+The `src/fibonacci/` crate is a zero-dependency `no_std` implementation of `fibonacci(n)` that is shared by both the SP1 and RISC Zero integration test guests (and by their hosts, for cross-checking the committed journal or public values). It exists as the structural demonstration that identical business logic can be shared verbatim across ZK VMs in this repo. If you add a new cross-VM example or shared helper, put it here.
+
 ## Developing
 
 When making a breaking change in inter-Hierophant-Contemplant communication, increment the `CONTEMPLANT_VERSION` variable in `network-lib/src/lib.rs`. On each Contemplant connection, the Hierophant asserts that the `CONTEMPLANT_VERSION` matches.
 
 If file structure is changed, kindly update the architecture tree for readability.
 
-When a new version of SP1 is released, extract the new `moongate-server` binary from Succict's CUDA prover docker image and update the checksum at `container/moongate-server.tar.gz.sha256`. Moongate is the name of Succinct's closed source CUDA proof accelerator. This checksum allows the actual binary to be downloaded from its supply-chain-hardened location at `VENDOR_BASE_URL`.
+When a new version of SP1 is released, re-vendor all three SP1 assets
+(`groth16.tar.gz`, `plonk.tar.gz`, and `moongate-server.tar.gz`) under
+`provers/sp1/<new-version>/`. Moongate is Succinct's closed-source CUDA
+proof accelerator; its binary is extracted from their CUDA prover docker
+image. All three commit only sha256 checksums here; the actual tarballs
+live at supply-chain-hardened locations under `${VENDOR_BASE_URL}/sp1/<new-version>/`.
+See [`provers/README.md`](./provers/README.md) for the full procedure.
+Then, update `SP1_CIRCUITS_VERSION` in `.env.maintainer`.
 
-When supporting a new version, you must also update the vendored [circuits](./circuits/) using their own detailed [instructions](./circuits/README.md). Then, update the `CIRCUITS_VERSION` in `.env.maintainer`.
+For RISC Zero, the analogous bump lives under `provers/risc0/<docker-tag>/`
+driven by `RISC0_GROTH16_PROVER_TAG`; same procedure is documented in
+[`provers/README.md`](./provers/README.md).
 
-### Integration test
+### Integration Tests
 
-The integration test is a basic configuration that only tests minimal compatibility. It runs a Hierophant with one Contemplant and requests a single small fibonacci proof. Run it with `make integration`.
+The integration tests are basic configurations that test minimal compatibility. Each one runs a Hierophant with one Contemplant and requests a single small `fibonacci` proof against a known answer.
+
+There is one target per VM:
+- `make test-sp1` runs the SP1 round trip. Set `MODE=core|compressed|plonk|groth16` to pick the SP1 proof mode (default `plonk`), and `BACKEND=cpu|cuda` to pick the Contemplant backend (default `cpu`).
+- `make test-risc0` runs the RISC Zero round trip. Set `MODE=composite|succinct|groth16|groth16-direct` to pick the proof mode (default `composite`), and `BACKEND=cpu|cuda` to pick the backend (default `cpu`).
+
+The `groth16` RISC Zero mode wraps a composite STARK into a Groth16 seal through the canonical two-step Bonsai flow. The `groth16-direct` mode asks the worker for a Groth16 seal directly, without the STARK wrap step; it is rarely used but exposed for completeness.
+
+Both VMs share the same `fibonacci(n)` implementation under [`src/fibonacci/`](./src/fibonacci/), which demonstrates that identical business logic can be compiled into either zkVM guest without modification.
 
 ## Building
 
@@ -266,7 +309,8 @@ Public configuration that anyone building this project needs is stored in the re
 - `BUILD_IMAGE` - The builder image for compiling Rust code (default: `unattended/petros:latest`).
 - `RUNTIME_IMAGE` - The runtime base image (default: pinned `debian:trixie-slim@sha256:...`).
 - `VENDOR_BASE_URL` - The URL where large, specifically-vendored binaries are downloaded from.
-- `CIRCUITS_VERSION` - The SP1 circuits version to use in the build.
+- `SP1_CIRCUITS_VERSION` - The SP1 release tag that drives the path for all SP1 vendor assets (`provers/sp1/<version>/…`). Pinned to match the `sp1-sdk` crate version in the workspace `Cargo.toml`.
+- `RISC0_GROTH16_PROVER_TAG` - The upstream `risczero/risc0-groth16-prover` docker-image tag whose contents are vendored under `provers/risc0/<tag>/`. Pinned to match the tag that the current `risc0-groth16` crate version hardcodes.
 
 This file is version-controlled and updated by maintainers as infrastructure details change.
 

@@ -1,5 +1,6 @@
 mod api;
 mod artifact_store;
+mod bonsai;
 mod config;
 mod proof;
 mod worker_registry;
@@ -62,12 +63,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
     let shutdown_tx_clone = shutdown_tx.clone();
 
-    // Spawn a task to listen for ctrl+c and broadcast shutdown
+    // Spawn a task to listen for SIGINT (ctrl+c) OR SIGTERM and broadcast
+    // shutdown. docker/docker-compose deliver SIGTERM on teardown; without a
+    // SIGTERM handler we fall through to the 10s grace period and get
+    // SIGKILL'd (exit 137), which is benign but noisy in CI output.
     tokio::spawn(async move {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install CTRL+C signal handler");
-        info!("Received shutdown signal, stopping servers...");
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(e) => {
+                // Non-Unix or signal install failure; fall back to SIGINT only.
+                log::warn!("Failed to install SIGTERM handler: {e}. Only SIGINT will trigger graceful shutdown.");
+                let _ = tokio::signal::ctrl_c().await;
+                info!("Received SIGINT, stopping servers...");
+                let _ = shutdown_tx_clone.send(());
+                return;
+            }
+        };
+        tokio::select! {
+            r = tokio::signal::ctrl_c() => {
+                if let Err(e) = r {
+                    log::warn!("SIGINT handler error: {e}");
+                }
+                info!("Received SIGINT, stopping servers...");
+            }
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, stopping servers...");
+            }
+        }
         let _ = shutdown_tx_clone.send(());
     });
 
