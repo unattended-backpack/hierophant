@@ -92,6 +92,13 @@ RUN mkdir -p /home/petros/cuda-shim \
 # enable-risc0-cuda; harmless otherwise; these vars are ignored by the
 # non-CUDA code paths).
 #
+# This block is mirrored in .github/workflows/release.yml's "Build native
+# binaries" step, which compiles the released contemplant binary outside
+# of this Dockerfile (the CI uses BUILD_TYPE=prebuilt and only copies the
+# binary in here). Keep both sites in sync if these env vars or their
+# values change; drift will silently break either the docker-source build
+# path or the CI release build path depending on which one is updated.
+#
 #   CUDA_PATH / CUDA_HOME ; point at the shim so find_cuda_helper and
 #                            other CUDA locators see the expected layout.
 #                            Also honored by nvcc's own discovery paths.
