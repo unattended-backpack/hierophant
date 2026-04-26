@@ -116,7 +116,31 @@ jobs:
         # the feature set has to be baked in here at native-build time.
         # native-gnark stays on for SP1's in-process Groth16 path.
         CONTEMPLANT_FEATURES: enable-native-gnark,enable-risc0-cuda
+
+        # CUDA build-env wiring; required to compile sppark + risc0's CUDA
+        # kernels natively here (sppark's nvcc invocation needs cuda_runtime.h
+        # on CPATH and libcudart on LIBRARY_PATH). Dockerfile.contemplant sets
+        # the same vars + cuda-shim layout via ENV directives for its
+        # in-container build path; keep these two sites in sync.
+        # CUDA_PATH / CUDA_HOME / CUDA_LIBRARY_PATH point at the shim that the
+        # `run:` script creates below (find_cuda_helper expects $CUDA_PATH/lib64,
+        # but petros ships /petros/lib).
+        CUDA_PATH: /tmp/cuda-shim
+        CUDA_HOME: /tmp/cuda-shim
+        CUDA_LIBRARY_PATH: /tmp/cuda-shim
+        NVCC_CCBIN: /petros/bin/clang++
+        CPATH: /petros/include
+        LIBRARY_PATH: /petros/lib
+        NVCC_APPEND_FLAGS: "-gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_90,code=sm_90 -gencode=arch=compute_120,code=sm_120 -gencode=arch=compute_120,code=compute_120"
       run: |
+        # Build the cuda-shim that find_cuda_helper expects (Dockerfile.contemplant
+        # creates the equivalent at /home/petros/cuda-shim during the in-container
+        # build path). Symlink-only, so it's free.
+        mkdir -p /tmp/cuda-shim
+        ln -sfn /petros/include /tmp/cuda-shim/include
+        ln -sfn /petros/lib /tmp/cuda-shim/lib64
+        ln -sfn /petros/bin /tmp/cuda-shim/bin
+
         echo "Building binaries using Makefile..."
 
         # Check if Makefile exists
