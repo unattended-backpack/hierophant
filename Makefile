@@ -26,13 +26,13 @@ IMAGE_TAG ?= latest
 ACT_PULL ?= true
 
 # BACKEND picks which proving backend the test targets exercise at runtime.
-#   cpu  (default); SP1 uses CpuProver; RISC Zero uses LocalProver.
+#   cpu           ; SP1 uses CpuProver; RISC Zero uses LocalProver.
 #   cuda          ; SP1 talks to an in-container moongate-server on :3000
 #                    (entrypoint auto-starts it via tmux); RISC Zero uses
 #                    in-process CUDA. Both require the container to be
 #                    launched with GPU access, which the test compose files
 #                    request via deploy.resources.reservations.devices.
-BACKEND ?= cpu
+BACKEND ?= gpu
 
 # CONTEMPLANT_FEATURES is derived from BACKEND by default so a CPU build
 # doesn't pay the (expensive, nvcc-version-sensitive) cost of compiling
