@@ -107,6 +107,15 @@ jobs:
       id: build-native
       env:
         CARGO_HOME: ${{ github.workspace }}/.cargo
+
+        # Released contemplant binary must link risc0-zkvm/cuda; without it,
+        # operators with `backend = "cuda"` on a risc0 [[provers]] entry hit
+        # a config-load panic ("RISC Zero CUDA backend requires building the
+        # contemplant with --features enable-risc0-cuda"). The Dockerfile's
+        # CI path is BUILD_TYPE=prebuilt (skips cargo, just copies out/), so
+        # the feature set has to be baked in here at native-build time.
+        # native-gnark stays on for SP1's in-process Groth16 path.
+        CONTEMPLANT_FEATURES: enable-native-gnark,enable-risc0-cuda
       run: |
         echo "Building binaries using Makefile..."
 
