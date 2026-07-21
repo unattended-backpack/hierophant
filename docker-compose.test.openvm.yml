@@ -1,0 +1,100 @@
+services:
+  hierophant:
+    image: hierophant:latest
+    container_name: test-hierophant-openvm
+    networks:
+      - test-network
+    ports:
+      - "9000:9000"  # gRPC (unused for OpenVM but exposed for parity)
+      - "9010:9010"  # HTTP + WebSocket + Bonsai + OpenVM
+    environment:
+      - RUST_LOG=info
+      - THIS_HIEROPHANT_IP=hierophant
+      - WORKER_REQUIRED_PROGRESS_INTERVAL_MINS=0
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c '</dev/tcp/localhost/9010' || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 5s
+
+  contemplant:
+    image: contemplant:latest
+    container_name: test-contemplant-openvm
+    networks:
+      - test-network
+    environment:
+      - RUST_LOG=info
+      - HIEROPHANT_WS_ADDRESS=ws://hierophant:9010/ws
+
+      # Declare this contemplant serves the OpenVM VM. CONTEMPLANT_OPENVM_*
+      # are plumbed from `make test-openvm`: BACKEND={cpu,cuda} picks the
+      # proving backend (cuda additionally needs a binary built with
+      # enable-openvm-cuda); MODE={app,stark,evm} determines whether EVM
+      # capability is needed, flipped via CONTEMPLANT_OPENVM_EVM.
+      - CONTEMPLANT_VMS=openvm
+      - CONTEMPLANT_OPENVM_BACKEND=${CONTEMPLANT_OPENVM_BACKEND:-cpu}
+      - CONTEMPLANT_OPENVM_EVM=${CONTEMPLANT_OPENVM_EVM:-false}
+    depends_on:
+      hierophant:
+        condition: service_healthy
+
+    # Gate readiness on the contemplant's HTTP /health endpoint returning
+    # `true`, which flips only after WorkerState::new finishes and the
+    # websocket handshake with hierophant completes. See the risc0 compose
+    # file for why this is spelled out with bash + /dev/tcp.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - |
+          exec 3<>/dev/tcp/localhost/9011 || exit 1
+          printf 'GET /health HTTP/1.0\r\n\r\n' >&3
+          grep -q '^true$' <&3 || exit 1
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+    # GPU reservation, same arrangement (and caveats) as the risc0 compose
+    # file: BACKEND=cuda runs need real GPU access; BACKEND=cpu runs on GPU
+    # hosts just ignore the reservation.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Build context is the repo root (not ./src/openvm-fibonacci) so the
+  # Dockerfile can COPY src/fibonacci/, the shared no_std crate that the
+  # guest and host both path-dep to. Paths inside the Dockerfile are
+  # adjusted accordingly. Note the BUILD_IMAGE default is the official rust
+  # image, not petros; see the Dockerfile header for why.
+  test-client:
+    build:
+      context: .
+      dockerfile: src/openvm-fibonacci/Dockerfile
+      args:
+        BUILD_IMAGE: ${OPENVM_TEST_BUILD_IMAGE:-rust:1.91-bookworm}
+    container_name: test-client-openvm
+    networks:
+      - test-network
+    depends_on:
+      hierophant:
+        condition: service_healthy
+      contemplant:
+        condition: service_healthy
+    environment:
+      - RUST_LOG=info
+
+      # Drive the host's flags via env vars so `make test-openvm MODE=...`
+      # works without having to reshape the compose command line each run.
+      - PROOF_MODE=${PROOF_MODE:-app}
+    command: ["sh", "-c", "cargo run --release --locked --bin host -- --n 10"]
+
+networks:
+  test-network:
+    driver: bridge

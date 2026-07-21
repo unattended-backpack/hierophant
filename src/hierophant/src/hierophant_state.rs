@@ -2,6 +2,7 @@ use crate::artifact_store::{ArtifactStoreClient, ArtifactUri};
 use crate::bonsai::BonsaiState;
 use crate::config::Config;
 use crate::network::{Program, RequestProofRequestBody};
+use crate::openvm::OpenVmState;
 use crate::proof::ProofRouter;
 use alloy_primitives::B256;
 use anyhow::anyhow;
@@ -28,6 +29,8 @@ pub struct HierophantState {
     pub proofs_pending_artifacts: Arc<Mutex<HashSet<B256>>>,
     // Per-session state backing the Bonsai-shaped REST surface for RISC Zero clients.
     pub bonsai: Arc<BonsaiState>,
+    // Per-job state backing the OpenVM-shaped REST surface for OpenVM clients.
+    pub openvm: Arc<OpenVmState>,
 }
 
 impl HierophantState {
@@ -48,6 +51,7 @@ impl HierophantState {
             cpu_prover,
             proofs_pending_artifacts: Arc::new(Mutex::new(HashSet::new())),
             bonsai: Arc::new(BonsaiState::new()),
+            openvm: Arc::new(OpenVmState::new()),
         }
     }
 

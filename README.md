@@ -4,9 +4,9 @@
 
 > Prove all things; hold fast that which is good. 
 
-Hierophant is an open-source ZK prover network that serves both SP1 and RISC Zero proof requests. It is built to be a drop in replacement for a Succinct [SP1](https://github.com/succinctlabs/sp1) prover network endpoint as well as a drop in replacement for a [Bonsai](https://dev.bonsai.xyz/) RISC Zero proving endpoint.
+Hierophant is an open-source ZK prover network that serves SP1, RISC Zero, and OpenVM proof requests. It is built to be a drop in replacement for a Succinct [SP1](https://github.com/succinctlabs/sp1) prover network endpoint as well as a drop in replacement for a [Bonsai](https://dev.bonsai.xyz/) RISC Zero proving endpoint. For [OpenVM](https://github.com/openvm-org/openvm), which has no third-party network protocol to be a drop-in for, Hierophant exposes its own Bonsai-shaped REST surface under `/openvm/`.
 
-[SP1](https://github.com/succinctlabs/sp1) is [Succinct's](https://www.succinct.xyz/) zero-knowledge virtual machine (zkVM). [RISC Zero](https://risczero.com/) is a separate zkVM with its own proof format and its own SDK. Hierophant was built to be directly compatible with [op-succinct](https://github.com/succinctlabs/op-succinct/), and any program that uses the [sp1-sdk](https://crates.io/crates/sp1-sdk) or the [bonsai-sdk](https://crates.io/crates/bonsai-sdk) to request proofs can instead use a Hierophant instance.
+[SP1](https://github.com/succinctlabs/sp1) is [Succinct's](https://www.succinct.xyz/) zero-knowledge virtual machine (zkVM). [RISC Zero](https://risczero.com/) is a separate zkVM with its own proof format and its own SDK. [OpenVM](https://openvm.dev/) is [Axiom's](https://www.axiom.xyz/) modular zkVM framework, again with its own proof formats and SDK. Serving three independent zkVM stacks makes Hierophant suitable for M-of-N proving quorums where the same business logic is proven on multiple VMs. Hierophant was built to be directly compatible with [op-succinct](https://github.com/succinctlabs/op-succinct/), and any program that uses the [sp1-sdk](https://crates.io/crates/sp1-sdk) or the [bonsai-sdk](https://crates.io/crates/bonsai-sdk) to request proofs can instead use a Hierophant instance.
 
 Hierophant saves costs and maintains censorship-resistance over centralized prover network offerings, making it well-suited for truly-unstoppable applications.
 
@@ -26,7 +26,7 @@ To get up and running quickly, we recommend visiting the [Scriptory](https://git
 
 If you would like to run a simple Hierophant and Contemplant pair, we provide a [setup here](./docker-compose.run.yml). Simply run `make init`, adjust your `hierophant.toml` and `contemplant.toml` files as desired, and run `make run` to use it. This will provide you with a working endpoint on the specified Docker network that you can use as the `NETWORK_RPC_URL` in programs that request proofs, such as the [Supplicant](https://github.com/unattended-backpack/supplicant/). Do note that you will also need to specify a `NETWORK_PRIVATE_KEY` as well.
 
-You can test a full example of this by running `make test-sp1` (or `make test-risc0` for the RISC Zero variant). Inspect the corresponding test programs ([SP1](./src/sp1-fibonacci/), [RISC Zero](./src/risc0-fibonacci/)) and compose files ([SP1](./docker-compose.test.sp1.yml), [RISC Zero](./docker-compose.test.risc0.yml)).
+You can test a full example of this by running `make test-sp1` (or `make test-risc0` / `make test-openvm` for the RISC Zero and OpenVM variants). Inspect the corresponding test programs ([SP1](./src/sp1-fibonacci/), [RISC Zero](./src/risc0-fibonacci/), [OpenVM](./src/openvm-fibonacci/)) and compose files ([SP1](./docker-compose.test.sp1.yml), [RISC Zero](./docker-compose.test.risc0.yml), [OpenVM](./docker-compose.test.openvm.yml)).
 
 # Standalone Hierophant
 
@@ -72,10 +72,11 @@ A Contemplant declares which ZK VMs it serves, and with which backend, through a
 
 The available fields per entry are:
 
-- `vm = "sp1" | "risc0"` (required).
-- `backend = "cpu" | "cuda"` (default `"cpu"`). CPU uses no GPU and is **significantly** slower than CUDA. CUDA requires a CUDA-capable NVIDIA GPU on the host and for the container to be launched with GPU access (e.g. `docker run --gpus all`, or through `nvidia-container-runtime`). For SP1 specifically, the vendored moongate-server binary is compiled for Ada (`sm_89`), so a CUDA backend needs an RTX 40-series or newer card. A binary built with `enable-risc0-cuda` covers every NVIDIA architecture from Turing (`sm_75`) through Blackwell (`sm_120`).
+- `vm = "sp1" | "risc0" | "openvm"` (required).
+- `backend = "cpu" | "cuda"` (default `"cpu"`). CPU uses no GPU and is **significantly** slower than CUDA. CUDA requires a CUDA-capable NVIDIA GPU on the host and for the container to be launched with GPU access (e.g. `docker run --gpus all`, or through `nvidia-container-runtime`). For SP1 specifically, the vendored moongate-server binary is compiled for Ada (`sm_89`), so a CUDA backend needs an RTX 40-series or newer card. A binary built with `enable-risc0-cuda` covers every NVIDIA architecture from Turing (`sm_75`) through Blackwell (`sm_120`). An OpenVM CUDA backend requires a binary built with `enable-openvm-cuda` (openvm-sdk selects its GPU backend at compile time, like risc0).
 - `moongate_endpoint = "http://host:3000/twirp/"` (SP1 CUDA only, optional). When supplied, the Contemplant talks to an external moongate server at that address instead of spinning up a Dockerized moongate container. The URL must terminate in `/twirp/` because moongate mounts its prover service router under that prefix. The Contemplant appends `/twirp/` automatically when the configured URL does not already contain it, so either `http://host:3000` or `http://host:3000/twirp/` is accepted. Omit the endpoint to have the SP1 SDK spin up a Dockerized moongate container instead.
 - `groth16_enabled = true | false` (RISC Zero only, default `false`). Opts this worker into producing Groth16 wrapped proofs, the onchain verifiable flavor. Requires the 2.5 GB of vendored Groth16 prover assets baked into the Contemplant image by [`Dockerfile.contemplant`](./Dockerfile.contemplant).
+- `evm_enabled = true | false` (OpenVM only, default `false`). Opts this worker into producing EVM (halo2-wrapped) proofs, OpenVM's onchain verifiable flavor. Requires a binary built with `--features enable-openvm-evm` plus the KZG params and aggregation keys installed by `cargo openvm setup --evm` under `~/.openvm/` (tens of GB of artifacts; generating them in-process instead needs ~70 GB of RAM).
 
 See [`contemplant.example.toml`](./contemplant.example.toml) for a complete annotated configuration.
 
@@ -84,9 +85,10 @@ See [`contemplant.example.toml`](./contemplant.example.toml) for a complete anno
 **Progress tracking is only available for SP1 proofs using `backend = "cuda"` with a remote `moongate_endpoint`.**
 
 The following configurations do **not** support progress tracking:
-- CPU proving for either VM.
+- CPU proving for any VM.
 - Dockerized SP1 CUDA proving (`backend = "cuda"` without `moongate_endpoint`).
 - RISC Zero proving in any configuration.
+- OpenVM proving in any configuration.
 - Mock proving (when proof requests have `mock = true`).
 
 **Important:** Hierophant's `worker_required_progress_interval_mins` configuration defaults to `0` (disabled). If you want Hierophant to drop workers that don't report progress within a certain interval, you must:
@@ -99,7 +101,23 @@ SP1 clients request one of four modes via the `sp1-sdk` proof builder: `core` (r
 
 RISC Zero clients request one of three session modes via the Bonsai REST surface that Hierophant exposes at `/bonsai/` on its HTTP port: `composite` (the default, raw STARK), `succinct` (recursive STARK in a single segment), or `groth16` (direct onchain Groth16 seal, requires a `groth16_enabled` Contemplant). For the canonical Bonsai onchain flow, request a `composite` STARK session and then wrap it into a Groth16 seal with a separate `POST /bonsai/snark/create` call. The wrap also requires a `groth16_enabled` Contemplant.
 
-The [`src/sp1-fibonacci/`](./src/sp1-fibonacci/) and [`src/risc0-fibonacci/`](./src/risc0-fibonacci/) integration tests exercise every mode on either VM. See `make test-sp1` and `make test-risc0` below.
+OpenVM clients request one of three proof modes via the REST surface that Hierophant exposes at `/openvm/` on its HTTP port: `app` (the default; app-level continuation STARK), `stark` (aggregated root STARK, a single compact proof), or `evm` (halo2-wrapped EVM-verifiable proof, requires an `evm_enabled` Contemplant). Since OpenVM has no hosted-network wire protocol to be a drop-in replacement for, this surface mirrors the Bonsai flow with OpenVM nouns:
+
+```
+GET  /openvm/version                       -> {"openvm": ["2.0"]}
+GET  /openvm/programs/upload/{program_id}  -> {"url": ...}          # program_id = sha256 hex of the ELF
+PUT  /openvm/programs/{program_id}         <- raw guest ELF bytes (from `cargo openvm build --no-transpile`)
+GET  /openvm/inputs/upload                 -> {"uuid", "url"}
+PUT  /openvm/inputs/{uuid}                 <- bincode-serialized Vec<Vec<u8>> of StdIn streams, in guest read order
+POST /openvm/proofs/create                 <- {"program", "input", "proof_mode": "app"|"stark"|"evm",
+                                               "app_config_toml": "<openvm.toml contents>"? }
+GET  /openvm/proofs/status/{uuid}          -> {"status": "RUNNING"|"SUCCEEDED"|"FAILED", "proof_url"?, ...}
+GET  /openvm/proofs/{uuid}/download        -> proof bytes
+```
+
+Downloaded proof bytes use `cargo openvm prove` file conventions: bitcode bytes of a `ContinuationVmProof` for `app` (the `.app.proof` format), `VersionedVmStarkProof` JSON for `stark` (the `.stark.proof` format), and `EvmProof` JSON for `evm` (the `.evm.proof` format). Omit `app_config_toml` for guests built against the SDK's standard rv32im config; supply your guest's `openvm.toml` contents when it uses more extensions, so proving and verification key generation match on both sides. Hierophant fully verifies `app` and `stark` proofs (including the program commitment binding the proof to the uploaded ELF) before exposing them, dropping workers that return bad proofs; for `evm` proofs it enforces that the embedded program commitment matches the uploaded ELF and leaves the halo2 SNARK check to the client's onchain verifier contract, which is the point of that mode.
+
+The [`src/sp1-fibonacci/`](./src/sp1-fibonacci/), [`src/risc0-fibonacci/`](./src/risc0-fibonacci/), and [`src/openvm-fibonacci/`](./src/openvm-fibonacci/) integration tests exercise every mode on each VM. See `make test-sp1`, `make test-risc0`, and `make test-openvm` below.
 
 ## Multiple Configuration Files
 
@@ -128,7 +146,9 @@ src/
 │
 ├── proof_executor/
 │   ├── assessor.rs                    # Proof execution estimation assessment 
-│   ├── executor.rs                    # Proof execution
+│   ├── openvm_executor.rs             # OpenVM proof execution
+│   ├── risc0_executor.rs              # RISC Zero proof execution
+│   ├── sp1_executor.rs                # SP1 proof execution
 │   └── mod.rs
 │
 ├── proof_store/
@@ -163,6 +183,19 @@ src/
 │   ├── command.rs                         # ArtifactStore access commands
 │   ├── mod.rs
 │   └── store.rs                           # Artifact reading & writing
+│
+├── bonsai/
+│   ├── mod.rs
+│   ├── router.rs                          # Bonsai-shaped REST surface for RISC Zero clients
+│   ├── state.rs                           # Bonsai session/receipt bookkeeping
+│   └── types.rs                           # Bonsai wire types
+│
+├── openvm/
+│   ├── mod.rs
+│   ├── router.rs                          # OpenVM-shaped REST surface for OpenVM clients
+│   ├── state.rs                           # OpenVM program/input/job bookkeeping
+│   ├── types.rs                           # OpenVM wire types
+│   └── verify.rs                          # OpenVM proof verification + key caching
 │
 ├── proof/
 │   ├── completed_proof_info.rs            # A proof struct
@@ -202,7 +235,7 @@ src/
 └── lib.rs                 # no_std `fibonacci(n) -> (u32, u32)`
 ```
 
-The `src/fibonacci/` crate is a zero-dependency `no_std` implementation of `fibonacci(n)` that is shared by both the SP1 and RISC Zero integration test guests (and by their hosts, for cross-checking the committed journal or public values). It exists as the structural demonstration that identical business logic can be shared verbatim across ZK VMs in this repo. If you add a new cross-VM example or shared helper, put it here.
+The `src/fibonacci/` crate is a zero-dependency `no_std` implementation of `fibonacci(n)` that is shared by the SP1, RISC Zero, and OpenVM integration test guests (and by their hosts, for cross-checking the committed journal or public values). It exists as the structural demonstration that identical business logic can be shared verbatim across ZK VMs in this repo. If you add a new cross-VM example or shared helper, put it here.
 
 ## Developing
 
@@ -223,6 +256,20 @@ For RISC Zero, the analogous bump lives under `provers/risc0/<docker-tag>/`
 driven by `RISC0_GROTH16_PROVER_TAG`; same procedure is documented in
 [`provers/README.md`](./provers/README.md).
 
+For OpenVM there are no vendored assets: OpenVM is not published on crates.io
+and is consumed as a git dependency pinned to a release tag. To bump it,
+update the `tag = "v..."` on the `openvm-*` entries in the workspace
+[`Cargo.toml`](./Cargo.toml) and, in lockstep, the `openvm` / `openvm-build` /
+`openvm-sdk` tags in [`src/openvm-fibonacci/`](./src/openvm-fibonacci/)
+(guest, host, and the guest-toolchain pin in its Dockerfile — each release
+pins a specific nightly; v2.0.0 pins `nightly-2026-01-18`). Operators who
+serve OpenVM `stark`/`evm` modes should also refresh their `~/.openvm/`
+artifacts (`cargo openvm setup [--evm]`) with the matching CLI version, since
+aggregation keys are release-specific — and note that OpenVM major lines are
+proof-system incompatible (v2's SWIRL proofs cannot be verified by v1
+verifiers or vice versa), so an OpenVM bump is a coordinated upgrade across
+every Contemplant, the Hierophant, and any proof-consuming clients.
+
 ### Integration Tests
 
 The integration tests are basic configurations that test minimal compatibility. Each one runs a Hierophant with one Contemplant and requests a single small `fibonacci` proof against a known answer.
@@ -230,10 +277,13 @@ The integration tests are basic configurations that test minimal compatibility. 
 There is one target per VM:
 - `make test-sp1` runs the SP1 round trip. Set `MODE=core|compressed|plonk|groth16` to pick the SP1 proof mode (default `plonk`), and `BACKEND=cpu|cuda` to pick the Contemplant backend (default `cpu`).
 - `make test-risc0` runs the RISC Zero round trip. Set `MODE=composite|succinct|groth16|groth16-direct` to pick the proof mode (default `composite`), and `BACKEND=cpu|cuda` to pick the backend (default `cpu`).
+- `make test-openvm` runs the OpenVM round trip. Set `MODE=app|stark|evm` to pick the proof mode (default `app`), and `BACKEND=cpu|cuda` to pick the backend (default `cpu`).
 
 The `groth16` RISC Zero mode wraps a composite STARK into a Groth16 seal through the canonical two-step Bonsai flow. The `groth16-direct` mode asks the worker for a Groth16 seal directly, without the STARK wrap step; it is rarely used but exposed for completeness.
 
-Both VMs share the same `fibonacci(n)` implementation under [`src/fibonacci/`](./src/fibonacci/), which demonstrates that identical business logic can be compiled into either zkVM guest without modification.
+The `stark` and `evm` OpenVM modes involve OpenVM's aggregation keygen on the worker, which runs in-process (slow, RAM-heavy; ~70 GB for `evm`) unless the `cargo openvm setup` artifacts are staged under `~/.openvm/` in the Contemplant image. The default `app` mode has no such requirement and is the CI-friendly round trip. Note the OpenVM test client builds on the official `rust` image rather than petros, because openvm-build installs its pinned guest toolchain through rustup (see [`src/openvm-fibonacci/Dockerfile`](./src/openvm-fibonacci/Dockerfile)).
+
+All three VMs share the same `fibonacci(n)` implementation under [`src/fibonacci/`](./src/fibonacci/), which demonstrates that identical business logic can be compiled into any zkVM guest without modification.
 
 ## Building
 

@@ -24,6 +24,12 @@ toml.workspace = true
 bincode.workspace = true
 sp1-sdk = { workspace = true, features = ["native-gnark"] }
 risc0-zkvm.workspace = true
+openvm-sdk.workspace = true
+openvm-sdk-config.workspace = true
+openvm-stark-sdk.workspace = true
+openvm-continuations.workspace = true
+openvm-verify-stark-host.workspace = true
+bitcode.workspace = true
 env_logger.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true

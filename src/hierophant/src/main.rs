@@ -2,6 +2,7 @@ mod api;
 mod artifact_store;
 mod bonsai;
 mod config;
+mod openvm;
 mod proof;
 mod worker_registry;
 

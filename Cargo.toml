@@ -5,7 +5,7 @@ members = [
   "src/network-lib",
   "src/fibonacci",
 ]
-exclude = ["src/sp1-fibonacci", "src/risc0-fibonacci"]
+exclude = ["src/sp1-fibonacci", "src/risc0-fibonacci", "src/openvm-fibonacci"]
 resolver = "2"
 
 [workspace.package]
@@ -42,3 +42,25 @@ alloy-primitives = { version = "1.0.0", default-features = false, features = [
 clap = "4.5.41"
 sp1-sdk = { version = "=5.0.4" }
 risc0-zkvm = { version = "3.0", default-features = false, features = ["prove", "client"] }
+# OpenVM is not published on crates.io (only 0.0.0-reserved placeholders); it
+# is consumed as a git dependency pinned to a release tag, per upstream docs.
+# default-features drops `jemalloc`: openvm-stark-backend's jemalloc feature
+# registers a #[global_allocator], which we must not inherit into binaries
+# that also link the SP1 + RISC Zero stacks. `parallel` keeps rayon proving.
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false, features = ["parallel"] }
+# Same tag as openvm-sdk; these name types openvm-sdk does not re-export:
+# SdkVmConfig (config parsing), CommitBytes (commit hex comparison), and
+# VmStarkProof (aggregated proof decoding).
+openvm-sdk-config = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+openvm-continuations = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+openvm-verify-stark-host = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+# Lives in the separate stark-backend repo; MUST stay on the exact tag the
+# openvm workspace pins (see openvm's root Cargo.toml for the release) so
+# cargo unifies it with openvm-sdk's copy into one package instance. Names
+# the system-params helpers and the proving/verifying key types that
+# openvm-sdk uses but does not re-export.
+openvm-stark-sdk = { version = "2.0.0", git = "https://github.com/openvm-org/stark-backend.git", tag = "v2.0.0", default-features = false }
+# App-proof wire format: openvm v2 persists app proofs as bitcode (its
+# `.app.proof` files); pinned to the exact version openvm's workspace pins so
+# the encodings stay byte-identical.
+bitcode = { version = "0.6.5", default-features = false, features = ["serde"] }

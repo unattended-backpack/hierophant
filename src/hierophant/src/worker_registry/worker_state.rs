@@ -17,6 +17,10 @@ pub struct WorkerState {
     // the contemplant at registration; used by `handle_assign_proof` to skip
     // workers that would reject a Groth16 request.
     pub groth16_enabled: bool,
+    // Whether this worker can produce OpenVM EVM (halo2-wrapped) proofs.
+    // Reported by the contemplant at registration; used by
+    // `handle_assign_proof` to skip workers that would reject an EVM request.
+    pub openvm_evm_enabled: bool,
     pub strikes: usize,
     // Tracks the running average over SP1 Compressed proofs (the canonical
     // "span proof" for SP1 op-succinct workloads); RISC Zero Composite proofs
@@ -35,6 +39,7 @@ impl WorkerState {
         name: String,
         supported_vms: Vec<VmKind>,
         groth16_enabled: bool,
+        openvm_evm_enabled: bool,
         magister_drop_endpoint: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) -> Self {
@@ -43,6 +48,7 @@ impl WorkerState {
             status: WorkerStatus::Idle,
             supported_vms,
             groth16_enabled,
+            openvm_evm_enabled,
             strikes: 0,
             num_completed_span_proofs: 0,
             average_span_proof_time: 0.0,
@@ -61,8 +67,8 @@ impl WorkerState {
     }
 
     // True iff this worker can serve the given request. Combines the VM-kind
-    // filter with the Groth16 capability filter so `handle_assign_proof` has
-    // a single predicate to check.
+    // filter with the per-VM capability filters (RISC Zero Groth16, OpenVM
+    // EVM) so `handle_assign_proof` has a single predicate to check.
     pub(super) fn can_serve(&self, request: &network_lib::ContemplantProofRequest) -> bool {
         if !self.supports(request.vm()) {
             return false;
@@ -70,17 +76,23 @@ impl WorkerState {
         if request.needs_groth16() && !self.groth16_enabled {
             return false;
         }
+        if request.needs_openvm_evm() && !self.openvm_evm_enabled {
+            return false;
+        }
         true
     }
 
     pub(super) fn completed_proof(&mut self, minutes_to_complete: f32) {
         if let WorkerStatus::Busy { vm, mode_name, .. } = &self.status {
-            // span-proof tracking: SP1 Compressed and RISC Zero Composite are
-            // the respective "default recursion-segment" modes that op-succinct
-            // -style workloads issue in bulk.  Average those together.
+            // span-proof tracking: SP1 Compressed, RISC Zero Composite, and
+            // OpenVM App are the respective "default recursion-segment" modes
+            // that op-succinct-style workloads issue in bulk.  Average those
+            // together.
             let is_span = matches!(
                 (vm, mode_name.as_str()),
-                (VmKind::Sp1, "COMPRESSED") | (VmKind::Risc0, "COMPOSITE")
+                (VmKind::Sp1, "COMPRESSED")
+                    | (VmKind::Risc0, "COMPOSITE")
+                    | (VmKind::OpenVm, "APP")
             );
             if is_span {
                 let n = self.num_completed_span_proofs as f32 + 1.0;
@@ -205,10 +217,15 @@ impl Display for WorkerState {
             .collect::<Vec<_>>()
             .join(",");
         let groth16 = if self.groth16_enabled { ", Groth16" } else { "" };
+        let openvm_evm = if self.openvm_evm_enabled {
+            ", OpenVM-EVM"
+        } else {
+            ""
+        };
         write!(
             f,
-            "name: {} [VMs: {}{}] status: {}, strikes: {}",
-            self.name, vms, groth16, self.status, self.strikes
+            "name: {} [VMs: {}{}{}] status: {}, strikes: {}",
+            self.name, vms, groth16, openvm_evm, self.status, self.strikes
         )
     }
 }

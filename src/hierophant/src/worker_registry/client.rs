@@ -108,6 +108,7 @@ impl WorkerRegistryClient {
                 worker_name: worker_register_info.name,
                 supported_vms: worker_register_info.supported_vms,
                 groth16_enabled: worker_register_info.groth16_enabled,
+                openvm_evm_enabled: worker_register_info.openvm_evm_enabled,
                 magister_drop_endpoint: worker_register_info.magister_drop_endpoint,
                 from_hierophant_sender,
             })

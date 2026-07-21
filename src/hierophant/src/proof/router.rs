@@ -7,7 +7,8 @@ use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{error, warn};
 use network_lib::{
-    ContemplantProofRequest, Risc0ProofMode, Risc0ProofRequest, Sp1ProofRequest,
+    ContemplantProofRequest, OpenVmProofMode, OpenVmProofRequest, Risc0ProofMode,
+    Risc0ProofRequest, Sp1ProofRequest,
 };
 use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
 use tokio::time::Duration;
@@ -100,6 +101,33 @@ impl ProofRouter {
             mode,
             mock: self.mock_mode,
             wrap_of,
+        });
+
+        self.worker_registry_client
+            .assign_proof_request(proof_request)
+            .await
+    }
+
+    // OpenVM path: callers (the OpenVM REST handlers) provide the raw guest
+    // ELF, an optional app-config TOML, and the opaque input streams
+    // directly, mirroring the RISC Zero arrangement. The contemplant
+    // transpiles + proves; hierophant re-derives the same keys/commitments
+    // from these bytes when verifying the returned proof.
+    pub async fn route_openvm_proof(
+        &self,
+        request_id: B256,
+        elf: Vec<u8>,
+        app_config_toml: Option<String>,
+        input: Vec<Vec<u8>>,
+        mode: OpenVmProofMode,
+    ) -> Result<()> {
+        let proof_request = ContemplantProofRequest::OpenVm(OpenVmProofRequest {
+            request_id,
+            elf,
+            app_config_toml,
+            input,
+            mode,
+            mock: self.mock_mode,
         });
 
         self.worker_registry_client

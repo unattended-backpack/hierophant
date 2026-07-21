@@ -16,6 +16,11 @@ futures-util.workspace = true
 tokio-tungstenite.workspace = true
 sp1-sdk.workspace = true
 risc0-zkvm.workspace = true
+openvm-sdk.workspace = true
+openvm-sdk-config.workspace = true
+openvm-stark-sdk.workspace = true
+bitcode.workspace = true
+sha2.workspace = true
 network-lib = { path = "../network-lib" }
 toml.workspace = true
 anyhow.workspace = true
@@ -33,3 +38,10 @@ clap.workspace = true
 [features]
 enable-native-gnark = ["sp1-sdk/native-gnark"]
 enable-risc0-cuda = ["risc0-zkvm/cuda"]
+# Links openvm-sdk's CUDA backend (GpuSdk) into the binary. Same deploy-time
+# caveats as enable-risc0-cuda: requires a CUDA runtime at load time.
+enable-openvm-cuda = ["openvm-sdk/cuda"]
+# Links the halo2/snark-verifier stack needed to produce OpenVM EVM proofs.
+# Off by default because it is a large compile-time addition; required for
+# `evm_enabled = true` on an openvm [[provers]] entry.
+enable-openvm-evm = ["openvm-sdk/evm-prove"]

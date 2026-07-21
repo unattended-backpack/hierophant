@@ -8,13 +8,14 @@ hierophant_ws_address = "ws://hierophant:9010/ws"
 # REQUIRED: declare which VM(s) this contemplant serves and with which backend.
 # At least one entry must be present. A contemplant processes one proof at a
 # time regardless of how many VMs it supports; declare multiple entries to let
-# this worker serve either kind of request as it becomes idle.
+# this worker serve any kind of request as it becomes idle.
 #
 # Fields:
-#   vm                = "sp1" | "risc0"
+#   vm                = "sp1" | "risc0" | "openvm"
 #   backend           = "cpu" | "cuda"   (default: "cpu")
 #   moongate_endpoint = "http://host:3000/twirp/"  (SP1 CUDA only; optional)
 #   groth16_enabled   = true | false     (risc0 only; default: false)
+#   evm_enabled       = true | false     (openvm only; default: false)
 #
 # Notes:
 #   - RISC Zero + CUDA requires building the contemplant binary with
@@ -34,6 +35,19 @@ hierophant_ws_address = "ws://hierophant:9010/ws"
 #     assets under /opt/risc0-groth16-prover/ plus the /usr/local/bin/docker
 #     shim that Dockerfile.contemplant installs. CPU Groth16 proofs take
 #     minutes per proof; leave this off for STARK-only deployments.
+#   - OpenVM + CUDA requires building the contemplant binary with
+#     `--features enable-openvm-cuda` (openvm-sdk selects its GPU backend at
+#     compile time, like risc0) plus GPU access at launch.
+#   - `evm_enabled = true` opts an openvm prover into producing EVM
+#     (halo2-wrapped, onchain-verifiable) proofs. Requires a binary built
+#     with `--features enable-openvm-evm` AND the KZG params + halo2 key
+#     installed by `cargo openvm setup --evm` under ~/.openvm/ (tens of
+#     GB; the in-process keygen fallback needs ~70 GB of RAM). Leave this off
+#     for STARK-only deployments.
+#   - OpenVM stark-mode proofs benefit from a pre-staged
+#     ~/.openvm/internal_recursive.pk (from `cargo openvm setup`); without it
+#     the worker runs aggregation keygen in-process on the first stark proof
+#     (slow, RAM-heavy).
 
 [[provers]]
 vm = "sp1"
@@ -44,6 +58,12 @@ backend = "cpu"
 # backend = "cpu"
 # Enable to accept onchain-capable Groth16 requests.
 # groth16_enabled = false
+
+# [[provers]]
+# vm = "openvm"
+# backend = "cpu"
+# Enable to accept onchain-capable EVM (halo2) requests.
+# evm_enabled = false
 
 # OPTIONAL: Human-readable name for this Contemplant (default: from names.txt).
 # contemplant_name = ""

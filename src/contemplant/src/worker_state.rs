@@ -1,5 +1,5 @@
 use crate::config::{AssessorConfig, Config, ProverBackend, VmChoice};
-use crate::proof_executor::{Risc0Executor, Sp1Executor};
+use crate::proof_executor::{OpenVmExecutor, Risc0Executor, Sp1Executor};
 use crate::proof_store::ProofStoreClient;
 use log::{error, info};
 use network_lib::VmKind;
@@ -17,6 +17,7 @@ pub enum ActiveSp1Prover {
 pub struct WorkerState {
     pub sp1_executor: Option<Sp1Executor>,
     pub risc0_executor: Option<Risc0Executor>,
+    pub openvm_executor: Option<OpenVmExecutor>,
     pub proof_store_client: ProofStoreClient,
     pub assessor_config: AssessorConfig,
     // just used for healthcheck.  Is set to true in api/connect_to_hierophant
@@ -27,6 +28,7 @@ impl WorkerState {
     pub fn new(config: Config) -> Self {
         let mut sp1_executor: Option<Sp1Executor> = None;
         let mut risc0_executor: Option<Risc0Executor> = None;
+        let mut openvm_executor: Option<OpenVmExecutor> = None;
 
         for prover_cfg in &config.provers {
             match prover_cfg.vm {
@@ -56,6 +58,16 @@ impl WorkerState {
                         prover_cfg.groth16_enabled,
                     ));
                 }
+                VmChoice::OpenVm => {
+                    info!(
+                        "OpenVM executor enabled (backend={:?}, evm_enabled={})",
+                        prover_cfg.backend, prover_cfg.evm_enabled
+                    );
+                    openvm_executor = Some(OpenVmExecutor::new(
+                        prover_cfg.backend,
+                        prover_cfg.evm_enabled,
+                    ));
+                }
             }
         }
         info!("Prover(s) built");
@@ -66,6 +78,7 @@ impl WorkerState {
         Self {
             sp1_executor,
             risc0_executor,
+            openvm_executor,
             proof_store_client,
             assessor_config: config.assessor.clone(),
             ready,
@@ -80,6 +93,9 @@ impl WorkerState {
         if self.risc0_executor.is_some() {
             out.push(VmKind::Risc0);
         }
+        if self.openvm_executor.is_some() {
+            out.push(VmKind::OpenVm);
+        }
         out
     }
 
@@ -91,6 +107,17 @@ impl WorkerState {
         self.risc0_executor
             .as_ref()
             .map(|e| e.groth16_enabled)
+            .unwrap_or(false)
+    }
+
+    // True iff this contemplant is configured to produce OpenVM EVM
+    // (halo2-wrapped) proofs. Reported at registration so hierophant's
+    // assignment filter doesn't hand EVM work to workers that would fail
+    // fast inside the executor anyway.
+    pub fn openvm_evm_enabled(&self) -> bool {
+        self.openvm_executor
+            .as_ref()
+            .map(|e| e.evm_enabled)
             .unwrap_or(false)
     }
 }

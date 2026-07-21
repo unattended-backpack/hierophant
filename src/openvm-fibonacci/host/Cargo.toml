@@ -1,0 +1,51 @@
+[package]
+name = "fibonacci-host"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "host"
+path = "src/main.rs"
+
+[build-dependencies]
+# openvm-build cross-compiles the guest crate to riscv32im-risc0-zkvm-elf
+# using the pinned OpenVM nightly toolchain (auto-installed via rustup on
+# first build; see ../build-notes in Dockerfile). Same tag as the openvm-sdk
+# used below.
+openvm-build = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+
+[dependencies]
+# Paired with the openvm-sdk tag the hierophant + contemplant link against.
+# If that tag is bumped, bump this in lockstep or the proof wire formats
+# will drift. default-features drops the jemalloc global allocator;
+# `parallel` keeps rayon-parallel verification.
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false, features = ["parallel"] }
+# Only to name the aggregated-proof type that openvm-sdk does not re-export.
+openvm-verify-stark-host = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+# Lives in the separate stark-backend repo; MUST stay on the exact tag the
+# openvm workspace pins so cargo unifies it with openvm-sdk's copy. Names
+# the system-params helpers and field traits openvm-sdk doesn't re-export.
+openvm-stark-sdk = { version = "2.0.0", git = "https://github.com/openvm-org/stark-backend.git", tag = "v2.0.0", default-features = false }
+# App-proof wire format (openvm v2 `.app.proof` files are bitcode); same
+# exact version openvm's workspace pins.
+bitcode = { version = "0.6.5", default-features = false, features = ["serde"] }
+
+# Shared fibonacci(n); used here to cross-check the guest's revealed public
+# values against an out-of-circuit computation. Same crate the guest uses,
+# reached via path-dep across workspaces.
+fibonacci = { path = "../../fibonacci" }
+
+anyhow = "1"
+bincode = "1.3"
+clap = { version = "4", features = ["derive", "env"] }
+env_logger = "0.11"
+hex = "0.4"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+# Drives the whole REST flow against Hierophant's /openvm surface. There is
+# no third-party SDK to exercise here (OpenVM has no bonsai-sdk analog), so
+# the wire format stays explicit.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

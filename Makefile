@@ -39,11 +39,22 @@ BACKEND ?= gpu
 # risc0's CUDA kernels. An explicit override still wins; set
 # `CONTEMPLANT_FEATURES=...` on the command line or in .env to force a
 # specific feature set regardless of BACKEND.
+#
+# The test-openvm target additionally derives per-mode features: BACKEND=cuda
+# appends enable-openvm-cuda (openvm-sdk's GPU backend is compile-time gated,
+# like risc0's) and MODE=evm appends enable-openvm-evm (halo2 prover stack).
+# These are target-specific so plain sp1/risc0 builds don't pay the extra
+# compile cost.
+# Literal comma, for use inside $(if ...) expansions below.
+comma := ,
+
 ifndef CONTEMPLANT_FEATURES
   ifeq ($(BACKEND),cuda)
     CONTEMPLANT_FEATURES := enable-native-gnark,enable-risc0-cuda
+test-openvm: CONTEMPLANT_FEATURES := enable-native-gnark,enable-risc0-cuda,enable-openvm-cuda$(if $(filter evm,$(MODE)),$(comma)enable-openvm-evm)
   else
     CONTEMPLANT_FEATURES := enable-native-gnark
+test-openvm: CONTEMPLANT_FEATURES := enable-native-gnark$(if $(filter evm,$(MODE)),$(comma)enable-openvm-evm)
   endif
 endif
 
@@ -248,6 +259,52 @@ test-risc0:
 	-docker-compose -f docker-compose.test.risc0.yml down -v
 	@echo "RISC Zero integration test complete (MODE=$${MODE:-composite}, BACKEND=$(BACKEND))."
 
+# MODE selects which OpenVM proving path the integration test exercises:
+#   app (default); app-level continuation STARK, cheapest path.
+#   stark        ; aggregated root STARK; single compact proof. The worker
+#                   runs aggregation keygen in-process unless ~/.openvm/
+#                   artifacts from `cargo openvm setup` are staged in the
+#                   image; expect a long, RAM-hungry first proof.
+#   evm          ; halo2-wrapped EVM-verifiable proof. Requires the
+#                   contemplant to be built with enable-openvm-evm (this
+#                   target derives that automatically) AND the KZG params +
+#                   halo2 keys of `cargo openvm setup --evm` (~70 GB RAM to
+#                   generate in-process otherwise); expect this to be viable
+#                   only on very large machines.
+# Usage: `make test-openvm`                 # app, cpu
+#        `make test-openvm MODE=stark`      # stark, cpu
+#        `make test-openvm BACKEND=cuda`    # app, gpu (needs enable-openvm-cuda build)
+.PHONY: test-openvm
+test-openvm:
+	@if [ "$(BACKEND)" = "cuda" ]; then \
+		$(MAKE) docker-h ; \
+		$(MAKE) docker-c CONTEMPLANT_FEATURES="$(CONTEMPLANT_FEATURES)" ; \
+	else \
+		$(MAKE) build CONTEMPLANT_FEATURES="$(CONTEMPLANT_FEATURES)" ; \
+		$(MAKE) ci ; \
+	fi
+	@echo "Tearing down any lingering containers from a previous run ..."
+	-docker-compose -f docker-compose.test.openvm.yml down -v
+	@echo "Running OpenVM integration test (MODE=$${MODE:-app}, BACKEND=$(BACKEND)) ..."
+	@echo "Starting Hierophant, Contemplant, and OpenVM test client ..."
+	@case "$(BACKEND)" in cpu|cuda) ;; *) echo "unknown BACKEND=$(BACKEND); expected cpu|cuda" >&2; exit 1 ;; esac
+	@MODE_EFF="$${MODE:-app}"; \
+	case "$$MODE_EFF" in \
+	  app)   PROOF_MODE=app   CONTEMPLANT_OPENVM_EVM=false ;; \
+	  stark) PROOF_MODE=stark CONTEMPLANT_OPENVM_EVM=false ;; \
+	  evm)   PROOF_MODE=evm   CONTEMPLANT_OPENVM_EVM=true  ;; \
+	  *) echo "unknown MODE=$$MODE_EFF; expected app|stark|evm" >&2; exit 1 ;; \
+	esac; \
+	export PROOF_MODE CONTEMPLANT_OPENVM_EVM CONTEMPLANT_OPENVM_BACKEND=$(BACKEND); \
+	docker-compose -f docker-compose.test.openvm.yml up \
+		--build \
+		--force-recreate \
+		--abort-on-container-exit \
+		--exit-code-from test-client
+	@echo "Cleaning up containers ..."
+	-docker-compose -f docker-compose.test.openvm.yml down -v
+	@echo "OpenVM integration test complete (MODE=$${MODE:-app}, BACKEND=$(BACKEND))."
+
 .PHONY: docker-h
 docker-h:
 	@echo "Building Hierophant image ..."
@@ -449,6 +506,7 @@ help:
 	@echo "  test            Run all tests for the build."
 	@echo "  test-sp1        Run end-to-end SP1 integration test with Docker Compose."
 	@echo "  test-risc0      Run end-to-end RISC Zero integration test with Docker Compose."
+	@echo "  test-openvm     Run end-to-end OpenVM integration test with Docker Compose."
 	@echo "  docker-h        Build just the Hierophant image."
 	@echo "  docker-c        Build just the Contemplant image."
 	@echo "  docker          Build Docker images (compiles inside container)."

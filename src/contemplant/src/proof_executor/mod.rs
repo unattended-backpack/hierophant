@@ -1,7 +1,9 @@
 mod assessor;
+mod openvm_executor;
 mod risc0_executor;
 mod sp1_executor;
 
+pub use openvm_executor::OpenVmExecutor;
 pub use risc0_executor::Risc0Executor;
 pub use sp1_executor::Sp1Executor;
 
@@ -39,6 +41,19 @@ pub async fn execute_proof(
             None => {
                 let msg = format!(
                     "Received RISC Zero proof request {} but this contemplant does not serve RISC Zero",
+                    req.request_id
+                );
+                error!("{msg}");
+                let _ = exit_sender.send(msg).await;
+            }
+        },
+        ContemplantProofRequest::OpenVm(req) => match state.openvm_executor.clone() {
+            Some(executor) => {
+                openvm_executor::execute(state, executor, req, exit_sender).await;
+            }
+            None => {
+                let msg = format!(
+                    "Received OpenVM proof request {} but this contemplant does not serve OpenVM",
                     req.request_id
                 );
                 error!("{msg}");

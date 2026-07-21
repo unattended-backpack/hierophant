@@ -1,0 +1,21 @@
+# Linking the RISC Zero and OpenVM host SDKs into one binary collides on one
+# symbol: both risc0-zkvm-platform and openvm-platform export an unmangled
+# `sys_alloc_aligned` (the guest heap allocator hook) even when compiled for
+# the host. Neither export is feature-toggleable from our side; risc0-zkvm
+# hard-codes `risc0-zkvm-platform/rust-runtime` and the `openvm` guest crate
+# (a host-side dependency of openvm-sdk) hard-codes
+# `openvm-platform/rust-runtime`.
+#
+# Both host-side definitions are dead code: nothing on x86_64 ever calls the
+# guest heap hook (risc0's host stub is literally `unimplemented!()`), so
+# letting the linker keep whichever it sees first is sound. This is the
+# established workaround for multi-zkVM host binaries.
+#
+# Scoped to the Linux deployment targets so it doesn't silently alter builds
+# on other platforms. If a future risc0/openvm release drops the host-side
+# export, delete this file and re-run `make test` to confirm.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-Wl,--allow-multiple-definition"]

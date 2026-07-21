@@ -32,6 +32,7 @@ impl FromStr for ProverBackend {
 pub enum VmChoice {
     Sp1,
     Risc0,
+    OpenVm,
 }
 
 impl From<VmChoice> for VmKind {
@@ -39,6 +40,7 @@ impl From<VmChoice> for VmKind {
         match v {
             VmChoice::Sp1 => VmKind::Sp1,
             VmChoice::Risc0 => VmKind::Risc0,
+            VmChoice::OpenVm => VmKind::OpenVm,
         }
     }
 }
@@ -66,6 +68,16 @@ pub struct ProverConfig {
     // missing assets.
     #[serde(default)]
     pub groth16_enabled: bool,
+    // Only meaningful for `vm = "openvm"`. Opt-in because the OpenVM EVM
+    // (halo2-wrapped) proving path:
+    //   1. requires the KZG params installed by `cargo openvm setup`
+    //      (tens of GB under ~/.openvm/params/);
+    //   2. runs a very heavy halo2 aggregation keygen (long and RAM-hungry).
+    // An operator running a lean or STARK-only contemplant leaves this false
+    // so EVM requests fail fast at this worker rather than hanging on
+    // missing params.
+    #[serde(default)]
+    pub evm_enabled: bool,
 }
 
 fn default_backend() -> ProverBackend {
@@ -249,6 +261,7 @@ impl Config {
                                 backend,
                                 moongate_endpoint,
                                 groth16_enabled: false,
+                                evm_enabled: false,
                             });
                         }
                         "risc0" => {
@@ -269,10 +282,32 @@ impl Config {
                                 backend,
                                 moongate_endpoint: None,
                                 groth16_enabled,
+                                evm_enabled: false,
+                            });
+                        }
+                        "openvm" => {
+                            let backend = env::var("CONTEMPLANT_OPENVM_BACKEND")
+                                .ok()
+                                .map(|s| s.parse())
+                                .transpose()
+                                .context("CONTEMPLANT_OPENVM_BACKEND must be 'cpu' or 'cuda'")?
+                                .unwrap_or(ProverBackend::Cpu);
+                            let evm_enabled = env::var("CONTEMPLANT_OPENVM_EVM")
+                                .ok()
+                                .map(|s| s.parse::<bool>())
+                                .transpose()
+                                .context("CONTEMPLANT_OPENVM_EVM must be 'true' or 'false'")?
+                                .unwrap_or(false);
+                            config.provers.push(ProverConfig {
+                                vm: VmChoice::OpenVm,
+                                backend,
+                                moongate_endpoint: None,
+                                groth16_enabled: false,
+                                evm_enabled,
                             });
                         }
                         other => anyhow::bail!(
-                            "Unknown VM '{other}' in CONTEMPLANT_VMS (expected sp1, risc0)"
+                            "Unknown VM '{other}' in CONTEMPLANT_VMS (expected sp1, risc0, openvm)"
                         ),
                     }
                 }
@@ -310,6 +345,41 @@ impl Config {
                 anyhow::bail!(
                     "groth16_enabled is only meaningful for vm = \"risc0\"; saw it on {:?}.",
                     prover.vm
+                );
+            }
+            if prover.evm_enabled && !matches!(prover.vm, VmChoice::OpenVm) {
+                anyhow::bail!(
+                    "evm_enabled is only meaningful for vm = \"openvm\"; saw it on {:?}.",
+                    prover.vm
+                );
+            }
+            // OpenVM EVM (halo2) proving is a cargo-feature-gated opt-in: the
+            // binary must be built with `--features enable-openvm-evm` so the
+            // halo2/snark-verifier stack is linked in. Reject at startup when
+            // a featureless build gets an EVM config, so the operator sees a
+            // clean error instead of per-request failures.
+            #[cfg(not(feature = "enable-openvm-evm"))]
+            if prover.evm_enabled {
+                anyhow::bail!(
+                    "OpenVM EVM proofs require building the contemplant with `--features enable-openvm-evm`. \
+                     Rebuild with that feature (and install the KZG params via `cargo openvm setup --evm`) \
+                     or set evm_enabled = false on the openvm [[provers]] entry."
+                );
+            }
+            // OpenVM CUDA support is a cargo-feature-gated opt-in, mirroring
+            // the RISC Zero arrangement: the binary must be built with
+            // `--features enable-openvm-cuda` so the openvm-sdk `cuda`
+            // bindings are linked in. Reject at startup when a CUDA-less
+            // build gets a CUDA config, so the operator sees a clean error
+            // instead of a silent CPU fallback.
+            #[cfg(not(feature = "enable-openvm-cuda"))]
+            if matches!(prover.vm, VmChoice::OpenVm)
+                && matches!(prover.backend, ProverBackend::Cuda)
+            {
+                anyhow::bail!(
+                    "OpenVM CUDA backend requires building the contemplant with `--features enable-openvm-cuda`. \
+                     Rebuild with that feature (and run the container with GPU access, e.g. `--gpus all`) \
+                     or set backend = \"cpu\" on the openvm [[provers]] entry."
                 );
             }
         }
