@@ -8,13 +8,13 @@ hierophant_ws_address = "ws://hierophant:9010/ws"
 # REQUIRED: declare which VM(s) this contemplant serves and with which backend.
 # At least one entry must be present. A contemplant processes one proof at a
 # time regardless of how many VMs it supports; declare multiple entries to let
-# this worker serve either kind of request as it becomes idle.
+# this worker serve any kind of request as it becomes idle.
 #
 # Fields:
-#   vm                = "sp1" | "risc0"
+#   vm                = "sp1" | "risc0" | "openvm"
 #   backend           = "cpu" | "cuda"   (default: "cpu")
-#   moongate_endpoint = "http://host:3000/twirp/"  (SP1 CUDA only; optional)
 #   groth16_enabled   = true | false     (risc0 only; default: false)
+#   evm_enabled       = true | false     (openvm only; default: false)
 #
 # Notes:
 #   - RISC Zero + CUDA requires building the contemplant binary with
@@ -22,18 +22,33 @@ hierophant_ws_address = "ws://hierophant:9010/ws"
 #     access (e.g. `docker run --gpus all`, or compose's `deploy.resources.
 #     reservations.devices`). CPU-only contemplant images won't load a
 #     CUDA-feature binary; build a separate image variant for GPU deployments.
-#   - SP1 + CUDA with `moongate_endpoint` requires the binary to be built with
-#     `--features enable-native-gnark`. Omit the endpoint to use the dockerized
-#     moongate-server instead. The endpoint must terminate in `/twirp/` ;
-#     moongate's prover service router is mounted under that prefix, and
-#     twirp-rs's client joins the method path onto the base URL verbatim. The
-#     contemplant appends `/twirp/` automatically when missing, so either
-#     `http://host:3000` or `http://host:3000/twirp/` is accepted.
+#   - SP1 + CUDA drives a local `sp1-gpu-server` binary over a unix socket
+#     (spawned from ~/.sp1/bin/sp1-gpu-server; the contemplant image vendors
+#     it). The GPU must be attached to this host. sp1-sdk 6.x removed the
+#     external moongate-server arrangement, so the old `moongate_endpoint`
+#     field is rejected at startup if set.
 #   - `groth16_enabled = true` opts a risc0 prover into producing Groth16
 #     (onchain-verifiable) proofs. Requires the 2.5 GB of vendored Groth16
 #     assets under /opt/risc0-groth16-prover/ plus the /usr/local/bin/docker
 #     shim that Dockerfile.contemplant installs. CPU Groth16 proofs take
 #     minutes per proof; leave this off for STARK-only deployments.
+#   - OpenVM + CUDA requires building the contemplant binary with
+#     `--features enable-openvm-cuda` (openvm-sdk selects its GPU backend at
+#     compile time, like risc0) plus GPU access at launch.
+#   - `evm_enabled = true` opts an openvm prover into producing EVM
+#     (halo2-wrapped, onchain-verifiable) proofs. Requires a binary built
+#     with `--features enable-openvm-evm` AND the KZG params + halo2 key
+#     under ~/.openvm/ (~14 GB; the in-process keygen fallback needs ~70 GB
+#     of RAM). Contemplant images built with OPENVM_EVM_ASSETS_VERSION set
+#     in .env.maintainer bake these in (self-contained, no volume mounts);
+#     lean images provision them via a volume mount or
+#     `cargo openvm setup --evm`. Leave this off for STARK-only deployments.
+#   - OpenVM stark-mode proofs benefit from a pre-staged
+#     ~/.openvm/internal_recursive.pk; without it the worker runs
+#     aggregation keygen in-process on the first stark proof (slow,
+#     RAM-heavy). Contemplant images built with OPENVM_AGG_KEYS_VERSION set
+#     in .env.maintainer bake the vendored key in automatically; otherwise
+#     stage it via `cargo openvm setup` or a volume mount.
 
 [[provers]]
 vm = "sp1"
@@ -44,6 +59,12 @@ backend = "cpu"
 # backend = "cpu"
 # Enable to accept onchain-capable Groth16 requests.
 # groth16_enabled = false
+
+# [[provers]]
+# vm = "openvm"
+# backend = "cpu"
+# Enable to accept onchain-capable EVM (halo2) requests.
+# evm_enabled = false
 
 # OPTIONAL: Human-readable name for this Contemplant (default: from names.txt).
 # contemplant_name = ""
@@ -63,7 +84,10 @@ backend = "cpu"
 # Only set if this Contemplant is managed by a Magister.
 # magister_drop_endpoint = ""
 
-# Assessor settings control SP1 proof progress monitoring (CUDA + moongate only).
+# Assessor settings control SP1 proof progress monitoring. Progress tracking
+# relied on watching an external moongate-server's log; sp1-sdk 6.x removed
+# that arrangement, so these settings are currently inert (kept for config
+# compatibility and for when the local sp1-gpu-server grows an equivalent).
 
 # OPTIONAL: Path to log file for progress tracking (default: "./moongate.log").
 # assessor.moongate_log_path = "./moongate.log"

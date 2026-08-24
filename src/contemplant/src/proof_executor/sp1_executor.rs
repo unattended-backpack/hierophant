@@ -6,8 +6,8 @@ use log::{error, info};
 use network_lib::{ContemplantProofStatus, Sp1ProofRequest, to_proof_from_network};
 use sp1_sdk::proof::ProofFromNetwork;
 use sp1_sdk::{
-    CpuProver, Prover,
-    network::proto::network::{ExecutionStatus, ProofMode},
+    MockProver, ProveRequest, Prover, SP1ProofMode, SP1ProofWithPublicValues,
+    network::proto::base::types::{ExecutionStatus, ProofMode},
 };
 use std::sync::Arc;
 use tokio::{
@@ -18,7 +18,7 @@ use tokio::{
 #[derive(Clone)]
 pub struct Sp1Executor {
     pub active_prover: ActiveSp1Prover,
-    pub mock_prover: Arc<CpuProver>,
+    pub mock_prover: Arc<MockProver>,
     pub progress_tracking_available: bool,
 }
 
@@ -77,60 +77,52 @@ pub(super) async fn execute(
         let mock = proof_request.mock;
         let stdin = &proof_request.sp1_stdin;
 
-        let (pk, _) = if mock {
-            executor.mock_prover.setup(&proof_request.elf)
-        } else {
-            match &executor.active_prover {
-                ActiveSp1Prover::Cpu(cpu_prover) => cpu_prover.setup(&proof_request.elf),
-                ActiveSp1Prover::Cuda(cuda_prover) => {
-                    // the cuda prover keeps state of the last `setup()` that was called on it.
-                    // You must call `setup()` then `prove` *each* time you intend to
-                    // prove a certain program
-                    cuda_prover.setup(&proof_request.elf)
-                }
-            }
+        // Map the request's wire-level mode onto the SDK's mode once; 6.x
+        // prove requests take the mode as a builder argument, replacing the
+        // per-mode method chains of 5.x.
+        let sp1_mode = match proof_request.mode {
+            ProofMode::UnspecifiedProofMode => None,
+            ProofMode::Core => Some(SP1ProofMode::Core),
+            ProofMode::Compressed => Some(SP1ProofMode::Compressed),
+            ProofMode::Plonk => Some(SP1ProofMode::Plonk),
+            ProofMode::Groth16 => Some(SP1ProofMode::Groth16),
         };
 
-        // construct proving function based on ProofMode and prover type
-        let proof_res = match proof_request.mode {
-            ProofMode::UnspecifiedProofMode => Err(anyhow!("UnspecifiedProofMode")),
-            ProofMode::Core => {
+        // setup() + prove() must stay within one prover branch: each 6.x
+        // prover has its own proving-key type (the cuda prover's key is a
+        // remote handle to state held by the sp1-gpu-server, re-created by
+        // each setup() call), so the pair can't be hoisted out and shared
+        // across branches the way the 5.x code did.
+        let elf = proof_request.elf.clone();
+        let proof_res: anyhow::Result<SP1ProofWithPublicValues> = match sp1_mode {
+            None => Err(anyhow!("UnspecifiedProofMode")),
+            Some(sp1_mode) => {
                 if mock {
-                    executor.mock_prover.prove(&pk, stdin).core().run()
-                } else {
-                    match &executor.active_prover {
-                        ActiveSp1Prover::Cpu(p) => p.prove(&pk, stdin).core().run(),
-                        ActiveSp1Prover::Cuda(p) => p.prove(&pk, stdin).core().run(),
+                    async {
+                        let pk = executor.mock_prover.setup(elf.into()).await?;
+                        executor
+                            .mock_prover
+                            .prove(&pk, stdin.clone())
+                            .mode(sp1_mode)
+                            .await
                     }
-                }
-            }
-            ProofMode::Compressed => {
-                if mock {
-                    executor.mock_prover.prove(&pk, stdin).compressed().run()
+                    .await
                 } else {
                     match &executor.active_prover {
-                        ActiveSp1Prover::Cpu(p) => p.prove(&pk, stdin).compressed().run(),
-                        ActiveSp1Prover::Cuda(p) => p.prove(&pk, stdin).compressed().run(),
-                    }
-                }
-            }
-            ProofMode::Plonk => {
-                if mock {
-                    executor.mock_prover.prove(&pk, stdin).plonk().run()
-                } else {
-                    match &executor.active_prover {
-                        ActiveSp1Prover::Cpu(p) => p.prove(&pk, stdin).plonk().run(),
-                        ActiveSp1Prover::Cuda(p) => p.prove(&pk, stdin).plonk().run(),
-                    }
-                }
-            }
-            ProofMode::Groth16 => {
-                if mock {
-                    executor.mock_prover.prove(&pk, stdin).groth16().run()
-                } else {
-                    match &executor.active_prover {
-                        ActiveSp1Prover::Cpu(p) => p.prove(&pk, stdin).groth16().run(),
-                        ActiveSp1Prover::Cuda(p) => p.prove(&pk, stdin).groth16().run(),
+                        ActiveSp1Prover::Cpu(p) => {
+                            async {
+                                let pk = p.setup(elf.into()).await?;
+                                Ok(p.prove(&pk, stdin.clone()).mode(sp1_mode).await?)
+                            }
+                            .await
+                        }
+                        ActiveSp1Prover::Cuda(p) => {
+                            async {
+                                let pk = p.setup(elf.into()).await?;
+                                Ok(p.prove(&pk, stdin.clone()).mode(sp1_mode).await?)
+                            }
+                            .await
+                        }
                     }
                 }
             }

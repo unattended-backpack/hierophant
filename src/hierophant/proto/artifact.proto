@@ -7,12 +7,19 @@ service ArtifactStore {
   rpc CreateArtifact (CreateArtifactRequest) returns (CreateArtifactResponse);
 }
 
-// Types of artifacts
+// Types of artifacts.  Values 4-7 arrived with sp1-sdk 6.x; of those only
+// PRIVATE_STDIN is ever requested during a prove() round trip (when the
+// client opts into private stdin), but all are accepted so the enum decodes
+// whatever a 6.x client names.
 enum ArtifactType {
   UNSPECIFIED_ARTIFACT_TYPE = 0;
-  PROGRAM = 1;  // A program artifact
-  STDIN = 2;    // A stdin artifact
-  PROOF = 3;    // A proof artifact
+  PROGRAM = 1;        // A program artifact
+  STDIN = 2;          // A stdin artifact
+  PROOF = 3;          // A proof artifact
+  TRANSACTION = 4;    // A transaction artifact
+  STATE = 5;          // A state artifact
+  EXPORT = 6;         // An export artifact
+  PRIVATE_STDIN = 7;  // A stdin artifact the client asked to keep private
 }
 
 // Request to create an artifact

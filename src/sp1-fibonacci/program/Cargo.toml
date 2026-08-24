@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 alloy-sol-types = { workspace = true }
-sp1-zkvm = "5.0.8"
+sp1-zkvm = "6.2.1"
 fibonacci-lib = { path = "../lib" }
 
 # Shared fibonacci(n) implementation. Lives one workspace up; the SP1

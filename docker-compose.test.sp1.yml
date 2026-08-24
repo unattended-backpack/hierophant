@@ -33,11 +33,9 @@ services:
       - CONTEMPLANT_VMS=sp1
 
       # BACKEND plumbed from `make test-sp1 BACKEND=...`. When cuda, the
-      # entrypoint auto-starts moongate-server on :3000 (tmux'd alongside
-      # the contemplant) because CONTEMPLANT_SP1_BACKEND=cuda +
-      # MOONGATE_ENDPOINT are both set. CPU leaves both unset.
+      # contemplant itself spawns the vendored ~/.sp1/bin/sp1-gpu-server and
+      # talks to it over a unix socket (sp1-sdk 6.x). CPU leaves it unset.
       - CONTEMPLANT_SP1_BACKEND=${CONTEMPLANT_SP1_BACKEND:-}
-      - MOONGATE_ENDPOINT=${MOONGATE_ENDPOINT:-}
     depends_on:
       hierophant:
         condition: service_healthy

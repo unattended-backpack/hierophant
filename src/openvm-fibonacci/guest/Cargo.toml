@@ -1,0 +1,32 @@
+[package]
+name = "fibonacci-guest"
+version = "0.1.0"
+edition = "2021"
+
+# Guest is its own workspace root so `cargo openvm build` / openvm-build's
+# nested cargo invocation don't keep walking up the tree and find the
+# repo-root workspace. Same arrangement as the risc0-fibonacci guest.
+[workspace]
+
+[dependencies]
+# OpenVM is consumed as a git dependency pinned to a release tag; there is no
+# crates.io release (only 0.0.0-reserved placeholders). Keep this tag in
+# lockstep with the openvm-sdk tag in the repo-root workspace Cargo.toml or
+# the transpiler will reject the guest's instruction encoding.
+# Default features stay on: they provide the `getrandom-unsupported` stub
+# backend that guest builds are expected to carry. No `std` feature; this
+# guest is no_std like the shared fibonacci crate it wraps.
+openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.1" }
+# Shared fibonacci(n) implementation. The guest here is its own cargo
+# workspace root (see [workspace] above), so this path-dep reaches out of
+# the openvm-fibonacci subtree and across into the main repo's
+# `src/fibonacci` crate. Keeping the function in one place is the whole
+# purpose of that shared crate.
+fibonacci = { path = "../../fibonacci" }
+
+[profile.release]
+# Opt levels chosen for the guest-side cycle count trade-off; mirror the
+# risc0-fibonacci guest profile.
+opt-level = 3
+lto = "thin"
+debug = 0

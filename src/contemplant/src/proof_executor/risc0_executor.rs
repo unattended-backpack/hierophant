@@ -5,7 +5,7 @@ use anyhow::{Context, Result, anyhow};
 use log::info;
 use network_lib::{ContemplantProofStatus, ProgressUpdate, Risc0ProofMode, Risc0ProofRequest};
 use risc0_zkvm::{ExecutorEnv, ProverOpts, Receipt, default_prover};
-use sp1_sdk::network::proto::network::ExecutionStatus;
+use sp1_sdk::network::proto::base::types::ExecutionStatus;
 use tokio::{sync::mpsc, time::Instant};
 
 #[derive(Clone)]

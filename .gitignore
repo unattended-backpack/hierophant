@@ -10,3 +10,9 @@ out/
 # every run for out-of-band Solidity verification. Generated artifacts;
 # never commit.
 src/sp1-fibonacci/contracts/src/fixtures/
+
+# Vendored OpenVM assets: only the .sha256 sidecars are committed; the bytes
+# are uploaded to the CDN, mirroring the sp1/risc0 vendored kinds.
+provers/openvm/**/*.tar.gz
+provers/openvm/**/halo2.pk
+provers/openvm/**/*.srs

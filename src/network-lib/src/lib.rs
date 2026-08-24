@@ -4,8 +4,13 @@ pub mod protocol;
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::ProofFromNetwork;
-use sp1_sdk::network::proto::network::ExecutionStatus;
-use sp1_sdk::{SP1ProofWithPublicValues, SP1Stdin, network::proto::network::ProofMode};
+// The sp1-sdk 6.x release split the old `proto::network` module into
+// `proto::base` and `proto::auction`. Hierophant serves the base
+// (Reserved/hosted) flow, the one a `NetworkMode::Reserved` client drives
+// end-to-end, so these shared types mirror `base::types`. The enum wire values are identical in both
+// modules, so contemplants and hierophant agree regardless.
+use sp1_sdk::network::proto::base::types::ExecutionStatus;
+use sp1_sdk::{SP1ProofWithPublicValues, SP1Stdin, network::proto::base::types::ProofMode};
 use std::{cmp::Ordering, fmt::Display};
 
 // Which ZK VM a proof request targets, and which VMs a given contemplant is
@@ -14,6 +19,7 @@ use std::{cmp::Ordering, fmt::Display};
 pub enum VmKind {
     Sp1,
     Risc0,
+    OpenVm,
 }
 
 impl VmKind {
@@ -21,6 +27,7 @@ impl VmKind {
         match self {
             Self::Sp1 => "SP1",
             Self::Risc0 => "RISC0",
+            Self::OpenVm => "OPENVM",
         }
     }
 }
@@ -44,6 +51,14 @@ pub struct WorkerRegisterInfo {
     // Meaningful only when supported_vms contains VmKind::Risc0.
     #[serde(default)]
     pub groth16_enabled: bool,
+    // Whether this contemplant can produce OpenVM EVM (halo2-wrapped) proofs.
+    // Opt-in because the halo2 path needs the KZG params installed by
+    // `cargo openvm setup` (tens of GB) plus a very heavy aggregation keygen;
+    // a worker without those assets leaves this false so hierophant won't
+    // route EVM-mode OpenVM work to it. Meaningful only when supported_vms
+    // contains VmKind::OpenVm.
+    #[serde(default)]
+    pub openvm_evm_enabled: bool,
     // endpoint to hit to drop this contemplant from it's Magister.
     // Only Some if this contemplant has a Magister
     pub magister_drop_endpoint: Option<String>,
@@ -62,10 +77,15 @@ impl Display for WorkerRegisterInfo {
             .collect::<Vec<_>>()
             .join(",");
         let groth16 = if self.groth16_enabled { ", groth16" } else { "" };
+        let openvm_evm = if self.openvm_evm_enabled {
+            ", openvm-evm"
+        } else {
+            ""
+        };
         write!(
             f,
-            "{} CONTEMPLANT_VERSION {} [VMs: {}{}]{}",
-            self.name, self.contemplant_version, vms, groth16, magister_info
+            "{} CONTEMPLANT_VERSION {} [VMs: {}{}{}]{}",
+            self.name, self.contemplant_version, vms, groth16, openvm_evm, magister_info
         )
     }
 }
@@ -76,6 +96,7 @@ impl Display for WorkerRegisterInfo {
 pub enum ContemplantProofRequest {
     Sp1(Sp1ProofRequest),
     Risc0(Risc0ProofRequest),
+    OpenVm(OpenVmProofRequest),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -128,11 +149,57 @@ impl Risc0ProofMode {
     }
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct OpenVmProofRequest {
+    pub request_id: B256,
+    // Raw RISC-V ELF as produced by `cargo openvm build --no-transpile`.
+    // The contemplant's OpenVmExecutor decodes + transpiles it against the
+    // request's VM config; hierophant does the same when verifying the
+    // returned proof, so both sides agree on the program commitment.
+    pub elf: Vec<u8>,
+    // Optional `openvm.toml` app-config contents (the `[app_vm_config.*]`
+    // tables that declare which VM extensions the guest was built with).
+    // None means the SDK's standard rv32im + io config. Hierophant treats
+    // this opaquely; both the contemplant (proving) and the hierophant
+    // (verifying) parse it with openvm-sdk so keygen is identical on both
+    // sides.
+    pub app_config_toml: Option<String>,
+    // Input streams for the guest's StdIn, in write order. Each entry is one
+    // hint stream, written via `StdIn::write_bytes`; the guest consumes them
+    // in order with `read_vec()` (or `read()` when the bytes are an
+    // openvm-serde encoding). Opaque to hierophant.
+    pub input: Vec<Vec<u8>>,
+    pub mode: OpenVmProofMode,
+    pub mock: bool,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub enum OpenVmProofMode {
+    // App-level STARK (continuation proof); the default and cheapest mode.
+    App,
+    // Aggregated root STARK; single compact proof over the whole execution.
+    Stark,
+    // Halo2-wrapped, EVM-verifiable SNARK. Requires a worker that registered
+    // with openvm_evm_enabled=true (KZG params + aggregation keys present).
+    Evm,
+}
+
+impl OpenVmProofMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::App => "APP",
+            Self::Stark => "STARK",
+            Self::Evm => "EVM",
+        }
+    }
+}
+
 impl ContemplantProofRequest {
     pub fn request_id(&self) -> B256 {
         match self {
             Self::Sp1(r) => r.request_id,
             Self::Risc0(r) => r.request_id,
+            Self::OpenVm(r) => r.request_id,
         }
     }
 
@@ -140,6 +207,7 @@ impl ContemplantProofRequest {
         match self {
             Self::Sp1(_) => VmKind::Sp1,
             Self::Risc0(_) => VmKind::Risc0,
+            Self::OpenVm(_) => VmKind::OpenVm,
         }
     }
 
@@ -147,6 +215,7 @@ impl ContemplantProofRequest {
         match self {
             Self::Sp1(r) => r.mock,
             Self::Risc0(r) => r.mock,
+            Self::OpenVm(r) => r.mock,
         }
     }
 
@@ -154,6 +223,7 @@ impl ContemplantProofRequest {
         match self {
             Self::Sp1(r) => r.mode.as_str_name().to_string(),
             Self::Risc0(r) => r.mode.as_str().to_string(),
+            Self::OpenVm(r) => r.mode.as_str().to_string(),
         }
     }
 
@@ -166,6 +236,18 @@ impl ContemplantProofRequest {
         match self {
             Self::Sp1(_) => false,
             Self::Risc0(r) => r.mode == Risc0ProofMode::Groth16 || r.wrap_of.is_some(),
+            Self::OpenVm(_) => false,
+        }
+    }
+
+    // Returns true when serving this request requires the worker to have the
+    // OpenVM halo2/EVM toolchain available (KZG params from
+    // `cargo openvm setup` + aggregation keys). Used by the worker registry
+    // to skip workers that registered with openvm_evm_enabled=false.
+    pub fn needs_openvm_evm(&self) -> bool {
+        match self {
+            Self::Sp1(_) | Self::Risc0(_) => false,
+            Self::OpenVm(r) => r.mode == OpenVmProofMode::Evm,
         }
     }
 }

@@ -17,6 +17,7 @@ pub enum WorkerRegistryCommand {
         worker_name: String,
         supported_vms: Vec<VmKind>,
         groth16_enabled: bool,
+        openvm_evm_enabled: bool,
         magister_drop_endpoint: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     },

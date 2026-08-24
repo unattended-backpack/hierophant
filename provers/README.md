@@ -3,7 +3,7 @@
 This directory holds the SHA256 checksums for all large binary assets needed
 to build contemplant images that support each ZK VM. The actual tarballs
 (several GB combined) are not stored in git; they live on the vendor CDN at
-`${VENDOR_BASE_URL}`, and the Docker builds download + verify each one
+`${VENDOR_BASE_URL}`, and the Docker builds download then verify each one
 against the committed `.sha256` file here.
 
 ## Directory Structure
@@ -13,20 +13,21 @@ Assets are namespaced by VM and versioned by their upstream tag:
 ```
 provers/
 ├── sp1/
-│   └── <SP1_CIRCUITS_VERSION>/      # e.g. v5.0.0 (sp1-sdk crate version)
+│   └── <SP1_CIRCUITS_VERSION>/      # e.g. v6.1.0 (SP1_CIRCUIT_VERSION const)
 │       ├── groth16.tar.gz.sha256    # SP1 Groth16 circuit artifacts
 │       ├── plonk.tar.gz.sha256      # SP1 Plonk circuit artifacts
-│       └── moongate-server.tar.gz.sha256  # Succinct CUDA accelerator
-└── risc0/
-    └── <RISC0_GROTH16_PROVER_TAG>/  # e.g. v2025-04-03.1 (upstream tag)
-        └── risc0-groth16-prover.tar.gz.sha256  # gnark prover + keys
+│       └── sp1-gpu-server.tar.gz.sha256  # Succinct CUDA prover server
+├── risc0/
+│   └── <RISC0_GROTH16_PROVER_TAG>/  # e.g. v2025-04-03.1 (upstream tag)
+│       └── risc0-groth16-prover.tar.gz.sha256  # gnark prover + keys
+└── openvm/                          # see openvm/README.md
 ```
 
 The matching layout on the vendor CDN is identical:
 
 ```
 ${VENDOR_BASE_URL}/
-├── sp1/<SP1_CIRCUITS_VERSION>/{groth16,plonk,moongate-server}.tar.gz
+├── sp1/<SP1_CIRCUITS_VERSION>/{groth16,plonk,sp1-gpu-server}.tar.gz
 └── risc0/<RISC0_GROTH16_PROVER_TAG>/risc0-groth16-prover.tar.gz
 ```
 
@@ -42,28 +43,38 @@ three SP1 vendor assets. The `.env.maintainer` variable that drives this is
    mkdir -p provers/sp1/<new-version>
    ```
 
-2. Produce the three tarballs locally:
+2. Produce the three tarballs locally. `<new-version>` is the
+   `SP1_CIRCUIT_VERSION` constant baked into the sp1-prover crate you are
+   bumping to (NOT necessarily the sdk version; e.g. every sdk from 6.2.1
+   through 6.3.1 pins circuits v6.1.0):
 
    ```bash
-   # Circuits; let SP1 SDK download them by running any SP1 program, then tar
-   cd ~/.sp1/circuits/groth16 && tar -czf /tmp/groth16.tar.gz <new-version>/
-   cd ~/.sp1/circuits/plonk && tar -czf /tmp/plonk.tar.gz <new-version>/
+   # Circuits; download Succinct's release artifacts directly and re-wrap
+   # them with the <new-version>/ top-level directory the Dockerfiles expect
+   # (strip macOS ._AppleDouble entries; upstream packages carry them):
+   for kind in groth16 plonk; do
+     curl -fsSL -o "$kind-upstream.tar.gz" \
+       "https://sp1-circuits.s3-us-east-2.amazonaws.com/<new-version>-$kind.tar.gz"
+     mkdir -p "$kind/<new-version>"
+     tar -xzf "$kind-upstream.tar.gz" -C "$kind/<new-version>"
+     find "$kind" -name '._*' -delete
+     tar -C "$kind" -czf "/tmp/$kind.tar.gz" <new-version>
+   done
 
-   # moongate-server; extract from Succinct's CUDA prover docker image
-   # (image + tag depend on the SP1 release; see Succinct's release notes)
-   docker create --name moongate-extract succinctlabs/moongate-server:<tag>
-   docker cp \
-     moongate-extract:/usr/local/bin/moongate-server \
-     /tmp/moongate-server
-   docker rm moongate-extract
-   tar -czf /tmp/moongate-server.tar.gz -C /tmp moongate-server
+   # sp1-gpu-server; from the SP1 GitHub release matching the SDK version
+   # (the runtime `--version`-checks the binary against the sdk's crate
+   # version and re-downloads on mismatch, so these must agree exactly):
+   curl -fsSL -o gpu.tar.gz \
+     "https://github.com/succinctlabs/sp1/releases/download/v<sdk-version>/sp1_gpu_server_v<sdk-version>_x86_64.tar.gz"
+   mkdir gpu && tar -xzf gpu.tar.gz -C gpu
+   tar -C gpu -czf /tmp/sp1-gpu-server.tar.gz sp1-gpu-server
    ```
 
 3. Generate checksums and commit them:
 
    ```bash
    cd /tmp
-   for f in groth16.tar.gz plonk.tar.gz moongate-server.tar.gz; do
+   for f in groth16.tar.gz plonk.tar.gz sp1-gpu-server.tar.gz; do
      sha256sum "$f" > <repo>/provers/sp1/<new-version>/"$f".sha256
    done
    ```

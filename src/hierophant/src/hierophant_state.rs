@@ -2,6 +2,7 @@ use crate::artifact_store::{ArtifactStoreClient, ArtifactUri};
 use crate::bonsai::BonsaiState;
 use crate::config::Config;
 use crate::network::{Program, RequestProofRequestBody};
+use crate::openvm::OpenVmState;
 use crate::proof::ProofRouter;
 use alloy_primitives::B256;
 use anyhow::anyhow;
@@ -28,17 +29,21 @@ pub struct HierophantState {
     pub proofs_pending_artifacts: Arc<Mutex<HashSet<B256>>>,
     // Per-session state backing the Bonsai-shaped REST surface for RISC Zero clients.
     pub bonsai: Arc<BonsaiState>,
+    // Per-job state backing the OpenVM-shaped REST surface for OpenVM clients.
+    pub openvm: Arc<OpenVmState>,
 }
 
 impl HierophantState {
-    pub fn new(config: Config) -> Self {
+    // async because CpuProver construction became async in sp1-sdk 6.x (it
+    // spins up the prover's local worker node); called once from main.
+    pub async fn new(config: Config) -> Self {
         let proof_router = ProofRouter::new(&config);
         let artifact_store_client = ArtifactStoreClient::new(
             &config.artifact_store_directory,
             config.max_stdin_artifacts_stored,
             config.max_proof_artifacts_stored,
         );
-        let cpu_prover = Arc::new(CpuProver::new());
+        let cpu_prover = Arc::new(CpuProver::new().await);
         Self {
             config,
             proof_requests: Arc::new(Mutex::new(HashMap::new())),
@@ -48,6 +53,7 @@ impl HierophantState {
             cpu_prover,
             proofs_pending_artifacts: Arc::new(Mutex::new(HashSet::new())),
             bonsai: Arc::new(BonsaiState::new()),
+            openvm: Arc::new(OpenVmState::new()),
         }
     }
 

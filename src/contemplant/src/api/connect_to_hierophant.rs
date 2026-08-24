@@ -60,6 +60,7 @@ pub async fn connect_to_hierophant(
         name: config.contemplant_name.clone(),
         supported_vms: worker_state.supported_vms(),
         groth16_enabled: worker_state.groth16_enabled(),
+        openvm_evm_enabled: worker_state.openvm_evm_enabled(),
         magister_drop_endpoint: config.magister_drop_endpoint.clone(),
     };
 

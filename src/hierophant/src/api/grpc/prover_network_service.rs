@@ -11,8 +11,8 @@ use crate::proof::ProofStatus;
 use alloy_primitives::{Address, B256};
 use axum::body::Bytes;
 use log::{debug, error, info, warn};
-use sp1_sdk::network::proto::network::ExecutionStatus;
-use sp1_sdk::network::proto::{artifact::ArtifactType, network::ProofMode};
+use sp1_sdk::network::proto::base::types::ExecutionStatus;
+use sp1_sdk::network::proto::{artifact::ArtifactType, base::types::ProofMode};
 use sp1_sdk::proof::ProofFromNetwork;
 use sp1_sdk::{Prover, SP1ProofWithPublicValues};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -408,6 +408,7 @@ impl ProverNetwork for ProverNetworkService {
                 fulfill_tx_hash: None,
                 proof_uri: Some(proof_download_address),
                 public_values_hash: None,
+                proof_public_uri: None,
             };
             return Ok(Response::new(response));
         }
@@ -445,6 +446,7 @@ impl ProverNetwork for ProverNetworkService {
                 // to download this proof
                 proof_uri: Some(proof_download_address),
                 public_values_hash,
+                proof_public_uri: None,
             };
 
             return Ok(Response::new(response));
@@ -504,7 +506,9 @@ impl ProverNetwork for ProverNetworkService {
             // Verify the proof
             // Note: Circuit artifacts must already be downloaded at this point
             // (they are downloaded eagerly when the proof is requested)
-            if let Err(e) = self.state.cpu_prover.verify(&proof, &vkey) {
+            // The None asks verify to check for the default success exit code
+            // rather than a caller-specified one.
+            if let Err(e) = self.state.cpu_prover.verify(&proof, &vkey, None) {
                 warn!(
                     "Error verifying proof {request_id}: {e}.  Dropping worker and returning lost proof status"
                 );
@@ -560,6 +564,7 @@ impl ProverNetwork for ProverNetworkService {
             fulfill_tx_hash,
             proof_uri: Some(proof_download_address),
             public_values_hash,
+            proof_public_uri: None,
         };
 
         Ok(Response::new(response))
@@ -567,16 +572,27 @@ impl ProverNetwork for ProverNetworkService {
 }
 
 /// Check if circuit artifacts are ready for the given proof mode
+// The *_circuit_artifacts_dir helpers moved out of sp1_sdk::install in 6.x;
+// sp1_prover::build is the same code sp1-sdk itself calls, and our sp1-prover
+// pin unifies with sp1-sdk's own copy. They can now fail (no resolvable home
+// directory); treat that as "not ready" so the download path surfaces the
+// real error.
 fn check_artifacts_ready(mode: ProofMode) -> bool {
     match mode {
         ProofMode::Groth16 => {
-            let dir = sp1_sdk::install::groth16_circuit_artifacts_dir();
+            let Ok(dir) = sp1_prover::build::groth16_circuit_artifacts_dir() else {
+                warn!("Could not resolve groth16 circuit artifacts directory");
+                return false;
+            };
             dir.join(".download_complete").exists()
                 && dir.join("groth16_pk.bin").exists()
                 && dir.join("groth16_vk.bin").exists()
         }
         ProofMode::Plonk => {
-            let dir = sp1_sdk::install::plonk_circuit_artifacts_dir();
+            let Ok(dir) = sp1_prover::build::plonk_circuit_artifacts_dir() else {
+                warn!("Could not resolve plonk circuit artifacts directory");
+                return false;
+            };
             dir.join(".download_complete").exists()
                 && dir.join("plonk_pk.bin").exists()
                 && dir.join("plonk_vk.bin").exists()
@@ -607,8 +623,21 @@ async fn download_artifacts_and_route_proof(
         artifact_type
     );
 
-    // Download artifacts (this blocks until download completes)
-    let path = sp1_sdk::install::try_install_circuit_artifacts(artifact_type);
+    // Download artifacts (this awaits until download completes; the install
+    // helper became async and fallible in sp1-sdk 6.x)
+    let path = match sp1_sdk::install::try_install_circuit_artifacts(artifact_type).await {
+        Ok(path) => path,
+        Err(e) => {
+            error!("Failed to install {artifact_type} circuit artifacts for proof {request_id}: {e}");
+            // Remove from pending since we failed
+            state
+                .proofs_pending_artifacts
+                .lock()
+                .await
+                .remove(&request_id);
+            return;
+        }
+    };
 
     // Create marker file to indicate download is complete
     let marker_file = path.join(".download_complete");
@@ -679,5 +708,6 @@ fn lost_proof_response() -> GetProofRequestStatusResponse {
         fulfill_tx_hash: None,
         proof_uri: None,
         public_values_hash: None,
+        proof_public_uri: None,
     }
 }

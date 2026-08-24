@@ -1,5 +1,6 @@
 use crate::bonsai::bonsai_routes;
 use crate::hierophant_state::HierophantState;
+use crate::openvm::openvm_routes;
 use crate::worker_registry::WorkerState;
 use crate::{artifact_store::ArtifactUri, proof::CompletedProofInfo};
 
@@ -40,6 +41,9 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         // the catch-all `/:uri` so its nested paths aren't swallowed by the
         // SP1 artifact download handler.
         .nest("/bonsai", bonsai_routes())
+        // OpenVM-shaped REST surface for OpenVM clients.  Same catch-all
+        // caveat as /bonsai.
+        .nest("/openvm", openvm_routes())
         // Artifact download endpoint (catch-all; keep last).
         .route("/:uri", get(handle_artifact_download))
         .with_state(state)

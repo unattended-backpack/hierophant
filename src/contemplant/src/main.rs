@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
 
     info!("Starting contemplant {}", config.contemplant_name);
 
-    let worker_state = WorkerState::new(config.clone());
+    let worker_state = WorkerState::new(config.clone()).await;
 
     // Create a broadcast channel for shutdown signal
     let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);

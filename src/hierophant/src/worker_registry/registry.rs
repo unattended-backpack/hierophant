@@ -50,6 +50,7 @@ impl WorkerRegistry {
                     worker_name,
                     supported_vms,
                     groth16_enabled,
+                    openvm_evm_enabled,
                     magister_drop_endpoint,
                     from_hierophant_sender,
                 } => {
@@ -58,6 +59,7 @@ impl WorkerRegistry {
                         worker_name,
                         supported_vms,
                         groth16_enabled,
+                        openvm_evm_enabled,
                         magister_drop_endpoint,
                         from_hierophant_sender,
                     )
@@ -187,6 +189,7 @@ impl WorkerRegistry {
         let target_vm = proof_request.vm();
         let mode_name = proof_request.mode_name();
         let needs_groth16 = proof_request.needs_groth16();
+        let needs_openvm_evm = proof_request.needs_openvm_evm();
         // remove any dead workers
         self.trim_workers();
 
@@ -252,6 +255,8 @@ impl WorkerRegistry {
 
         let requirement = if needs_groth16 {
             format!("{target_vm}-capable Groth16-enabled")
+        } else if needs_openvm_evm {
+            format!("{target_vm}-capable EVM-enabled")
         } else {
             format!("{target_vm}-capable")
         };
@@ -264,6 +269,7 @@ impl WorkerRegistry {
         worker_name: String,
         supported_vms: Vec<VmKind>,
         groth16_enabled: bool,
+        openvm_evm_enabled: bool,
         magister_drop_endpoint: Option<String>,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) {
@@ -271,6 +277,7 @@ impl WorkerRegistry {
             worker_name.clone(),
             supported_vms,
             groth16_enabled,
+            openvm_evm_enabled,
             magister_drop_endpoint,
             from_hierophant_sender,
         );

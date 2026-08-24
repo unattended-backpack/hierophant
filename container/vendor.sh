@@ -68,5 +68,51 @@ vendor() {
   log "Extracted and verified: $archive_name to $extract_dir"
 }
 
-# Call vendor with command-line arguments
-vendor "$@"
+# Download and verify a raw (non-archive) vendored file, leaving it at
+# /tmp/<file_name> with no extraction step. Same argument shape as vendor().
+# Used for the OpenVM EVM assets (halo2.pk and the kzg_bn254_<k>.srs params),
+# which are consumed as-is rather than unpacked.
+# Usage: vendor_file <file_name> <checksum_dir> <version_prefix>
+vendor_file() {
+  local file_name=$1
+  local checksum_dir=$2
+  local version_prefix=$3
+  local file_path="/tmp/${file_name}"
+  local checksum_file="${checksum_dir}/${file_name}.sha256"
+  local url="${VENDOR_BASE_URL}/${version_prefix}${file_name}"
+  local marker="/tmp/.vendored-${file_name}"
+
+  if [ -f "$marker" ]; then
+    log "File $file_name already vendored"
+    return 0
+  fi
+
+  log "Downloading: $url"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$file_path" "$url"
+  else
+    log "ERROR: curl not found!"
+    exit 1
+  fi
+
+  log "Verifying checksum for $file_path..."
+  cp "$checksum_file" "/tmp/${file_name}.sha256"
+  if (cd /tmp && sha256sum -c "${file_name}.sha256"); then
+    log "Downloaded and verified: $file_path"
+  else
+    log "ERROR: Checksum verification failed for $file_path"
+    rm -f "$file_path" "/tmp/${file_name}.sha256"
+    exit 1
+  fi
+  rm -f "/tmp/${file_name}.sha256"
+  touch "$marker"
+}
+
+# Dispatch: `vendor.sh --file <args>` fetches a raw file; the default
+# (archive) mode stays argument-compatible with every existing call site.
+if [ "${1:-}" = "--file" ]; then
+  shift
+  vendor_file "$@"
+else
+  vendor "$@"
+fi

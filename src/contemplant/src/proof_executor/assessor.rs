@@ -5,7 +5,7 @@ use crate::proof_store::ProofStoreClient;
 use alloy_primitives::B256;
 use anyhow::{Context, Result};
 use log::info;
-use sp1_sdk::CpuProver;
+use sp1_sdk::MockProver;
 use sp1_sdk::{Prover, SP1Stdin};
 use std::sync::Arc;
 use tokio::{
@@ -14,6 +14,7 @@ use tokio::{
     sync::{mpsc, watch},
     time::{Duration, interval},
 };
+use tracing::instrument::WithSubscriber;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
     prelude::__tracing_subscriber_SubscriberExt,
@@ -23,7 +24,7 @@ use tracing_subscriber::{
 const LOG_DIR: &str = "./execution-reports";
 
 pub(super) async fn start_assessor(
-    mock_prover: Arc<CpuProver>,
+    mock_prover: Arc<MockProver>,
     elf: &[u8],
     sp1_stdin: &SP1Stdin,
     config: AssessorConfig,
@@ -53,7 +54,7 @@ pub(super) async fn start_assessor(
         let (file_writer, _guard) = tracing_appender::non_blocking(file_appender);
 
         // Determine a cycle count.
-        let _ = mock_prover.setup(elf);
+        let _ = mock_prover.setup(elf.into()).await;
         // Execute with file logging (this can take a while for large programs)
         let (report, max_clk) = execution_report_with_file_logging(
             mock_prover.clone(),
@@ -121,7 +122,7 @@ pub(super) async fn start_assessor(
 }
 
 async fn execution_report_with_file_logging<W>(
-    mock_prover: Arc<CpuProver>,
+    mock_prover: Arc<MockProver>,
     elf: &[u8],
     sp1_stdin: &SP1Stdin,
     file_writer: W,
@@ -152,9 +153,12 @@ where
     // Create a scoped subscriber for this execution
     let subscriber = Registry::default().with(env_filter).with(file_layer);
 
-    // Execute within the tracing context
-    let result =
-        tracing::subscriber::with_default(subscriber, || mock_prover.execute(elf, sp1_stdin).run());
+    // Execute within the tracing context.  6.x execution is a future, so the
+    // subscriber is attached to the future (task-scoped) rather than to the
+    // current thread the way 5.x's with_default was.
+    let result = async { mock_prover.execute(elf.into(), sp1_stdin.clone()).await }
+        .with_subscriber(subscriber)
+        .await;
 
     let (_, report) = result.context("Failed to execute proof")?;
 

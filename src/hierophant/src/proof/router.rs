@@ -7,9 +7,10 @@ use alloy_primitives::B256;
 use anyhow::{Result, anyhow};
 use log::{error, warn};
 use network_lib::{
-    ContemplantProofRequest, Risc0ProofMode, Risc0ProofRequest, Sp1ProofRequest,
+    ContemplantProofRequest, OpenVmProofMode, OpenVmProofRequest, Risc0ProofMode,
+    Risc0ProofRequest, Sp1ProofRequest,
 };
-use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
+use sp1_sdk::{SP1Stdin, network::proto::base::types::ProofMode};
 use tokio::time::Duration;
 
 use crate::config::Config;
@@ -47,7 +48,7 @@ impl ProofRouter {
             .get_artifact_bytes(stdin_uri.clone())
             .await
         {
-            Ok(Some(bytes)) => bytes,
+            Ok(Some(bytes)) => maybe_zstd_decompress(bytes)?,
             Ok(None) => return Err(anyhow!("Stdin artifact with uri {stdin_uri} not found")),
             Err(e) => return Err(anyhow!("Error getting stdin artifact {stdin_uri}: {e}")),
         };
@@ -58,7 +59,7 @@ impl ProofRouter {
             .get_artifact_bytes(program_uri.clone())
             .await
         {
-            Ok(Some(bytes)) => bincode::deserialize(&bytes)?,
+            Ok(Some(bytes)) => bincode::deserialize(&maybe_zstd_decompress(bytes)?)?,
             Ok(None) => return Err(anyhow!("Program artifact with uri {program_uri} not found")),
             Err(e) => return Err(anyhow!("Error getting program artifact {program_uri}: {e}")),
         };
@@ -107,6 +108,33 @@ impl ProofRouter {
             .await
     }
 
+    // OpenVM path: callers (the OpenVM REST handlers) provide the raw guest
+    // ELF, an optional app-config TOML, and the opaque input streams
+    // directly, mirroring the RISC Zero arrangement. The contemplant
+    // transpiles + proves; hierophant re-derives the same keys/commitments
+    // from these bytes when verifying the returned proof.
+    pub async fn route_openvm_proof(
+        &self,
+        request_id: B256,
+        elf: Vec<u8>,
+        app_config_toml: Option<String>,
+        input: Vec<Vec<u8>>,
+        mode: OpenVmProofMode,
+    ) -> Result<()> {
+        let proof_request = ContemplantProofRequest::OpenVm(OpenVmProofRequest {
+            request_id,
+            elf,
+            app_config_toml,
+            input,
+            mode,
+            mock: self.mock_mode,
+        });
+
+        self.worker_registry_client
+            .assign_proof_request(proof_request)
+            .await
+    }
+
     pub async fn get_proof_status(&self, proof_request_id: B256) -> Result<ProofStatus> {
         match self
             .worker_registry_client
@@ -123,5 +151,21 @@ impl ProofRouter {
                 Ok(ProofStatus::lost())
             }
         }
+    }
+}
+
+// sp1-sdk 6.x clients zstd-compress the bincode payload of stdin/program
+// artifacts before the presigned-URL upload (5.x uploaded raw bincode);
+// proof downloads are still expected uncompressed, so only the
+// client-uploaded artifacts read above need this. Detect by the zstd magic
+// number rather than by client version: a raw bincode payload here starts
+// with a little-endian u64 length, which would have to be ~4 GB before its
+// first four bytes collide with the magic.
+fn maybe_zstd_decompress(bytes: Vec<u8>) -> Result<Vec<u8>> {
+    const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+    if bytes.starts_with(&ZSTD_MAGIC) {
+        zstd::decode_all(&bytes[..]).map_err(|e| anyhow!("Error zstd-decompressing artifact: {e}"))
+    } else {
+        Ok(bytes)
     }
 }
