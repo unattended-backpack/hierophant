@@ -19,3 +19,8 @@ hierophant.toml
 .DS_Store
 *.log
 /tmp/
+
+# Documentation under provers/ is never read by any build step; the builds
+# consume only the .sha256 sidecars. Excluding it keeps documentation edits
+# from invalidating the vendor-download layers.
+provers/**/README.md

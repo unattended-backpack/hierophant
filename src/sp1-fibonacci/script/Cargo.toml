@@ -15,7 +15,13 @@ path = "src/bin/evm.rs"
 # with "Failed to run `docker info`" because the test-client image has no
 # docker CLI. The petros base image provides the CGO toolchain (go + gcc)
 # that this feature's build.rs needs.
-sp1-sdk = { version = "5.0.8", features = ["native-gnark"] }
+# `network` became opt-in in sp1-sdk 6.x (default = []); the script drives
+# proofs through NETWORK_RPC_URL -> NetworkProver, so it must be explicit.
+# `reserved-capacity` (implies network) flips the 6.x NetworkProver default
+# from Mainnet's auction flow to the Reserved/base flow hierophant serves.
+sp1-sdk = { version = "6.2.1", features = ["native-gnark", "reserved-capacity"] }
+# The 6.x prove/setup surface is async.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 clap = { version = "4.0", features = ["derive", "env"] }
 # Used by create_proof_fixture in src/bin/evm.rs to dump a JSON fixture
 # alongside each Plonk/Groth16 test run. The fixture is for out-of-band
@@ -28,4 +34,4 @@ alloy-sol-types = { workspace = true }
 fibonacci-lib = { path = "../lib" }
 
 [build-dependencies]
-sp1-build = "5.0.8"
+sp1-build = "6.2.1"

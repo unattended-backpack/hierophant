@@ -27,13 +27,15 @@ use clap::{Parser, ValueEnum};
 use fibonacci_lib::PublicValuesStruct;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::{
-    include_elf, utils, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1Stdin,
-    SP1VerifyingKey,
+    include_elf, utils, Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey,
+    SP1ProofWithPublicValues, SP1Stdin, SP1VerifyingKey,
 };
 use std::path::PathBuf;
 
 /// The ELF (executable and linkable format) file for the Succinct RISC-V zkVM.
-pub const FIBONACCI_ELF: &[u8] = include_elf!("fibonacci-program");
+/// 6.x `include_elf!` yields the sdk's `Elf` type (a cheap-to-clone wrapper),
+/// not raw bytes.
+pub const FIBONACCI_ELF: Elf = include_elf!("fibonacci-program");
 
 /// The arguments for the EVM command.
 #[derive(Parser, Debug)]
@@ -66,7 +68,12 @@ struct SP1FibonacciProofFixture {
     proof: String,
 }
 
-fn main() {
+// The sdk 6.x prove/setup flow is async; the `reserved-capacity` cargo
+// feature (see Cargo.toml) flips NetworkProver's default mode to Reserved,
+// the base flow the Hierophant serves; 6.x otherwise defaults to Mainnet's
+// auction flow, whose RPCs the Hierophant deliberately does not implement.
+#[tokio::main]
+async fn main() {
     // Setup the logger.
     utils::setup_logger();
 
@@ -76,10 +83,15 @@ fn main() {
     println!("Proof System: {:?}", args.system);
 
     // Setup the prover client.
-    let client = ProverClient::builder().network().build();
+    let client = ProverClient::builder().network().build().await;
 
-    // Setup the program.
-    let (pk, vk) = client.setup(FIBONACCI_ELF);
+    // Setup the program. 6.x setup returns the proving key; the verifying
+    // key hangs off it.
+    let pk = client
+        .setup(FIBONACCI_ELF)
+        .await
+        .expect("failed to set up program");
+    let vk = pk.verifying_key().clone();
 
     // Setup the inputs.
     let mut stdin = SP1Stdin::new();
@@ -87,10 +99,10 @@ fn main() {
 
     // Generate the proof based on the selected proof system.
     let proof = match args.system {
-        ProofSystem::Core => client.prove(&pk, &stdin).core().run(),
-        ProofSystem::Compressed => client.prove(&pk, &stdin).compressed().run(),
-        ProofSystem::Plonk => client.prove(&pk, &stdin).plonk().run(),
-        ProofSystem::Groth16 => client.prove(&pk, &stdin).groth16().run(),
+        ProofSystem::Core => client.prove(&pk, stdin).core().await,
+        ProofSystem::Compressed => client.prove(&pk, stdin).compressed().await,
+        ProofSystem::Plonk => client.prove(&pk, stdin).plonk().await,
+        ProofSystem::Groth16 => client.prove(&pk, stdin).groth16().await,
     }
     .expect("failed to generate proof");
 
@@ -98,7 +110,9 @@ fn main() {
     // the gnark circuit artifacts from ~/.sp1/circuits/<mode>/<ver>/; our
     // Dockerfile vendors those into the image at build time (same tarballs
     // hierophant + contemplant use) so no network hit happens mid-test.
-    client.verify(&proof, &vk).expect("proof verification failed");
+    client
+        .verify(&proof, &vk, None)
+        .expect("proof verification failed");
     println!(
         "OK sp1 fibonacci(n={}) verified client-side [system={:?}]",
         args.n, args.system

@@ -16,7 +16,7 @@ edition = "2021"
 # Default features stay on: they provide the `getrandom-unsupported` stub
 # backend that guest builds are expected to carry. No `std` feature; this
 # guest is no_std like the shared fibonacci crate it wraps.
-openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0" }
+openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.1" }
 # Shared fibonacci(n) implementation. The guest here is its own cargo
 # workspace root (see [workspace] above), so this path-dep reaches out of
 # the openvm-fibonacci subtree and across into the main repo's

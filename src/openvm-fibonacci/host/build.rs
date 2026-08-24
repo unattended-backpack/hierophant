@@ -5,12 +5,12 @@
 //
 // Toolchain: openvm-build shells out to `cargo +<toolchain>` where
 // <toolchain> defaults to the OpenVM-pinned nightly (nightly-2026-01-18 for
-// v2.0.0; override with OPENVM_RUST_TOOLCHAIN). If the toolchain or its
-// rust-src component is missing, openvm-build installs it through rustup, so
-// the build environment must have rustup on PATH with network access on
-// first build. The rust:<ver>-bookworm base image of ../Dockerfile provides
-// this; petros does NOT (it has no rustup), which is why the openvm test
-// client doesn't build inside petros like the sp1/risc0 ones do.
+// v2.0.1; override with OPENVM_RUST_TOOLCHAIN). Its preflight requires
+// rustup to report the toolchain installed with rust-src; when missing it
+// tries to install both through rustup, which needs network. Petros
+// pre-materializes the vendored nightly (with its install manifests) under
+// $RUSTUP_HOME, so builds inside petros, including ../Dockerfile, pass
+// the preflight fully offline, matching the SP1/risc0 test clients.
 //
 // The guest is plain rv32im+io, so no openvm.toml and no openvm_init.rs are
 // needed (init files are only generated for the modular/fp2/ecc extensions).

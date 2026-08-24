@@ -19,25 +19,34 @@ service ProverNetwork {
   rpc GetProofRequestStatus (GetProofRequestStatusRequest) returns (GetProofRequestStatusResponse);
 }
 
-// Message formats
+// Message formats.  Values mirror sp1-sdk's base proto (clients always send
+// BINARY = 1); earlier revisions of this file had JSON/BINARY swapped, which
+// went unnoticed only because nothing reads the format field.
 enum MessageFormat {
-  UNSPECIFIED_FORMAT = 0;
-  JSON = 1;
-  BINARY = 2;
+  UNSPECIFIED_MESSAGE_FORMAT = 0;
+  BINARY = 1;
+  JSON = 2;
 }
 
-// Proof generation modes
+// Proof generation modes.  Values mirror sp1-sdk's base proto; the service
+// code interprets the raw i32 through sp1-sdk's own ProofMode enum, so these
+// labels are documentation of the wire values rather than load-bearing.
 enum ProofMode {
   UNSPECIFIED_PROOF_MODE = 0;
-  SYNC = 1;  // Synchronous proof generation
-  ASYNC = 2; // Asynchronous proof generation
+  CORE = 1;       // Core STARK proof; grows with cycle count
+  COMPRESSED = 2; // Recursively aggregated constant-size proof
+  PLONK = 3;      // PLONK wrap for onchain verification
+  GROTH16 = 4;    // Groth16 wrap for onchain verification
 }
 
-// Fulfillment strategies
+// Fulfillment strategies.  Values mirror sp1-sdk's base proto; a
+// NetworkMode::Reserved client defaults to HOSTED, which is the only
+// strategy this private network meaningfully implements.
 enum FulfillmentStrategy {
   UNSPECIFIED_FULFILLMENT_STRATEGY = 0;
-  ANY = 1;    // Any prover can fulfill the request
-  SPECIFIC = 2; // A specific prover must fulfill the request
+  HOSTED = 1;   // Hosted/reserved-capacity proving (our flow)
+  RESERVED = 2; // Reserved prover capacity
+  AUCTION = 3;  // Mainnet proof-contest flow; not served here
 }
 
 // Fulfillment status
@@ -180,9 +189,22 @@ message RequestProofRequestBody {
   
   // The cycle limit for the request
   uint64 cycle_limit = 8;
-  
+
   // The gas limit for the request. If 0, the cycle_limit is used
   uint64 gas_limit = 9;
+
+  // The minimum auction period in seconds.  Auction-only; a Reserved-mode
+  // sp1-sdk 6.x client always sends 0 and we ignore it.
+  uint64 min_auction_period = 10;
+
+  // The auction whitelist of allowed prover addresses.  Auction-only; a
+  // Reserved-mode sp1-sdk 6.x client sends an empty list and we ignore it.
+  repeated bytes whitelist = 11;
+
+  // Whether the stdin artifact was uploaded as a private stdin.  Our
+  // artifact store is not publicly listable either way, so this is accepted
+  // but does not change behavior.
+  bool stdin_private = 12;
 }
 
 // Response to request proof request
@@ -225,7 +247,11 @@ message GetProofRequestStatusResponse {
   
   // The optional proof URI
   optional string proof_uri = 6;
-  
+
   // The optional public values hash
   optional bytes public_values_hash = 7;
+
+  // The optional publicly accessible proof URI.  Present in sp1-sdk's base
+  // proto for wire parity; clients only read proof_uri, so we never set it.
+  optional string proof_public_uri = 8;
 }

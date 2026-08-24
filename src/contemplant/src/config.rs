@@ -46,15 +46,17 @@ impl From<VmChoice> for VmKind {
 }
 
 // One entry per VM this contemplant is configured to prove for.  Every entry
-// declares its backend; SP1 entries may additionally supply a moongate endpoint
-// when running against an external GPU prover.
+// declares its backend.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProverConfig {
     pub vm: VmChoice,
     #[serde(default = "default_backend")]
     pub backend: ProverBackend,
-    // Only used for SP1 with a CUDA backend.  If None, sp1-sdk spins up a
-    // dockerized moongate-server; otherwise the supplied endpoint is used.
+    // Historical (sp1-sdk 5.x): pointed the SP1 CUDA backend at an external
+    // moongate prover server.  sp1-sdk 6.x removed that arrangement (the
+    // CUDA prover drives a local sp1-gpu-server over a unix socket), so this
+    // is still parsed for config compatibility but rejected with a clear
+    // error at startup when set.
     #[serde(default)]
     pub moongate_endpoint: Option<String>,
     // Only meaningful for `vm = "risc0"`. Opt-in because the RISC Zero

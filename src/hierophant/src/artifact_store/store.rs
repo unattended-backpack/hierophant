@@ -151,7 +151,10 @@ impl ArtifactStore {
                 self.proof_artifacts[index_to_insert] = artifact_uri.clone();
                 self.increment_current_proof_artifact_index();
             }
-            ArtifactType::Stdin => {
+            // PrivateStdin is sp1-sdk 6.x's opt-in private upload of the same
+            // payload; it shares the stdin trimming budget so private inputs
+            // don't accumulate unbounded on disk.
+            ArtifactType::Stdin | ArtifactType::PrivateStdin => {
                 let index_to_insert = self.current_stdin_artifact_index;
                 // if theres an artifact at this index, delete it to make room for this new artifact
                 if let Some(old_artifact_uri) = self.stdin_artifacts.get(index_to_insert) {

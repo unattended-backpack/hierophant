@@ -14,7 +14,7 @@ use axum::{
 use log::{debug, error, info, warn};
 use network_lib::OpenVmProofMode;
 use sha2::{Digest, Sha256};
-use sp1_sdk::network::proto::network::{ExecutionStatus, FulfillmentStatus};
+use sp1_sdk::network::proto::base::types::{ExecutionStatus, FulfillmentStatus};
 use std::sync::Arc;
 use uuid::Uuid;
 

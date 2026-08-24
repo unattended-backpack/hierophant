@@ -13,10 +13,10 @@
 //
 // Keygen caching: app proving keys are cached per app-config so repeat jobs
 // against the same config skip keygen. Aggregated (stark) verification needs
-// the aggregation key stack too — openvm v2's `Sdk::verify_proof` checks the
+// the aggregation key stack too; OpenVM v2's `Sdk::verify_proof` checks the
 // proof against a VerificationBaseline whose verifier-key commitments come
-// from the aggregation provers — so the aggregation key is assembled from
-// the universal internal-recursive artifact `cargo openvm setup` writes to
+// from the aggregation provers. The aggregation key is therefore assembled
+// from the universal internal-recursive artifact `cargo openvm setup` writes to
 // ~/.openvm/internal_recursive.pk (plus an in-process prefix keygen) when
 // available, generated fully in-process otherwise (slow, RAM-heavy), and
 // cached per app-config after that.
@@ -180,17 +180,29 @@ fn build_sdk(app_config: AppConfig<SdkVmConfig>, config_key: &str) -> Result<Sdk
 fn build_sdk_with_agg(app_config: AppConfig<SdkVmConfig>, config_key: &str) -> Result<Sdk> {
     match ensure_agg_pk(app_config.clone(), config_key)? {
         Some(agg_pk) => {
+            // The builder's dependency chain (`agg_pk` requires `app_pk`)
+            // forbids seeding the aggregation key on top of a bare
+            // app_config; keygen the app key explicitly on a cold cache.
             let app_cache = APP_PK_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
             let cached_app = app_cache
                 .lock()
                 .expect("app pk cache poisoned")
                 .get(config_key)
                 .cloned();
-            let builder = match cached_app {
-                Some(app_pk) => Sdk::builder().app_pk(app_pk),
-                None => Sdk::builder().app_config(app_config),
+            let app_pk = match cached_app {
+                Some(app_pk) => app_pk,
+                None => {
+                    let sdk = build_sdk(app_config, config_key)?;
+                    let app_pk = sdk.app_keygen().0;
+                    app_cache
+                        .lock()
+                        .expect("app pk cache poisoned")
+                        .insert(config_key.to_string(), app_pk.clone());
+                    app_pk
+                }
             };
-            builder
+            Sdk::builder()
+                .app_pk(app_pk)
                 .agg_pk(agg_pk)
                 .build()
                 .map_err(|e| anyhow!("construct OpenVM SDK with aggregation key: {e}"))

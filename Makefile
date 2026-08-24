@@ -18,8 +18,36 @@ VENDOR_BASE_URL ?=
 SP1_CIRCUITS_VERSION ?=
 RISC0_GROTH16_PROVER_TAG ?=
 RISC0_GROTH16_RZUP_VERSION ?=
+OPENVM_GIT_VERSION ?=
+OPENVM_AGG_KEYS_VERSION ?=
+OPENVM_EVM_ASSETS_VERSION ?=
+OPENVM_KZG_VERSION ?= challenge_0085
 DOCKER_BUILD_ARGS ?=
 DOCKER_RUN_ARGS ?=
+
+# DOCKER_BUILD_CACHE toggles the BuildKit cache mounts that give in-petros
+# source builds warm incremental cargo state (see the Dockerfiles' build
+# steps). 1 (default) reuses the shared cache namespace - one-line changes
+# rebuild in minutes. 0 exercises the pristine no-local-state release flow:
+# docker layer cache is bypassed (--no-cache) and the cargo cache mounts get
+# a unique throwaway namespace, so the compile starts from nothing.
+DOCKER_BUILD_CACHE ?= 1
+
+# CUDA_ARCH overrides the GPU architecture list the CUDA kernel compiles
+# target (openvm's CUDA_ARCH env + sppark/risc0's derived NVCC gencode
+# flags). Unset uses the canonical release list from .env.maintainer
+# (CUDA_RELEASE_ARCH; Ampere through Blackwell, Turing excluded because
+# only risc0 fully supports it). Set a single arch (e.g. CUDA_ARCH=75)
+# for ~5x faster kernel compiles during dev iteration; release builds
+# must leave it unset.
+CUDA_ARCH ?=
+DOCKER_CUDA_ARCH := $(or $(CUDA_ARCH),$(CUDA_RELEASE_ARCH))
+
+ifeq ($(DOCKER_BUILD_CACHE),0)
+  BUILD_CACHE_FLAGS := --no-cache --build-arg BUILD_CACHE_ID=pristine-$(shell date +%s)
+else
+  BUILD_CACHE_FLAGS :=
+endif
 HIEROPHANT_NAME ?= hierophant
 CONTEMPLANT_NAME ?= contemplant
 IMAGE_TAG ?= latest
@@ -27,36 +55,29 @@ ACT_PULL ?= true
 
 # BACKEND picks which proving backend the test targets exercise at runtime.
 #   cpu           ; SP1 uses CpuProver; RISC Zero uses LocalProver.
-#   cuda          ; SP1 talks to an in-container moongate-server on :3000
-#                    (entrypoint auto-starts it via tmux); RISC Zero uses
-#                    in-process CUDA. Both require the container to be
-#                    launched with GPU access, which the test compose files
-#                    request via deploy.resources.reservations.devices.
-BACKEND ?= gpu
+#   cuda          ; SP1 spawns the vendored ~/.sp1/bin/sp1-gpu-server and
+#                    talks to it over a unix socket (sp1-sdk 6.x replaced
+#                    the moongate arrangement); RISC Zero uses in-process
+#                    CUDA. Both require the container to be launched with
+#                    GPU access, which the test compose files request via
+#                    deploy.resources.reservations.devices.
+# Defaults to cpu: every test target validates against cpu|cuda (the old
+# `gpu` default matched neither and made bare `make test-*` invocations
+# error out), and a cpu default keeps `make build` / `make run` working on
+# hosts without a CUDA toolchain. Released binaries get their CUDA-enabled
+# feature set from the release workflow independent of this default.
+BACKEND ?= cpu
 
-# CONTEMPLANT_FEATURES is derived from BACKEND by default so a CPU build
-# doesn't pay the (expensive, nvcc-version-sensitive) cost of compiling
-# risc0's CUDA kernels. An explicit override still wins; set
-# `CONTEMPLANT_FEATURES=...` on the command line or in .env to force a
-# specific feature set regardless of BACKEND.
-#
-# The test-openvm target additionally derives per-mode features: BACKEND=cuda
-# appends enable-openvm-cuda (openvm-sdk's GPU backend is compile-time gated,
-# like risc0's) and MODE=evm appends enable-openvm-evm (halo2 prover stack).
-# These are target-specific so plain sp1/risc0 builds don't pay the extra
-# compile cost.
-# Literal comma, for use inside $(if ...) expansions below.
-comma := ,
-
-ifndef CONTEMPLANT_FEATURES
-  ifeq ($(BACKEND),cuda)
-    CONTEMPLANT_FEATURES := enable-native-gnark,enable-risc0-cuda
-test-openvm: CONTEMPLANT_FEATURES := enable-native-gnark,enable-risc0-cuda,enable-openvm-cuda$(if $(filter evm,$(MODE)),$(comma)enable-openvm-evm)
-  else
-    CONTEMPLANT_FEATURES := enable-native-gnark
-test-openvm: CONTEMPLANT_FEATURES := enable-native-gnark$(if $(filter evm,$(MODE)),$(comma)enable-openvm-evm)
-  endif
-endif
+# Feature-set policy: docker (in-petros) builds default to the canonical
+# release set from .env.maintainer - one universal binary for every VM and
+# backend, so every test validates the release-shaped artifact. Native host
+# builds default to the CPU-safe subset because host toolchains lack the
+# pinned CUDA stack. An explicit CONTEMPLANT_FEATURES (command line or
+# .env) overrides both.
+CONTEMPLANT_RELEASE_FEATURES ?=
+CONTEMPLANT_FEATURES ?=
+DOCKER_CONTEMPLANT_FEATURES := $(or $(CONTEMPLANT_FEATURES),$(CONTEMPLANT_RELEASE_FEATURES))
+NATIVE_CONTEMPLANT_FEATURES := $(or $(CONTEMPLANT_FEATURES),enable-native-gnark)
 
 .PHONY: init
 init:
@@ -81,47 +102,95 @@ init:
 	fi
 	@echo "Initialization complete. Review configuration before running."
 
-.PHONY: circuits
-circuits:
-	@echo "Downloading and verifying circuit artifacts ..."
+# The provision goals install the vendored prover assets a NATIVE
+# (non-docker) contemplant needs onto this host, from the same CDN + sha256
+# sidecars the image builds consume, so bare-metal workers run byte-identical
+# assets to the containerized ones and no VM falls back to an unvendored
+# upstream download at proof time. Docker deployments never need these; the
+# images bake every asset in at build time.
+#   provision         ; all three VMs.
+#   provision-sp1     ; Groth16 + plonk circuits to ~/.sp1/circuits/ (the
+#                        .download_complete markers stop sp1-sdk fetching
+#                        from Succinct's S3 mid-proof) and sp1-gpu-server to
+#                        the exact path sp1-cuda 6.x resolves (~/.sp1/bin/).
+#   provision-risc0   ; the rzup-distributed risc0-groth16 component (the
+#                        CUDA Groth16 path) to ~/.risc0/extensions/. The CPU
+#                        Groth16 wrap on native hosts uses risc0's upstream
+#                        docker-image path, which is NOT vendored; only the
+#                        containerized contemplant replaces it with the
+#                        vendored assets + docker shim.
+#   provision-openvm  ; aggregation keys to ~/.openvm/. The ~13.5 GB EVM
+#                        heavies (halo2.pk + KZG params) install only when
+#                        OPENVM_EVM_ASSETS_VERSION is set, mirroring the
+#                        image bake's gating; stark-only workers skip them.
+.PHONY: provision
+provision: provision-sp1 provision-risc0 provision-openvm
+	@echo "All native prover assets provisioned."
+
+.PHONY: provision-sp1
+provision-sp1:
 	@if [ -z "$(VENDOR_BASE_URL)" ] || [ -z "$(SP1_CIRCUITS_VERSION)" ]; then \
 		echo "ERROR: VENDOR_BASE_URL and SP1_CIRCUITS_VERSION must be set" >&2; \
 		echo "Load them from .env.maintainer or set as environment variables" >&2; \
 		exit 1; \
 	fi
-	@echo "  Vendor URL: $(VENDOR_BASE_URL)"
-	@echo "  Circuits version: $(SP1_CIRCUITS_VERSION)"
+	@echo "Provisioning SP1 assets (circuits $(SP1_CIRCUITS_VERSION)) ..."
 	@mkdir -p ~/.sp1/circuits/groth16/$(SP1_CIRCUITS_VERSION)
 	@mkdir -p ~/.sp1/circuits/plonk/$(SP1_CIRCUITS_VERSION)
-	@echo "Downloading Groth16 circuits ..."
+	@mkdir -p ~/.sp1/bin
 	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "groth16.tar.gz" "provers/sp1/$(SP1_CIRCUITS_VERSION)" "sp1/$(SP1_CIRCUITS_VERSION)/"
-	@echo "Downloading plonk circuits ..."
 	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "plonk.tar.gz" "provers/sp1/$(SP1_CIRCUITS_VERSION)" "sp1/$(SP1_CIRCUITS_VERSION)/"
-	@echo "Installing to ~/.sp1/circuits/ ..."
+	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "sp1-gpu-server.tar.gz" "provers/sp1/$(SP1_CIRCUITS_VERSION)" "sp1/$(SP1_CIRCUITS_VERSION)/"
 	@cp -r /tmp/extracted-groth16/$(SP1_CIRCUITS_VERSION)/* ~/.sp1/circuits/groth16/$(SP1_CIRCUITS_VERSION)/
 	@cp -r /tmp/extracted-plonk/$(SP1_CIRCUITS_VERSION)/* ~/.sp1/circuits/plonk/$(SP1_CIRCUITS_VERSION)/
 	@touch ~/.sp1/circuits/groth16/.download_complete
 	@touch ~/.sp1/circuits/plonk/.download_complete
-	@rm -rf /tmp/extracted-groth16 /tmp/extracted-plonk
-	@echo "Circuit artifacts installed successfully."
+	@cp /tmp/extracted-sp1-gpu-server/sp1-gpu-server ~/.sp1/bin/sp1-gpu-server
+	@chmod +x ~/.sp1/bin/sp1-gpu-server
+	@rm -rf /tmp/extracted-groth16 /tmp/extracted-plonk /tmp/extracted-sp1-gpu-server
+	@echo "SP1 assets provisioned."
 
-.PHONY: moongate
-moongate:
-	@echo "Downloading and verifying moongate-server ..."
-	@if [ -z "$(VENDOR_BASE_URL)" ] || [ -z "$(SP1_CIRCUITS_VERSION)" ]; then \
-		echo "ERROR: VENDOR_BASE_URL and SP1_CIRCUITS_VERSION must be set" >&2; \
+.PHONY: provision-risc0
+provision-risc0:
+	@if [ -z "$(VENDOR_BASE_URL)" ] || [ -z "$(RISC0_GROTH16_RZUP_VERSION)" ]; then \
+		echo "ERROR: VENDOR_BASE_URL and RISC0_GROTH16_RZUP_VERSION must be set" >&2; \
 		echo "Load them from .env.maintainer or set as environment variables" >&2; \
 		exit 1; \
 	fi
-	@echo "  Vendor URL: $(VENDOR_BASE_URL)"
-	@echo "  SP1 version: $(SP1_CIRCUITS_VERSION)"
-	@echo "Downloading moongate-server ..."
-	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "moongate-server.tar.gz" "provers/sp1/$(SP1_CIRCUITS_VERSION)" "sp1/$(SP1_CIRCUITS_VERSION)/"
-	@echo "Installing to /usr/local/bin/ ..."
-	@sudo cp /tmp/extracted-moongate-server/moongate-server /usr/local/bin/moongate-server
-	@sudo chmod +x /usr/local/bin/moongate-server
-	@rm -rf /tmp/extracted-moongate-server
-	@echo "moongate-server installed successfully to /usr/local/bin/moongate-server."
+	@echo "Provisioning RISC Zero assets (rzup component $(RISC0_GROTH16_RZUP_VERSION)) ..."
+	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "risc0-groth16.tar.xz" "provers/risc0/groth16-rzup/$(RISC0_GROTH16_RZUP_VERSION)" "risc0/groth16-rzup/$(RISC0_GROTH16_RZUP_VERSION)/"
+	@RZUP_VER="$(RISC0_GROTH16_RZUP_VERSION)"; RZUP_VER="$${RZUP_VER#v}"; \
+	mkdir -p "$$HOME/.risc0/extensions/v$${RZUP_VER}-risc0-groth16" && \
+	cp -r /tmp/extracted-risc0-groth16/* "$$HOME/.risc0/extensions/v$${RZUP_VER}-risc0-groth16/"
+	@rm -rf /tmp/extracted-risc0-groth16
+	@echo "RISC Zero assets provisioned."
+
+.PHONY: provision-openvm
+provision-openvm:
+	@if [ -z "$(VENDOR_BASE_URL)" ] || [ -z "$(OPENVM_AGG_KEYS_VERSION)" ]; then \
+		echo "ERROR: VENDOR_BASE_URL and OPENVM_AGG_KEYS_VERSION must be set" >&2; \
+		echo "Load them from .env.maintainer or set as environment variables" >&2; \
+		exit 1; \
+	fi
+	@echo "Provisioning OpenVM assets (aggregation keys $(OPENVM_AGG_KEYS_VERSION)) ..."
+	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "openvm-agg-keys.tar.gz" "provers/openvm/$(OPENVM_AGG_KEYS_VERSION)" "openvm/$(OPENVM_AGG_KEYS_VERSION)/"
+	@mkdir -p ~/.openvm
+	@cp -r /tmp/extracted-openvm-agg-keys/* ~/.openvm/
+	@rm -rf /tmp/extracted-openvm-agg-keys
+	@if [ -n "$(OPENVM_EVM_ASSETS_VERSION)" ]; then \
+		echo "Provisioning OpenVM EVM assets ($(OPENVM_EVM_ASSETS_VERSION); ~13.5 GB) ..."; \
+		VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "openvm-halo2-pk.tar.gz" "provers/openvm/$(OPENVM_EVM_ASSETS_VERSION)" "openvm/$(OPENVM_EVM_ASSETS_VERSION)/" && \
+		mkdir -p ~/.openvm/params && \
+		mv /tmp/extracted-openvm-halo2-pk/halo2.pk ~/.openvm/halo2.pk && \
+		rm -rf /tmp/extracted-openvm-halo2-pk && \
+		for k in 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do \
+			VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh --file "kzg_bn254_$${k}.srs" "provers/openvm/kzg/$(OPENVM_KZG_VERSION)" "openvm/kzg/$(OPENVM_KZG_VERSION)/" && \
+			mv "/tmp/kzg_bn254_$${k}.srs" ~/.openvm/params/ || exit 1; \
+		done; \
+	else \
+		echo "OPENVM_EVM_ASSETS_VERSION empty; skipping EVM heavies (stark-only provisioning)."; \
+	fi
+	@echo "OpenVM assets provisioned."
 
 .PHONY: clean
 clean:
@@ -138,10 +207,10 @@ clean:
 .PHONY: build
 build:
 	@echo "Building native artifacts ..."
-	@echo "  Contemplant features: $(CONTEMPLANT_FEATURES)"
+	@echo "  Contemplant features: $(NATIVE_CONTEMPLANT_FEATURES)"
 	mkdir -p out
 	cargo build --release --bin hierophant
-	cargo build --release --bin contemplant --features "$(CONTEMPLANT_FEATURES)"
+	cargo build --release --bin contemplant --features "$(NATIVE_CONTEMPLANT_FEATURES)"
 	cp ./target/release/hierophant ./out/hierophant
 	cp ./target/release/contemplant ./out/contemplant
 	@echo "Build complete."
@@ -154,8 +223,8 @@ test:
 
 # BACKEND selects the runtime proving backend for the SP1 contemplant:
 #   cpu  (default); SP1 CpuProver, no GPU needed.
-#   cuda          ; SP1 CudaProver + in-container moongate-server (tmux'd
-#                    by the entrypoint when MOONGATE_ENDPOINT is set).
+#   cuda          ; SP1 CudaProver + the vendored in-image sp1-gpu-server
+#                    (spawned by the contemplant itself over a unix socket).
 #                    Requires a GPU-capable host; the compose file reserves
 #                    the GPU via deploy.resources.reservations.devices.
 # MODE selects which SP1 proving mode the integration test exercises:
@@ -168,32 +237,26 @@ test:
 #        `make test-sp1 BACKEND=cuda`        # plonk, gpu
 #        `make test-sp1 MODE=groth16 BACKEND=cuda`
 #
-# Build path depends on BACKEND:
-#   cpu ; fast path: native cargo build on host → prebuilt docker layer.
-#   cuda; host cargo can't build the CUDA kernels (your host's nvcc /
-#          sppark combo may not be compatible; petros has the pinned
-#          CUDA 12.9 toolchain). Build from source inside petros via
-#          `docker-c` instead.
+# Every test target builds the same universal image pair from source inside
+# petros (docker-h + docker-c) with the release feature set; BACKEND is
+# purely a runtime selector, and every test validates the release-shaped
+# artifact. BuildKit cache mounts (see DOCKER_BUILD_CACHE) make the repeat
+# builds incremental, so this costs minutes, not the old full recompile.
 # MODE has different defaults between test-sp1 (plonk) and test-risc0
 # (composite). A single top-level `MODE ?= <default>` would bleed one default
 # into the other target, so each recipe derives its own effective mode via
 # shell parameter expansion on $${MODE:-<per-target-default>} instead.
 .PHONY: test-sp1
 test-sp1:
-	@if [ "$(BACKEND)" = "cuda" ]; then \
-		$(MAKE) docker-h ; \
-		$(MAKE) docker-c ; \
-	else \
-		$(MAKE) build ; \
-		$(MAKE) ci ; \
-	fi
+	@$(MAKE) docker-h
+	@$(MAKE) docker-c
 	@echo "Tearing down any lingering containers from a previous run ..."
 	-docker-compose -f docker-compose.test.sp1.yml down -v
 	@echo "Running SP1 integration test (BACKEND=$(BACKEND), MODE=$${MODE:-plonk}) ..."
 	@echo "Starting Hierophant, Contemplant, and SP1 test client ..."
 	@case "$(BACKEND)" in \
-	  cpu)  CONTEMPLANT_SP1_BACKEND=cpu  MOONGATE_ENDPOINT= ;; \
-	  cuda) CONTEMPLANT_SP1_BACKEND=cuda MOONGATE_ENDPOINT=http://localhost:3000/twirp/ ;; \
+	  cpu)  CONTEMPLANT_SP1_BACKEND=cpu  ;; \
+	  cuda) CONTEMPLANT_SP1_BACKEND=cuda ;; \
 	  *) echo "unknown BACKEND=$(BACKEND); expected cpu|cuda" >&2; exit 1 ;; \
 	esac; \
 	MODE_EFF="$${MODE:-plonk}"; \
@@ -201,7 +264,7 @@ test-sp1:
 	  core|compressed|plonk|groth16) SP1_PROOF_SYSTEM=$$MODE_EFF ;; \
 	  *) echo "unknown MODE=$$MODE_EFF; expected core|compressed|plonk|groth16" >&2; exit 1 ;; \
 	esac; \
-	export CONTEMPLANT_SP1_BACKEND MOONGATE_ENDPOINT SP1_PROOF_SYSTEM \
+	export CONTEMPLANT_SP1_BACKEND SP1_PROOF_SYSTEM \
 	  VENDOR_BASE_URL="$(VENDOR_BASE_URL)" SP1_CIRCUITS_VERSION="$(SP1_CIRCUITS_VERSION)"; \
 	docker-compose -f docker-compose.test.sp1.yml up \
 		--build \
@@ -229,13 +292,8 @@ test-sp1:
 #        `make test-risc0 MODE=groth16 BACKEND=cuda`
 .PHONY: test-risc0
 test-risc0:
-	@if [ "$(BACKEND)" = "cuda" ]; then \
-		$(MAKE) docker-h ; \
-		$(MAKE) docker-c ; \
-	else \
-		$(MAKE) build ; \
-		$(MAKE) ci ; \
-	fi
+	@$(MAKE) docker-h
+	@$(MAKE) docker-c
 	@echo "Tearing down any lingering containers from a previous run ..."
 	-docker-compose -f docker-compose.test.risc0.yml down -v
 	@echo "Running RISC Zero integration test (MODE=$${MODE:-composite}, BACKEND=$(BACKEND)) ..."
@@ -276,13 +334,8 @@ test-risc0:
 #        `make test-openvm BACKEND=cuda`    # app, gpu (needs enable-openvm-cuda build)
 .PHONY: test-openvm
 test-openvm:
-	@if [ "$(BACKEND)" = "cuda" ]; then \
-		$(MAKE) docker-h ; \
-		$(MAKE) docker-c CONTEMPLANT_FEATURES="$(CONTEMPLANT_FEATURES)" ; \
-	else \
-		$(MAKE) build CONTEMPLANT_FEATURES="$(CONTEMPLANT_FEATURES)" ; \
-		$(MAKE) ci ; \
-	fi
+	@$(MAKE) docker-h
+	@$(MAKE) docker-c
 	@echo "Tearing down any lingering containers from a previous run ..."
 	-docker-compose -f docker-compose.test.openvm.yml down -v
 	@echo "Running OpenVM integration test (MODE=$${MODE:-app}, BACKEND=$(BACKEND)) ..."
@@ -295,7 +348,8 @@ test-openvm:
 	  evm)   PROOF_MODE=evm   CONTEMPLANT_OPENVM_EVM=true  ;; \
 	  *) echo "unknown MODE=$$MODE_EFF; expected app|stark|evm" >&2; exit 1 ;; \
 	esac; \
-	export PROOF_MODE CONTEMPLANT_OPENVM_EVM CONTEMPLANT_OPENVM_BACKEND=$(BACKEND); \
+	export PROOF_MODE CONTEMPLANT_OPENVM_EVM CONTEMPLANT_OPENVM_BACKEND=$(BACKEND) \
+	  VENDOR_BASE_URL="$(VENDOR_BASE_URL)" OPENVM_GIT_VERSION="$(OPENVM_GIT_VERSION)"; \
 	docker-compose -f docker-compose.test.openvm.yml up \
 		--build \
 		--force-recreate \
@@ -304,6 +358,47 @@ test-openvm:
 	@echo "Cleaning up containers ..."
 	-docker-compose -f docker-compose.test.openvm.yml down -v
 	@echo "OpenVM integration test complete (MODE=$${MODE:-app}, BACKEND=$(BACKEND))."
+
+# Runs the full capability matrix: every MODE/BACKEND combination of all
+# three zkVM test targets, against one universal image pair built up front.
+# A failing combination does not stop the run; every combination executes
+# and the summary at the end reports PASS or FAIL for each, with the target
+# exiting nonzero if anything failed. Each combination is capped at
+# TEST_ALL_TIMEOUT seconds (45 minutes by default) so a hung proof cannot
+# stall the matrix; a timeout counts as FAIL, and the combination's compose
+# stack is torn down before the next one starts. Expect hardware-dependent
+# results per combination (SP1 CUDA requires a 24 GB GPU; see README).
+# Usage: `make test-all`
+#        `make test-all TEST_ALL_TIMEOUT=7200`   # slower hardware
+TEST_ALL_TIMEOUT ?= 2700
+.PHONY: test-all
+test-all:
+	@$(MAKE) docker
+	@overall=0; summary=""; \
+	for combo in \
+	  sp1:core:cpu sp1:compressed:cpu sp1:plonk:cpu sp1:groth16:cpu \
+	  sp1:core:cuda sp1:compressed:cuda sp1:plonk:cuda sp1:groth16:cuda \
+	  risc0:composite:cpu risc0:succinct:cpu risc0:groth16:cpu risc0:groth16-direct:cpu \
+	  risc0:composite:cuda risc0:succinct:cuda risc0:groth16:cuda risc0:groth16-direct:cuda \
+	  openvm:app:cpu openvm:stark:cpu openvm:evm:cpu \
+	  openvm:app:cuda openvm:stark:cuda openvm:evm:cuda; \
+	do \
+	  vm="$${combo%%:*}"; rest="$${combo#*:}"; \
+	  mode="$${rest%%:*}"; backend="$${rest#*:}"; \
+	  echo ""; echo "=== test-all: $$vm MODE=$$mode BACKEND=$$backend ==="; \
+	  if timeout --foreground -k 60 $(TEST_ALL_TIMEOUT) \
+	    $(MAKE) "test-$$vm" MODE="$$mode" BACKEND="$$backend"; then \
+	    status=PASS; \
+	  else \
+	    status=FAIL; overall=1; \
+	  fi; \
+	  docker-compose -f "docker-compose.test.$$vm.yml" down -v >/dev/null 2>&1 || true; \
+	  summary="$$summary$$(printf '%-8s %-16s %-8s %s' "$$vm" "$$mode" "$$backend" "$$status")\n"; \
+	done; \
+	echo ""; echo "=== test-all summary ==="; \
+	printf '%-8s %-16s %-8s %s\n' VM MODE BACKEND STATUS; \
+	printf '%b' "$$summary"; \
+	exit $$overall
 
 .PHONY: docker-h
 docker-h:
@@ -314,10 +409,13 @@ docker-h:
 	@mkdir -p out
 	docker build \
 		$(DOCKER_BUILD_ARGS) \
+		$(BUILD_CACHE_FLAGS) \
 		--build-arg BUILD_IMAGE=$(BUILD_IMAGE) \
 		--build-arg RUNTIME_IMAGE=$(RUNTIME_IMAGE) \
 		--build-arg VENDOR_BASE_URL=$(VENDOR_BASE_URL) \
 		--build-arg SP1_CIRCUITS_VERSION=$(SP1_CIRCUITS_VERSION) \
+		--build-arg OPENVM_GIT_VERSION=$(OPENVM_GIT_VERSION) \
+		--build-arg OPENVM_AGG_KEYS_VERSION=$(OPENVM_AGG_KEYS_VERSION) \
 		-f Dockerfile.hierophant \
 		-t $(HIEROPHANT_NAME):$(IMAGE_TAG) \
 		.
@@ -328,18 +426,24 @@ docker-c:
 	@echo "Building Contemplant image ..."
 	@echo "  Build image:   $(BUILD_IMAGE)"
 	@echo "  Runtime image: $(RUNTIME_IMAGE)"
-	@echo "  Features:      $(CONTEMPLANT_FEATURES)"
+	@echo "  Features:      $(DOCKER_CONTEMPLANT_FEATURES)"
 	@echo "  Output tag:    $(CONTEMPLANT_NAME):$(IMAGE_TAG)"
 	@mkdir -p out
 	docker build \
 		$(DOCKER_BUILD_ARGS) \
+		$(BUILD_CACHE_FLAGS) \
+		$(if $(DOCKER_CUDA_ARCH),--build-arg CUDA_ARCH=$(DOCKER_CUDA_ARCH)) \
 		--build-arg BUILD_IMAGE=$(BUILD_IMAGE) \
 		--build-arg RUNTIME_IMAGE=$(RUNTIME_IMAGE) \
 		--build-arg VENDOR_BASE_URL=$(VENDOR_BASE_URL) \
 		--build-arg SP1_CIRCUITS_VERSION=$(SP1_CIRCUITS_VERSION) \
 		--build-arg RISC0_GROTH16_PROVER_TAG=$(RISC0_GROTH16_PROVER_TAG) \
 		--build-arg RISC0_GROTH16_RZUP_VERSION=$(RISC0_GROTH16_RZUP_VERSION) \
-		--build-arg CONTEMPLANT_FEATURES=$(CONTEMPLANT_FEATURES) \
+		--build-arg OPENVM_GIT_VERSION=$(OPENVM_GIT_VERSION) \
+		--build-arg OPENVM_AGG_KEYS_VERSION=$(OPENVM_AGG_KEYS_VERSION) \
+		--build-arg OPENVM_EVM_ASSETS_VERSION=$(OPENVM_EVM_ASSETS_VERSION) \
+		--build-arg OPENVM_KZG_VERSION=$(OPENVM_KZG_VERSION) \
+		--build-arg CONTEMPLANT_FEATURES=$(DOCKER_CONTEMPLANT_FEATURES) \
 		-f Dockerfile.contemplant \
 		-t $(CONTEMPLANT_NAME):$(IMAGE_TAG) \
 		.
@@ -368,6 +472,8 @@ ci:
 		--build-arg RUNTIME_IMAGE=$(RUNTIME_IMAGE) \
 		--build-arg VENDOR_BASE_URL=$(VENDOR_BASE_URL) \
 		--build-arg SP1_CIRCUITS_VERSION=$(SP1_CIRCUITS_VERSION) \
+		--build-arg OPENVM_GIT_VERSION=$(OPENVM_GIT_VERSION) \
+		--build-arg OPENVM_AGG_KEYS_VERSION=$(OPENVM_AGG_KEYS_VERSION) \
 		-f Dockerfile.hierophant \
 		-t $(HIEROPHANT_NAME):$(IMAGE_TAG) \
 		.
@@ -384,6 +490,10 @@ ci:
 		--build-arg SP1_CIRCUITS_VERSION=$(SP1_CIRCUITS_VERSION) \
 		--build-arg RISC0_GROTH16_PROVER_TAG=$(RISC0_GROTH16_PROVER_TAG) \
 		--build-arg RISC0_GROTH16_RZUP_VERSION=$(RISC0_GROTH16_RZUP_VERSION) \
+		--build-arg OPENVM_GIT_VERSION=$(OPENVM_GIT_VERSION) \
+		--build-arg OPENVM_AGG_KEYS_VERSION=$(OPENVM_AGG_KEYS_VERSION) \
+		--build-arg OPENVM_EVM_ASSETS_VERSION=$(OPENVM_EVM_ASSETS_VERSION) \
+		--build-arg OPENVM_KZG_VERSION=$(OPENVM_KZG_VERSION) \
 		-f Dockerfile.contemplant \
 		-t $(CONTEMPLANT_NAME):$(IMAGE_TAG) \
 		.
@@ -500,7 +610,7 @@ help:
 	@echo "Targets:"
 	@echo "  init            Initialize config from examples."
 	@echo "  circuits        Download and verify circuit artifacts."
-	@echo "  moongate        Download and verify moongate-server binary."
+	@echo "  sp1-gpu-server  Download and install the SP1 CUDA prover server."
 	@echo "  clean           Clean output directories."
 	@echo "  build           Build native binaries."
 	@echo "  test            Run all tests for the build."

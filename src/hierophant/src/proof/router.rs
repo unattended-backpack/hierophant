@@ -10,7 +10,7 @@ use network_lib::{
     ContemplantProofRequest, OpenVmProofMode, OpenVmProofRequest, Risc0ProofMode,
     Risc0ProofRequest, Sp1ProofRequest,
 };
-use sp1_sdk::{SP1Stdin, network::proto::network::ProofMode};
+use sp1_sdk::{SP1Stdin, network::proto::base::types::ProofMode};
 use tokio::time::Duration;
 
 use crate::config::Config;
@@ -48,7 +48,7 @@ impl ProofRouter {
             .get_artifact_bytes(stdin_uri.clone())
             .await
         {
-            Ok(Some(bytes)) => bytes,
+            Ok(Some(bytes)) => maybe_zstd_decompress(bytes)?,
             Ok(None) => return Err(anyhow!("Stdin artifact with uri {stdin_uri} not found")),
             Err(e) => return Err(anyhow!("Error getting stdin artifact {stdin_uri}: {e}")),
         };
@@ -59,7 +59,7 @@ impl ProofRouter {
             .get_artifact_bytes(program_uri.clone())
             .await
         {
-            Ok(Some(bytes)) => bincode::deserialize(&bytes)?,
+            Ok(Some(bytes)) => bincode::deserialize(&maybe_zstd_decompress(bytes)?)?,
             Ok(None) => return Err(anyhow!("Program artifact with uri {program_uri} not found")),
             Err(e) => return Err(anyhow!("Error getting program artifact {program_uri}: {e}")),
         };
@@ -151,5 +151,21 @@ impl ProofRouter {
                 Ok(ProofStatus::lost())
             }
         }
+    }
+}
+
+// sp1-sdk 6.x clients zstd-compress the bincode payload of stdin/program
+// artifacts before the presigned-URL upload (5.x uploaded raw bincode);
+// proof downloads are still expected uncompressed, so only the
+// client-uploaded artifacts read above need this. Detect by the zstd magic
+// number rather than by client version: a raw bincode payload here starts
+// with a little-endian u64 length, which would have to be ~4 GB before its
+// first four bytes collide with the magic.
+fn maybe_zstd_decompress(bytes: Vec<u8>) -> Result<Vec<u8>> {
+    const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
+    if bytes.starts_with(&ZSTD_MAGIC) {
+        zstd::decode_all(&bytes[..]).map_err(|e| anyhow!("Error zstd-decompressing artifact: {e}"))
+    } else {
+        Ok(bytes)
     }
 }

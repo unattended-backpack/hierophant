@@ -72,6 +72,42 @@ jobs:
         echo "timestamp=$(date +%s)" >> $GITHUB_OUTPUT
         echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
+    # Fetch the vendored bare mirrors of the OpenVM git dependencies and
+    # rewrite their github URLs to the local copies, so the test + native
+    # build steps below resolve OpenVM source from the checksummed CDN
+    # mirrors instead of github (parity with the Dockerfile source-build
+    # path; see Dockerfile.contemplant's vendor-git block). GIT_CONFIG_GLOBAL
+    # scopes the rewrite to this workspace instead of mutating the runner's
+    # real ~/.gitconfig, and git-fetch-with-cli goes in the cargo config
+    # FILE because openvm-build strips CARGO_* env vars (except CARGO_HOME)
+    # from nested cargo invocations.
+    - name: Vendor OpenVM git mirrors
+      run: |
+        . "$GITHUB_WORKSPACE/.env.maintainer"
+        export VENDOR_BASE_URL
+        container/vendor.sh "openvm-git-mirror.tar.gz" \
+          "provers/openvm/git/${OPENVM_GIT_VERSION}" \
+          "openvm/git/${OPENVM_GIT_VERSION}/"
+        container/vendor.sh "stark-backend-git-mirror.tar.gz" \
+          "provers/openvm/git/${OPENVM_GIT_VERSION}" \
+          "openvm/git/${OPENVM_GIT_VERSION}/"
+        mkdir -p "$GITHUB_WORKSPACE/vendor-git"
+        mv /tmp/extracted-openvm-git-mirror/openvm.git \
+          "$GITHUB_WORKSPACE/vendor-git/openvm.git"
+        mv /tmp/extracted-stark-backend-git-mirror/stark-backend.git \
+          "$GITHUB_WORKSPACE/vendor-git/stark-backend.git"
+        GIT_CONFIG_GLOBAL="$GITHUB_WORKSPACE/.gitconfig-vendor"
+        git config --file "$GIT_CONFIG_GLOBAL" \
+          url."file://$GITHUB_WORKSPACE/vendor-git/openvm.git".insteadOf \
+          "https://github.com/openvm-org/openvm.git"
+        git config --file "$GIT_CONFIG_GLOBAL" \
+          url."file://$GITHUB_WORKSPACE/vendor-git/stark-backend.git".insteadOf \
+          "https://github.com/openvm-org/stark-backend.git"
+        echo "GIT_CONFIG_GLOBAL=$GIT_CONFIG_GLOBAL" >> $GITHUB_ENV
+        mkdir -p "$GITHUB_WORKSPACE/.cargo"
+        printf '[net]\ngit-fetch-with-cli = true\n' \
+          >> "$GITHUB_WORKSPACE/.cargo/config.toml"
+
     - name: Run tests
       id: tests
       env:
@@ -108,14 +144,12 @@ jobs:
       env:
         CARGO_HOME: ${{ github.workspace }}/.cargo
 
-        # Released contemplant binary must link risc0-zkvm/cuda; without it,
-        # operators with `backend = "cuda"` on a risc0 [[provers]] entry hit
-        # a config-load panic ("RISC Zero CUDA backend requires building the
-        # contemplant with --features enable-risc0-cuda"). The Dockerfile's
-        # CI path is BUILD_TYPE=prebuilt (skips cargo, just copies out/), so
-        # the feature set has to be baked in here at native-build time.
-        # native-gnark stays on for SP1's in-process Groth16 path.
-        CONTEMPLANT_FEATURES: enable-native-gnark,enable-risc0-cuda
+        # The released contemplant feature set is read from .env.maintainer's
+        # CONTEMPLANT_RELEASE_FEATURES (exported in the run script below) -
+        # the same canonical value the Makefile's docker builds default to,
+        # so tests and releases validate one artifact shape and there is no
+        # second copy to drift. Rationale for the set itself lives with the
+        # variable's definition in .env.maintainer.
 
         # CUDA build-env wiring; required to compile sppark + risc0's CUDA
         # kernels natively here (sppark's nvcc invocation needs cuda_runtime.h
@@ -130,9 +164,35 @@ jobs:
         CUDA_LIBRARY_PATH: /tmp/cuda-shim
         NVCC_CCBIN: /petros/bin/clang++
         CPATH: /petros/include
-        LIBRARY_PATH: /petros/lib
-        NVCC_APPEND_FLAGS: "-gencode=arch=compute_75,code=sm_75 -gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_90,code=sm_90 -gencode=arch=compute_120,code=sm_120 -gencode=arch=compute_120,code=compute_120"
+        # /petros/lib/stubs appended for the OpenVM CUDA path: openvm's
+        # cuda-backend links `cuda` (the driver stub) in addition to cudart.
+        LIBRARY_PATH: /petros/lib:/petros/lib/stubs
+        # CUDA_LIB_DIR is openvm-cuda-builder's only link-search path (its
+        # default /usr/local/cuda/lib64 doesn't exist in petros). The target
+        # architecture list (CUDA_ARCH, which openvm-cuda-builder reads and
+        # PANICS without via an nvidia-smi probe on GPU-less runners, plus
+        # the derived NVCC_APPEND_FLAGS) is intentionally not set here; both
+        # come from .env.maintainer's CUDA_RELEASE_ARCH in the run script
+        # below, so the arch list has no copy in this workflow.
+        CUDA_LIB_DIR: /petros/lib
       run: |
+        # The canonical release feature set and GPU architecture list live
+        # in .env.maintainer; see the comment blocks there.
+        . "$GITHUB_WORKSPACE/.env.maintainer"
+        export CONTEMPLANT_FEATURES="${CONTEMPLANT_RELEASE_FEATURES}"
+
+        # Derive the CUDA arch env from CUDA_RELEASE_ARCH exactly as the
+        # Dockerfile's build RUN does: one -gencode per arch (openvm reads
+        # CUDA_ARCH itself; sppark/risc0 read NVCC_APPEND_FLAGS) plus a
+        # trailing PTX entry for the newest arch so future GPUs can JIT.
+        export CUDA_ARCH="${CUDA_RELEASE_ARCH}"
+        NVCC_APPEND_FLAGS=""; LAST_ARCH=""
+        for a in $(echo "$CUDA_ARCH" | tr ',' ' '); do
+          NVCC_APPEND_FLAGS="$NVCC_APPEND_FLAGS -gencode=arch=compute_${a},code=sm_${a}"
+          LAST_ARCH="$a"
+        done
+        export NVCC_APPEND_FLAGS="$NVCC_APPEND_FLAGS -gencode=arch=compute_${LAST_ARCH},code=compute_${LAST_ARCH}"
+
         # Build the cuda-shim that find_cuda_helper expects (Dockerfile.contemplant
         # creates the equivalent at /home/petros/cuda-shim during the in-container
         # build path). Symlink-only, so it's free.
@@ -394,6 +454,10 @@ jobs:
         echo "SP1_CIRCUITS_VERSION=${SP1_CIRCUITS_VERSION}" >> $GITHUB_ENV
         echo "RISC0_GROTH16_PROVER_TAG=${RISC0_GROTH16_PROVER_TAG}" >> $GITHUB_ENV
         echo "RISC0_GROTH16_RZUP_VERSION=${RISC0_GROTH16_RZUP_VERSION}" >> $GITHUB_ENV
+        echo "OPENVM_GIT_VERSION=${OPENVM_GIT_VERSION}" >> $GITHUB_ENV
+        echo "OPENVM_AGG_KEYS_VERSION=${OPENVM_AGG_KEYS_VERSION}" >> $GITHUB_ENV
+        echo "OPENVM_EVM_ASSETS_VERSION=${OPENVM_EVM_ASSETS_VERSION}" >> $GITHUB_ENV
+        echo "OPENVM_KZG_VERSION=${OPENVM_KZG_VERSION}" >> $GITHUB_ENV
 
         # Load registry configuration
         . /opt/github-runner/secrets/registry.env
@@ -418,6 +482,10 @@ jobs:
           --build-arg SP1_CIRCUITS_VERSION="${{ env.SP1_CIRCUITS_VERSION }}" \
           --build-arg RISC0_GROTH16_PROVER_TAG="${{ env.RISC0_GROTH16_PROVER_TAG }}" \
           --build-arg RISC0_GROTH16_RZUP_VERSION="${{ env.RISC0_GROTH16_RZUP_VERSION }}" \
+          --build-arg OPENVM_GIT_VERSION="${{ env.OPENVM_GIT_VERSION }}" \
+          --build-arg OPENVM_AGG_KEYS_VERSION="${{ env.OPENVM_AGG_KEYS_VERSION }}" \
+          --build-arg OPENVM_EVM_ASSETS_VERSION="${{ env.OPENVM_EVM_ASSETS_VERSION }}" \
+          --build-arg OPENVM_KZG_VERSION="${{ env.OPENVM_KZG_VERSION }}" \
           -f Dockerfile.$MATRIX_IMAGE \
           -t $IMAGE_NAME:${{ github.sha }} \
           .

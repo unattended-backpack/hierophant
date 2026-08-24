@@ -73,31 +73,23 @@ A Contemplant declares which ZK VMs it serves, and with which backend, through a
 The available fields per entry are:
 
 - `vm = "sp1" | "risc0" | "openvm"` (required).
-- `backend = "cpu" | "cuda"` (default `"cpu"`). CPU uses no GPU and is **significantly** slower than CUDA. CUDA requires a CUDA-capable NVIDIA GPU on the host and for the container to be launched with GPU access (e.g. `docker run --gpus all`, or through `nvidia-container-runtime`). For SP1 specifically, the vendored moongate-server binary is compiled for Ada (`sm_89`), so a CUDA backend needs an RTX 40-series or newer card. A binary built with `enable-risc0-cuda` covers every NVIDIA architecture from Turing (`sm_75`) through Blackwell (`sm_120`). An OpenVM CUDA backend requires a binary built with `enable-openvm-cuda` (openvm-sdk selects its GPU backend at compile time, like risc0).
-- `moongate_endpoint = "http://host:3000/twirp/"` (SP1 CUDA only, optional). When supplied, the Contemplant talks to an external moongate server at that address instead of spinning up a Dockerized moongate container. The URL must terminate in `/twirp/` because moongate mounts its prover service router under that prefix. The Contemplant appends `/twirp/` automatically when the configured URL does not already contain it, so either `http://host:3000` or `http://host:3000/twirp/` is accepted. Omit the endpoint to have the SP1 SDK spin up a Dockerized moongate container instead.
+- `backend = "cpu" | "cuda"` (default `"cpu"`). CPU uses no GPU and is **significantly** slower than CUDA. CUDA requires a CUDA-capable NVIDIA GPU on the host and for the container to be launched with GPU access (e.g. `docker run --gpus all`, or through `nvidia-container-runtime`). For SP1, the Contemplant spawns the vendored `~/.sp1/bin/sp1-gpu-server` and drives it over a unix socket (sp1-sdk 6.x removed the earlier moongate arrangement, including the old `moongate_endpoint` config field; setting it now fails startup with a clear error). **sp1-gpu-server 6.x refuses GPUs with less than 24 GB of VRAM at startup** (measured empirically; a 12 GB card is rejected before any architecture check), so SP1 CUDA workers need RTX 3090/4090/A5000-class hardware or better; smaller GPUs remain viable for the other VMs. Default release builds compile CUDA kernels for Ampere (`sm_80`) through Blackwell (`sm_120`). Turing (`sm_75`) is excluded from the default because risc0 is the only VM it fully serves; Turing-class cards are proven risc0 CUDA workers, and a dedicated risc0 worker image for them remains buildable with `CUDA_ARCH=75`. An OpenVM CUDA backend requires a binary built with `enable-openvm-cuda`. In such a binary the Contemplant honors `backend = "cpu"` for app proofs at runtime, but the aggregation stages behind `stark`/`evm` modes always run on the GPU; upstream openvm-sdk selects its aggregation prover by crate feature, so true CPU aggregation requires a binary built without `enable-openvm-cuda`. OpenVM GPU aggregation also demands more per-launch GPU resources than app proving; Turing-class (`sm_75`) cards that prove app mode comfortably fail its kernels with `cudaErrorLaunchOutOfResources`.
 - `groth16_enabled = true | false` (RISC Zero only, default `false`). Opts this worker into producing Groth16 wrapped proofs, the onchain verifiable flavor. Requires the 2.5 GB of vendored Groth16 prover assets baked into the Contemplant image by [`Dockerfile.contemplant`](./Dockerfile.contemplant).
-- `evm_enabled = true | false` (OpenVM only, default `false`). Opts this worker into producing EVM (halo2-wrapped) proofs, OpenVM's onchain verifiable flavor. Requires a binary built with `--features enable-openvm-evm` plus the KZG params and aggregation keys installed by `cargo openvm setup --evm` under `~/.openvm/` (tens of GB of artifacts; generating them in-process instead needs ~70 GB of RAM).
+- `evm_enabled = true | false` (OpenVM only, default `false`). Opts this worker into producing EVM (halo2-wrapped) proofs, OpenVM's onchain verifiable flavor. Requires a binary built with `--features enable-openvm-evm` plus the KZG params and halo2 proving key under `~/.openvm/` (~14 GB of artifacts; generating them in-process instead needs ~70 GB of RAM). Images built with `OPENVM_EVM_ASSETS_VERSION` set in `.env.maintainer` bake both in from the vendored, checksum-pinned CDN copies (see [`provers/openvm/`](./provers/openvm/)), producing a fully self-contained EVM worker with no volume mounts, suitable for rental fleets. Lean images can instead volume-mount the assets over `/home/contemplant/.openvm`, populated from those same CDN copies or by running `cargo openvm setup --evm` yourself.
 
 See [`contemplant.example.toml`](./contemplant.example.toml) for a complete annotated configuration.
 
 ### Progress Tracking Limitation
 
-**Progress tracking is only available for SP1 proofs using `backend = "cuda"` with a remote `moongate_endpoint`.**
+**Cycle-accurate progress tracking is currently unavailable for every VM and backend.** It previously existed only for SP1 CUDA proving through a remote moongate server, whose log the assessor tailed for clk/shard lines; sp1-sdk 6.x replaced moongate with the local `sp1-gpu-server`, which offers no equivalent signal yet. Contemplants report a static initial progress update for all proofs (parity with what RISC Zero and OpenVM always did), and the assessor machinery remains in place for when a signal source reappears.
 
-The following configurations do **not** support progress tracking:
-- CPU proving for any VM.
-- Dockerized SP1 CUDA proving (`backend = "cuda"` without `moongate_endpoint`).
-- RISC Zero proving in any configuration.
-- OpenVM proving in any configuration.
-- Mock proving (when proof requests have `mock = true`).
-
-**Important:** Hierophant's `worker_required_progress_interval_mins` configuration defaults to `0` (disabled). If you want Hierophant to drop workers that don't report progress within a certain interval, you must:
-1. Ensure all your Contemplants serve SP1 with `backend = "cuda"` and a `moongate_endpoint`.
-2. Set `worker_required_progress_interval_mins` to a non-zero value in your Hierophant configuration.
+**Important:** leave Hierophant's `worker_required_progress_interval_mins` at its default `0` (disabled). A non-zero value expects advancing progress reports that no current configuration produces.
 
 ## Proof Modes
 
 SP1 clients request one of four modes via the `sp1-sdk` proof builder: `core` (raw STARK, not EVM verifiable), `compressed` (recursive STARK), `plonk` (EVM verifiable Plonk SNARK), or `groth16` (EVM verifiable Groth16 SNARK).
+
+**SP1 6.x clients must select Reserved mode.** sp1-sdk 6.x defaults `NetworkProver` to Mainnet's auction flow (bidding RPCs Hierophant deliberately does not implement); a default-mode client's requests auto-cancel after ~30 seconds. Build clients with the sdk's `reserved-capacity` cargo feature (which flips the default) or construct the prover via `ProverClient::builder().network_for(NetworkMode::Reserved)`. The Reserved flow is the direct continuation of the 5.x protocol Hierophant has always served. Note also that 5.x and 6.x clients cannot share a Hierophant: the proof-system generations are incompatible (Hypercube), so upgrade the network and its clients together.
 
 RISC Zero clients request one of three session modes via the Bonsai REST surface that Hierophant exposes at `/bonsai/` on its HTTP port: `composite` (the default, raw STARK), `succinct` (recursive STARK in a single segment), or `groth16` (direct onchain Groth16 seal, requires a `groth16_enabled` Contemplant). For the canonical Bonsai onchain flow, request a `composite` STARK session and then wrap it into a Groth16 seal with a separate `POST /bonsai/snark/create` call. The wrap also requires a `groth16_enabled` Contemplant.
 
@@ -244,10 +236,11 @@ When making a breaking change in inter-Hierophant-Contemplant communication, inc
 If file structure is changed, kindly update the architecture tree for readability.
 
 When a new version of SP1 is released, re-vendor all three SP1 assets
-(`groth16.tar.gz`, `plonk.tar.gz`, and `moongate-server.tar.gz`) under
-`provers/sp1/<new-version>/`. Moongate is Succinct's closed-source CUDA
-proof accelerator; its binary is extracted from their CUDA prover docker
-image. All three commit only sha256 checksums here; the actual tarballs
+(`groth16.tar.gz`, `plonk.tar.gz`, and `sp1-gpu-server.tar.gz`) under
+`provers/sp1/<new-version>/`. sp1-gpu-server is Succinct's CUDA prover
+server; its tarball comes from the SP1 GitHub release matching the SDK
+version, and the vendored binary must `--version`-match the sdk exactly or
+the runtime re-downloads it. All three commit only sha256 checksums here; the actual tarballs
 live at supply-chain-hardened locations under `${VENDOR_BASE_URL}/sp1/<new-version>/`.
 See [`provers/README.md`](./provers/README.md) for the full procedure.
 Then, update `SP1_CIRCUITS_VERSION` in `.env.maintainer`.
@@ -256,16 +249,22 @@ For RISC Zero, the analogous bump lives under `provers/risc0/<docker-tag>/`
 driven by `RISC0_GROTH16_PROVER_TAG`; same procedure is documented in
 [`provers/README.md`](./provers/README.md).
 
-For OpenVM there are no vendored assets: OpenVM is not published on crates.io
-and is consumed as a git dependency pinned to a release tag. To bump it,
-update the `tag = "v..."` on the `openvm-*` entries in the workspace
-[`Cargo.toml`](./Cargo.toml) and, in lockstep, the `openvm` / `openvm-build` /
-`openvm-sdk` tags in [`src/openvm-fibonacci/`](./src/openvm-fibonacci/)
-(guest, host, and the guest-toolchain pin in its Dockerfile — each release
-pins a specific nightly; v2.0.0 pins `nightly-2026-01-18`). Operators who
-serve OpenVM `stark`/`evm` modes should also refresh their `~/.openvm/`
-artifacts (`cargo openvm setup [--evm]`) with the matching CLI version, since
-aggregation keys are release-specific — and note that OpenVM major lines are
+OpenVM is not published on crates.io and is consumed as git dependencies
+pinned to a release tag, with the source itself vendored: image builds fetch
+bare mirrors of both OpenVM repos from the CDN (checksums under
+[`provers/openvm/git/`](./provers/openvm/)) and rewrite the github URLs to
+them, with cargo's lockfile commit-SHA check re-verifying identity. To bump
+the release, update the `tag = "v..."` on the `openvm-*` entries in the
+workspace [`Cargo.toml`](./Cargo.toml) (the `openvm-stark-sdk` tag follows
+whatever stark-backend tag the new OpenVM release pins, which may lag;
+OpenVM v2.0.1, for example, pins stark-backend v2.0.0) and, in lockstep, the tags in
+[`src/openvm-fibonacci/`](./src/openvm-fibonacci/) (guest + host),
+regenerate all three lockfiles, re-mirror the git repos under a matching
+`OPENVM_GIT_VERSION`, and bump petros's `OPENVM_VERSION` (each release pins
+a specific guest nightly, `nightly-2026-01-18` for v2.0.1, vendored there
+as `openvm-tc`). Operators who serve OpenVM `stark`/`evm` modes should also
+refresh their `~/.openvm/` artifacts with the matching release, since
+aggregation keys are release-specific. Note also that OpenVM major lines are
 proof-system incompatible (v2's SWIRL proofs cannot be verified by v1
 verifiers or vice versa), so an OpenVM bump is a coordinated upgrade across
 every Contemplant, the Hierophant, and any proof-consuming clients.

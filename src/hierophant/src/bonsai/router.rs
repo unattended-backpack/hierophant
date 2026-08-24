@@ -14,7 +14,7 @@ use axum::{
 use log::{debug, error, info, warn};
 use network_lib::Risc0ProofMode;
 use risc0_zkvm::Receipt;
-use sp1_sdk::network::proto::network::{ExecutionStatus, FulfillmentStatus};
+use sp1_sdk::network::proto::base::types::{ExecutionStatus, FulfillmentStatus};
 use std::sync::Arc;
 use uuid::Uuid;
 

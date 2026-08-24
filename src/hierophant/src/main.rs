@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load(&config_file).context("load configuration")?;
 
     // Create a structure for sharing all application state.
-    let hierophant_state = Arc::new(HierophantState::new(config.clone()));
+    let hierophant_state = Arc::new(HierophantState::new(config.clone()).await);
 
     // Define the server addresses
     let grpc_addr: SocketAddr = ([0, 0, 0, 0], config.grpc_port).into();

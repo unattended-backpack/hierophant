@@ -70,15 +70,22 @@ services:
 
   # Build context is the repo root (not ./src/openvm-fibonacci) so the
   # Dockerfile can COPY src/fibonacci/, the shared no_std crate that the
-  # guest and host both path-dep to. Paths inside the Dockerfile are
-  # adjusted accordingly. Note the BUILD_IMAGE default is the official rust
-  # image, not petros; see the Dockerfile header for why.
+  # guest and host both path-dep to, plus container/vendor.sh and the
+  # provers/openvm/git/ checksums for the vendored OpenVM git mirrors.
+  # Paths inside the Dockerfile are adjusted accordingly. VENDOR_BASE_URL
+  # and OPENVM_GIT_VERSION are exported by `make test-openvm` from
+  # .env.maintainer.
   test-client:
     build:
       context: .
       dockerfile: src/openvm-fibonacci/Dockerfile
       args:
-        BUILD_IMAGE: ${OPENVM_TEST_BUILD_IMAGE:-rust:1.91-bookworm}
+        # Same BUILD_IMAGE variable as the sp1/risc0 test clients so the
+        # project .env's local-petros override applies uniformly; compose
+        # auto-loads .env for substitution.
+        BUILD_IMAGE: ${BUILD_IMAGE:-unattended/petros:latest}
+        VENDOR_BASE_URL: ${VENDOR_BASE_URL}
+        OPENVM_GIT_VERSION: ${OPENVM_GIT_VERSION}
     container_name: test-client-openvm
     networks:
       - test-network

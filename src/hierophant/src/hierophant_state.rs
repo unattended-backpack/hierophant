@@ -34,14 +34,16 @@ pub struct HierophantState {
 }
 
 impl HierophantState {
-    pub fn new(config: Config) -> Self {
+    // async because CpuProver construction became async in sp1-sdk 6.x (it
+    // spins up the prover's local worker node); called once from main.
+    pub async fn new(config: Config) -> Self {
         let proof_router = ProofRouter::new(&config);
         let artifact_store_client = ArtifactStoreClient::new(
             &config.artifact_store_directory,
             config.max_stdin_artifacts_stored,
             config.max_proof_artifacts_stored,
         );
-        let cpu_prover = Arc::new(CpuProver::new());
+        let cpu_prover = Arc::new(CpuProver::new().await);
         Self {
             config,
             proof_requests: Arc::new(Mutex::new(HashMap::new())),

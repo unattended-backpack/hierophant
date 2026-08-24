@@ -12,16 +12,16 @@ path = "src/main.rs"
 # using the pinned OpenVM nightly toolchain (auto-installed via rustup on
 # first build; see ../build-notes in Dockerfile). Same tag as the openvm-sdk
 # used below.
-openvm-build = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+openvm-build = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.1", default-features = false }
 
 [dependencies]
 # Paired with the openvm-sdk tag the hierophant + contemplant link against.
 # If that tag is bumped, bump this in lockstep or the proof wire formats
 # will drift. default-features drops the jemalloc global allocator;
 # `parallel` keeps rayon-parallel verification.
-openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false, features = ["parallel"] }
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.1", default-features = false, features = ["parallel"] }
 # Only to name the aggregated-proof type that openvm-sdk does not re-export.
-openvm-verify-stark-host = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+openvm-verify-stark-host = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.1", default-features = false }
 # Lives in the separate stark-backend repo; MUST stay on the exact tag the
 # openvm workspace pins so cargo unifies it with openvm-sdk's copy. Names
 # the system-params helpers and field traits openvm-sdk doesn't re-export.

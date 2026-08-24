@@ -4,8 +4,13 @@ pub mod protocol;
 use alloy_primitives::B256;
 use serde::{Deserialize, Serialize};
 use sp1_sdk::ProofFromNetwork;
-use sp1_sdk::network::proto::network::ExecutionStatus;
-use sp1_sdk::{SP1ProofWithPublicValues, SP1Stdin, network::proto::network::ProofMode};
+// The sp1-sdk 6.x release split the old `proto::network` module into
+// `proto::base` and `proto::auction`. Hierophant serves the base
+// (Reserved/hosted) flow, the one a `NetworkMode::Reserved` client drives
+// end-to-end, so these shared types mirror `base::types`. The enum wire values are identical in both
+// modules, so contemplants and hierophant agree regardless.
+use sp1_sdk::network::proto::base::types::ExecutionStatus;
+use sp1_sdk::{SP1ProofWithPublicValues, SP1Stdin, network::proto::base::types::ProofMode};
 use std::{cmp::Ordering, fmt::Display};
 
 // Which ZK VM a proof request targets, and which VMs a given contemplant is
