@@ -177,13 +177,6 @@ COPY --from=builder /build/hierophant-binary /usr/local/bin/hierophant
 # else in this image resolves through the Debian loader.
 COPY --from=builder /build/nix-closure/ /
 
-# Copy vendored circuit artifacts from build stage.
-COPY --from=builder /home/petros/.sp1/circuits /opt/sp1/circuits
-
-# Copy the vendored OpenVM aggregation keys (may be an empty directory when
-# OPENVM_AGG_KEYS_VERSION was not pinned at build time).
-COPY --from=builder /home/petros/.openvm /opt/openvm-keys
-
 # Install runtime dependencies and fix binary interpreter. The RUNPATH
 # strip matters once the nix closure above exists: the binary's nix
 # RUNPATH entries would otherwise become resolvable and make the Debian
@@ -202,17 +195,26 @@ RUN apt-get update && \
   apt-get autoremove -y && \
   rm -rf /var/lib/apt/lists/*
 
-# Prepare specific non-root user for security.
+# Prepare specific non-root user for security. Pre-create (and chown while
+# still empty) the parent directories the asset COPYs below land in, so the
+# COPYs never need a follow-up recursive chown: on overlayfs, chown -R
+# copies up every file it touches, which would duplicate the multi-GB asset
+# layers in ownership-metadata form. Ownership is instead set at COPY time
+# via --chown, which is also why the assets are copied directly to their
+# final ~/.sp1 and ~/.openvm homes rather than staged under /opt and cp'd
+# (the old staging arrangement stored every asset byte twice).
 RUN useradd --system --create-home --shell /bin/bash hierophant && \
   chown hierophant:hierophant /usr/local/bin/hierophant && \
-  mkdir -p /home/hierophant/.sp1/circuits && \
-  cp -r /opt/sp1/circuits/* /home/hierophant/.sp1/circuits/ && \
-  chown -R hierophant:hierophant /home/hierophant/.sp1 && \
-  rm -rf /opt/sp1 && \
-  mkdir -p /home/hierophant/.openvm && \
-  cp -r /opt/openvm-keys/. /home/hierophant/.openvm/ && \
-  chown -R hierophant:hierophant /home/hierophant/.openvm && \
-  rm -rf /opt/openvm-keys
+  mkdir -p /home/hierophant/.sp1 && \
+  chown -R hierophant:hierophant /home/hierophant/.sp1
+
+# Vendored circuit artifacts, straight to the hierophant user's home. The
+# tree includes the .download_complete markers sp1-sdk checks.
+COPY --from=builder --chown=hierophant:hierophant /home/petros/.sp1/circuits /home/hierophant/.sp1/circuits
+
+# Vendored OpenVM aggregation keys (may be an empty directory when
+# OPENVM_AGG_KEYS_VERSION was not pinned at build time).
+COPY --from=builder --chown=hierophant:hierophant /home/petros/.openvm /home/hierophant/.openvm
 USER hierophant
 WORKDIR /home/hierophant
 ENV RUST_LOG=info RUST_LOG_STYLE=always RUST_BACKTRACE=1

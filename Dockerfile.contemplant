@@ -298,15 +298,14 @@ RUN /tmp/vendor.sh "openvm-git-mirror.tar.gz" \
 # into the ~/.openvm layout the contemplant reads at proof time, when a
 # version is pinned. Without them stark-mode proofs still work but pay a
 # slow, RAM-heavy in-process aggregation keygen on first use.
-RUN if [ -n "${OPENVM_AGG_KEYS_VERSION}" ]; then \
+RUN mkdir -p /home/petros/.openvm /home/petros/.openvm-halo2 && \
+  if [ -n "${OPENVM_AGG_KEYS_VERSION}" ]; then \
     /tmp/vendor.sh "openvm-agg-keys.tar.gz" \
       "provers/openvm/${OPENVM_AGG_KEYS_VERSION}" \
       "openvm/${OPENVM_AGG_KEYS_VERSION}/" && \
-    mkdir -p /home/petros/.openvm && \
     cp -r /tmp/extracted-openvm-agg-keys/* /home/petros/.openvm/; \
   else \
-    echo "OPENVM_AGG_KEYS_VERSION empty; skipping OpenVM aggregation-key staging" && \
-    mkdir -p /home/petros/.openvm; \
+    echo "OPENVM_AGG_KEYS_VERSION empty; skipping OpenVM aggregation-key staging"; \
   fi
 
 # Stage the vendored OpenVM EVM assets (halo2.pk + KZG params) into the same
@@ -316,12 +315,18 @@ RUN if [ -n "${OPENVM_AGG_KEYS_VERSION}" ]; then \
 # the KZG srs are raw curve points that compress 0%, so those go through
 # vendor.sh's --file mode untouched. Layered after the agg keys so the
 # ~13.5 GB layer only invalidates when the EVM asset pins change.
+# halo2.pk is staged into its own sibling directory (.openvm-halo2, always
+# present, empty on lean builds) rather than into .openvm: the runtime
+# stage copies the two separately so the halo2 key gets its own image
+# layer. One combined layer would exceed GHCR's 10 GB per-layer blob cap,
+# and smaller blobs also make interrupted registry pushes cheaper to retry
+# (a failed blob upload restarts from that blob's beginning).
 RUN if [ -n "${OPENVM_EVM_ASSETS_VERSION}" ]; then \
     /tmp/vendor.sh "openvm-halo2-pk.tar.gz" \
       "provers/openvm/${OPENVM_EVM_ASSETS_VERSION}" \
       "openvm/${OPENVM_EVM_ASSETS_VERSION}/" && \
     mkdir -p /home/petros/.openvm/params && \
-    mv /tmp/extracted-openvm-halo2-pk/halo2.pk /home/petros/.openvm/halo2.pk && \
+    mv /tmp/extracted-openvm-halo2-pk/halo2.pk /home/petros/.openvm-halo2/halo2.pk && \
     for k in 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24; do \
       /tmp/vendor.sh --file "kzg_bn254_${k}.srs" \
         "provers/openvm/kzg/${OPENVM_KZG_VERSION}" \
@@ -478,28 +483,13 @@ COPY --from=builder /petros/lib/libcudart.so.12 /usr/local/lib/libcudart.so.12
 # stays inert. This is what lets ONE universal image serve every backend.
 COPY --from=builder /petros/lib/stubs/libcuda.so /opt/cuda-stubs/libcuda.so.1
 
-# Copy vendored circuit artifacts from build stage.
-COPY --from=builder /home/petros/.sp1/circuits /opt/sp1/circuits
-
 # Copy the vendored risc0-groth16 prover assets. These replace the
 # `docker run risczero/risc0-groth16-prover:v2025-04-03.1` invocation that
-# risc0-groth16-3.x emits; see /usr/local/bin/docker below.
+# risc0-groth16-3.x emits; see /usr/local/bin/docker below. These are the
+# only assets that live under /opt at runtime; the per-VM home-directory
+# assets are COPY'd directly to /home/contemplant further down (after the
+# user exists) so no asset byte is stored twice.
 COPY --from=builder /home/petros/risc0-groth16-prover /opt/risc0-groth16-prover
-
-# Copy the vendored OpenVM aggregation keys (may be an empty directory when
-# OPENVM_AGG_KEYS_VERSION was not pinned at build time).
-COPY --from=builder /home/petros/.openvm /opt/openvm-keys
-
-# Copy the rzup-distributed risc0-groth16 component used by the CUDA
-# Groth16 path. risc0-groth16-3.x's src/prove/cuda.rs calls
-# `Rzup::new().get_version_dir(&Component::Risc0Groth16, &Version::new(0,1,0))`
-# which resolves to $HOME/.risc0/extensions/v0.1.0-risc0-groth16/. The
-# rzup lookup refuses to descend symlinks (Paths::find_version_dir_inner
-# filters is_symlink), so it must be a REAL directory with the four
-# proving-key/graph files directly inside; we `cp -r` rather than symlink.
-# This sidesteps needing an `rzup install` at runtime: the contemplant
-# already has every byte rzup would have fetched, pinned + hash-verified.
-COPY --from=builder /home/petros/risc0-groth16-rzup /opt/risc0-groth16-rzup
 
 # Fix binary interpreters for the contemplant binary + vendored provers.
 # sp1-gpu-server ships from Succinct's release page as a glibc build; give it
@@ -529,53 +519,62 @@ RUN useradd --system --create-home --shell /bin/bash contemplant && \
 # Copy names list with correct ownership (after user is created).
 COPY --chown=contemplant:contemplant src/names.txt /home/contemplant/names.txt
 
-# Set up SSH directory and host keys for contemplant user.
+# Set up SSH directory and host keys for contemplant user. The recursive
+# chown of /home/contemplant is safe here because the home is still small
+# (dotfiles, names.txt, .ssh); the multi-GB per-VM assets are COPY'd below,
+# strictly AFTER every recursive chown of the home: on overlayfs a chown -R
+# copies up every file it touches, which would duplicate the asset layers
+# in ownership-metadata form. Ownership of the assets is set at COPY time
+# via --chown instead, and the assets go directly to their final homes
+# rather than being staged under /opt and cp'd (the old staging
+# arrangement stored every asset byte twice, ~35 GB of the old image).
 RUN mkdir -p /home/contemplant/.ssh && \
   chmod 700 /home/contemplant/.ssh && \
   mkdir -p /home/contemplant/ssh_host_keys && \
   chown -R contemplant:contemplant /home/contemplant/.ssh /home/contemplant/ssh_host_keys && \
   chown -R contemplant:contemplant /home/contemplant
 
-# Set up rzup-layout dir for the risc0-groth16 CUDA component. rzup's
-# Paths::find_version_dir_inner filters entries that are symlinks; must be
-# a real dir populated with the four files the component ships. Placed
-# directly under contemplant's HOME so rzup discovery (which reads
-# $HOME/.risc0/) finds it without needing the rzup CLI at runtime.
-#
-# The rzup version-dir naming convention is `v<semver>-<component>`, and
-# risc0-groth16-3.x's cuda.rs hard-codes Version::new(0,1,0); so the
-# target directory is literally `v0.1.0-risc0-groth16`. `.env.maintainer`
-# stores RISC0_GROTH16_RZUP_VERSION with a leading `v` for consistency with
-# the display style used everywhere else (`v2025-04-03.1`, `v5.0.0`, etc),
-# so we strip that leading `v` here before re-prefixing rzup's own `v`.
-RUN RZUP_VER="${RISC0_GROTH16_RZUP_VERSION#v}" && \
-  mkdir -p "/home/contemplant/.risc0/extensions/v${RZUP_VER}-risc0-groth16" && \
-  cp -r /opt/risc0-groth16-rzup/* "/home/contemplant/.risc0/extensions/v${RZUP_VER}-risc0-groth16/" && \
-  chown -R contemplant:contemplant /home/contemplant/.risc0 && \
-  rm -rf /opt/risc0-groth16-rzup
-
-# Set up circuit artifacts + the sp1-gpu-server for the contemplant user.
+# Move the sp1-gpu-server into place and pre-create (chowning while still
+# empty or tiny) the parent directories the asset COPYs below land in.
 # sp1-cuda 6.x resolves the server at exactly $HOME/.sp1/bin/sp1-gpu-server
 # and version-checks it (`--version` vs the sdk's crate version) before
 # falling back to a GitHub download; the vendored binary matches, so that
 # path never triggers.
-RUN mkdir -p /home/contemplant/.sp1/circuits /home/contemplant/.sp1/bin && \
-  cp -r /opt/sp1/circuits/* /home/contemplant/.sp1/circuits/ && \
+RUN mkdir -p /home/contemplant/.sp1/bin /home/contemplant/.risc0/extensions && \
   mv /opt/sp1-gpu-server /home/contemplant/.sp1/bin/sp1-gpu-server && \
-  chown -R contemplant:contemplant /home/contemplant/.sp1 && \
-  rm -rf /opt/sp1
+  chown -R contemplant:contemplant /home/contemplant/.sp1 /home/contemplant/.risc0
 
-# Set up the OpenVM key directory for the contemplant user. The executor
-# reads ~/.openvm/internal_recursive.pk when present (stark mode), and
+# Vendored SP1 circuit artifacts, straight to the contemplant user's home.
+# The tree includes the .download_complete markers sp1-sdk checks.
+COPY --from=builder --chown=contemplant:contemplant /home/petros/.sp1/circuits /home/contemplant/.sp1/circuits
+
+# The rzup-distributed risc0-groth16 component used by the CUDA Groth16
+# path. risc0-groth16-3.x's src/prove/cuda.rs calls
+# `Rzup::new().get_version_dir(&Component::Risc0Groth16, &Version::new(0,1,0))`
+# which resolves to $HOME/.risc0/extensions/v0.1.0-risc0-groth16/. The
+# rzup lookup refuses to descend symlinks (Paths::find_version_dir_inner
+# filters is_symlink), so it must be a REAL directory with the four
+# proving-key/graph files directly inside. This sidesteps needing an
+# `rzup install` at runtime: the contemplant already has every byte rzup
+# would have fetched, pinned + hash-verified. rzup's version-dir naming
+# convention is `v<semver>-<component>` and RISC0_GROTH16_RZUP_VERSION is
+# stored with its leading `v`, so the variable IS the directory prefix.
+COPY --from=builder --chown=contemplant:contemplant /home/petros/risc0-groth16-rzup /home/contemplant/.risc0/extensions/${RISC0_GROTH16_RZUP_VERSION}-risc0-groth16
+
+# The OpenVM key directory for the contemplant user. The executor reads
+# ~/.openvm/internal_recursive.pk when present (stark mode), and
 # ~/.openvm/halo2.pk + ~/.openvm/params/ when the EVM assets were baked
 # (OPENVM_EVM_ASSETS_VERSION). Lean images (EVM assets not baked) can still
 # serve EVM by volume-mounting the assets over /home/contemplant/.openvm,
 # but baked is the deployment default so rental-fleet images stay
 # self-contained.
-RUN mkdir -p /home/contemplant/.openvm && \
-  cp -r /opt/openvm-keys/. /home/contemplant/.openvm/ && \
-  chown -R contemplant:contemplant /home/contemplant/.openvm && \
-  rm -rf /opt/openvm-keys
+COPY --from=builder --chown=contemplant:contemplant /home/petros/.openvm /home/contemplant/.openvm
+
+# The halo2 proving key merges into the same ~/.openvm as its own layer;
+# see the builder-stage staging comment for why (GHCR's 10 GB per-layer
+# cap + cheaper push retries). Empty on lean builds, so this is a no-op
+# there.
+COPY --from=builder --chown=contemplant:contemplant /home/petros/.openvm-halo2/ /home/contemplant/.openvm/
 
 # Copy SSH authorized_keys if available.
 COPY --chown=contemplant:contemplant container/authorized_keys /home/contemplant/.ssh/authorized_keys

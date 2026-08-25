@@ -524,14 +524,33 @@ jobs:
     - name: Push to DigitalOcean
       id: push-do
       if: steps.build.outputs.build_success == 'true'
-      timeout-minutes: 30
+      timeout-minutes: 60
       env:
         DOCKER_CONFIG: ${{ github.workspace }}/.docker
       run: |
         DO_IMAGE="registry.digitalocean.com/${{ env.DO_REGISTRY_NAME }}/$IMAGE_NAME"
         docker tag $IMAGE_NAME:${{ github.sha }} ${DO_IMAGE}:${{ github.sha }}
-        PUSH_OUTPUT=$(docker push ${DO_IMAGE}:${{ github.sha }} 2>&1)
-        echo "$PUSH_OUTPUT"
+        # Push with retry: the 2026-08-24 release died on a nine-minute
+        # storm of 503/504/500 from DO's registry edge. docker push resumes
+        # from already-committed blobs on retry, so every attempt makes
+        # forward progress. Capture-and-check rather than a bare
+        # assignment: under `sh -e` a failing command substitution aborts
+        # at the assignment, discarding the captured error before the echo
+        # can print it.
+        ATTEMPT=1
+        while :; do
+          PUSH_STATUS=0
+          PUSH_OUTPUT=$(docker push ${DO_IMAGE}:${{ github.sha }} 2>&1) || PUSH_STATUS=$?
+          echo "$PUSH_OUTPUT"
+          [ "$PUSH_STATUS" -eq 0 ] && break
+          echo "WARNING: push attempt ${ATTEMPT} to DO failed with status ${PUSH_STATUS}" >&2
+          if [ "$ATTEMPT" -ge 3 ]; then
+            echo "ERROR: docker push to DO failed after ${ATTEMPT} attempts" >&2
+            exit "$PUSH_STATUS"
+          fi
+          ATTEMPT=$((ATTEMPT+1))
+          sleep 60
+        done
         DIGEST=$(echo "$PUSH_OUTPUT" | sed -n 's/.*digest: \([^ ]*\).*/\1/p' | head -1)
         echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
         echo "Pushed to DO: ${DO_IMAGE}@${DIGEST}"
@@ -539,14 +558,27 @@ jobs:
     - name: Push to GitHub Container Registry
       id: push-ghcr
       if: steps.build.outputs.build_success == 'true'
-      timeout-minutes: 30
+      timeout-minutes: 60
       env:
         DOCKER_CONFIG: ${{ github.workspace }}/.docker
       run: |
         GHCR_IMAGE="ghcr.io/${{ github.repository }}/$IMAGE_NAME"
         docker tag $IMAGE_NAME:${{ github.sha }} ${GHCR_IMAGE}:${{ github.sha }}
-        PUSH_OUTPUT=$(docker push ${GHCR_IMAGE}:${{ github.sha }} 2>&1)
-        echo "$PUSH_OUTPUT"
+        # Push with retry + capture-and-check; see the DO push step for why.
+        ATTEMPT=1
+        while :; do
+          PUSH_STATUS=0
+          PUSH_OUTPUT=$(docker push ${GHCR_IMAGE}:${{ github.sha }} 2>&1) || PUSH_STATUS=$?
+          echo "$PUSH_OUTPUT"
+          [ "$PUSH_STATUS" -eq 0 ] && break
+          echo "WARNING: push attempt ${ATTEMPT} to GHCR failed with status ${PUSH_STATUS}" >&2
+          if [ "$ATTEMPT" -ge 3 ]; then
+            echo "ERROR: docker push to GHCR failed after ${ATTEMPT} attempts" >&2
+            exit "$PUSH_STATUS"
+          fi
+          ATTEMPT=$((ATTEMPT+1))
+          sleep 60
+        done
         DIGEST=$(echo "$PUSH_OUTPUT" | sed -n 's/.*digest: \([^ ]*\).*/\1/p' | head -1)
         echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
         echo "Pushed to GHCR: ${GHCR_IMAGE}@${DIGEST}"
@@ -554,14 +586,27 @@ jobs:
     - name: Push to Docker Hub
       id: push-dh
       if: steps.build.outputs.build_success == 'true'
-      timeout-minutes: 30
+      timeout-minutes: 60
       env:
         DOCKER_CONFIG: ${{ github.workspace }}/.docker
       run: |
         DH_IMAGE="${{ env.DH_USERNAME }}/$IMAGE_NAME"
         docker tag $IMAGE_NAME:${{ github.sha }} ${DH_IMAGE}:${{ github.sha }}
-        PUSH_OUTPUT=$(docker push ${DH_IMAGE}:${{ github.sha }} 2>&1)
-        echo "$PUSH_OUTPUT"
+        # Push with retry + capture-and-check; see the DO push step for why.
+        ATTEMPT=1
+        while :; do
+          PUSH_STATUS=0
+          PUSH_OUTPUT=$(docker push ${DH_IMAGE}:${{ github.sha }} 2>&1) || PUSH_STATUS=$?
+          echo "$PUSH_OUTPUT"
+          [ "$PUSH_STATUS" -eq 0 ] && break
+          echo "WARNING: push attempt ${ATTEMPT} to Docker Hub failed with status ${PUSH_STATUS}" >&2
+          if [ "$ATTEMPT" -ge 3 ]; then
+            echo "ERROR: docker push to Docker Hub failed after ${ATTEMPT} attempts" >&2
+            exit "$PUSH_STATUS"
+          fi
+          ATTEMPT=$((ATTEMPT+1))
+          sleep 60
+        done
         DIGEST=$(echo "$PUSH_OUTPUT" | sed -n 's/.*digest: \([^ ]*\).*/\1/p' | head -1)
         echo "digest=${DIGEST}" >> $GITHUB_OUTPUT
         echo "Pushed to DH: ${DH_IMAGE}@${DIGEST}"
