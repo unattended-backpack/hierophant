@@ -8,6 +8,24 @@ on:
       - '**/*.txt'
       - 'docs/**'
       - '.github/workflows/codeql.yml'
+      # A commit that ONLY edits this workflow must not auto-cut a release
+      # (paths-ignore suppresses a push only when EVERY changed path matches,
+      # so a real code change bundled with a workflow tweak still triggers).
+      # Run a release from a workflow-only change via the workflow_dispatch
+      # trigger below, e.g. to reuse a prior run's already-built binaries.
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+    inputs:
+      reuse_binaries_from:
+        description: >-
+          Run ID of a prior successful run whose `binaries` artifact to
+          reuse instead of recompiling. Empty = build binaries normally.
+          The prior run's `binaries` artifact must still be within its
+          1-day retention. Both images are still rebuilt (cheaply, from the
+          reused binaries) so the release stays a lockstep set.
+        required: false
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -81,7 +99,22 @@ jobs:
     # real ~/.gitconfig, and git-fetch-with-cli goes in the cargo config
     # FILE because openvm-build strips CARGO_* env vars (except CARGO_HOME)
     # from nested cargo invocations.
+    - name: Reuse prebuilt binaries from a prior run
+      # Recovery / fast path: skip the multi-hour compile and pull the
+      # `binaries` artifact from a prior successful run. Downstream jobs
+      # download `binaries` from THIS run, so the unconditional upload step
+      # below re-publishes what we fetch here. Both images are still rebuilt
+      # from these binaries, keeping the release a consistent lockstep set.
+      if: ${{ inputs.reuse_binaries_from != '' }}
+      uses: actions/download-artifact@f093f21ca4cfa7c75ccbbc2be54da76a0c7e1f05
+      with:
+        name: binaries
+        path: out/
+        run-id: ${{ inputs.reuse_binaries_from }}
+        github-token: ${{ github.token }}
+
     - name: Vendor OpenVM git mirrors
+      if: ${{ inputs.reuse_binaries_from == '' }}
       run: |
         . "$GITHUB_WORKSPACE/.env.maintainer"
         export VENDOR_BASE_URL
@@ -109,6 +142,7 @@ jobs:
           >> "$GITHUB_WORKSPACE/.cargo/config.toml"
 
     - name: Run tests
+      if: ${{ inputs.reuse_binaries_from == '' }}
       id: tests
       env:
         CARGO_HOME: ${{ github.workspace }}/.cargo
@@ -140,6 +174,7 @@ jobs:
         fi
 
     - name: Build native binaries
+      if: ${{ inputs.reuse_binaries_from == '' }}
       id: build-native
       env:
         CARGO_HOME: ${{ github.workspace }}/.cargo
@@ -452,6 +487,7 @@ jobs:
         # Export build configuration variables
         echo "VENDOR_BASE_URL=${VENDOR_BASE_URL}" >> $GITHUB_ENV
         echo "SP1_CIRCUITS_VERSION=${SP1_CIRCUITS_VERSION}" >> $GITHUB_ENV
+        echo "SP1_GPU_SERVER_VERSION=${SP1_GPU_SERVER_VERSION}" >> $GITHUB_ENV
         echo "RISC0_GROTH16_PROVER_TAG=${RISC0_GROTH16_PROVER_TAG}" >> $GITHUB_ENV
         echo "RISC0_GROTH16_RZUP_VERSION=${RISC0_GROTH16_RZUP_VERSION}" >> $GITHUB_ENV
         echo "OPENVM_GIT_VERSION=${OPENVM_GIT_VERSION}" >> $GITHUB_ENV
@@ -480,6 +516,7 @@ jobs:
           --build-arg RUNTIME_IMAGE="${{ needs.authenticate.outputs.runtime-image }}" \
           --build-arg VENDOR_BASE_URL="${{ env.VENDOR_BASE_URL }}" \
           --build-arg SP1_CIRCUITS_VERSION="${{ env.SP1_CIRCUITS_VERSION }}" \
+          --build-arg SP1_GPU_SERVER_VERSION="${{ env.SP1_GPU_SERVER_VERSION }}" \
           --build-arg RISC0_GROTH16_PROVER_TAG="${{ env.RISC0_GROTH16_PROVER_TAG }}" \
           --build-arg RISC0_GROTH16_RZUP_VERSION="${{ env.RISC0_GROTH16_RZUP_VERSION }}" \
           --build-arg OPENVM_GIT_VERSION="${{ env.OPENVM_GIT_VERSION }}" \
