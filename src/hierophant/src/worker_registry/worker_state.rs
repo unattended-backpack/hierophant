@@ -32,6 +32,12 @@ pub struct WorkerState {
     #[serde(skip_serializing)]
     pub from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     pub magister_drop_endpoint: Option<String>,
+    // The contemplant process's per-startup nonce (see
+    // `WorkerRegisterInfo::instance_nonce`). A re-registration with the
+    // SAME nonce is a ws reconnect of a still-running process — its
+    // in-flight assignment is carried onto the fresh entry; a different
+    // nonce is a restarted process whose stale entry is simply removed.
+    pub instance_nonce: u64,
 }
 
 impl WorkerState {
@@ -41,6 +47,7 @@ impl WorkerState {
         groth16_enabled: bool,
         openvm_evm_enabled: bool,
         magister_drop_endpoint: Option<String>,
+        instance_nonce: u64,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) -> Self {
         Self {
@@ -55,6 +62,7 @@ impl WorkerState {
             last_heartbeat: Instant::now(),
             from_hierophant_sender,
             magister_drop_endpoint,
+            instance_nonce,
         }
     }
 
@@ -105,6 +113,14 @@ impl WorkerState {
 
         self.status = WorkerStatus::Idle;
         self.strikes = 0;
+    }
+
+    // Returns the worker to Idle after its assigned proof reported a terminal
+    // failure (Unexecutable).  A failed proof is not evidence of a broken
+    // worker (the request itself may be malformed), so no strike is added and
+    // the span-proof average is untouched.
+    pub(super) fn failed_proof(&mut self) {
+        self.status = WorkerStatus::Idle;
     }
 
     pub(super) fn add_strike(&mut self) {

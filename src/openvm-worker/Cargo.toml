@@ -1,0 +1,52 @@
+[package]
+name = "openvm-worker"
+version = "0.1.0"
+license = "LicenseRef-VPL WITH AGPL-3.0-only"
+edition = "2024"
+
+# Standalone workspace, excluded from the repo root workspace ON PURPOSE:
+# this binary is the quarantine for openvm-sdk. openvm v2 exact-pins the
+# upstream plonky3 crates (p3-air = "=0.4.3" via stark-backend) while
+# sp1-sdk 6.2.2+ pins the Succinct forks at the same 0.4 minor
+# (slop-air -> p3-air = "=0.4.3-succinct"); cargo cannot resolve both in
+# one lockfile, so the root workspace links sp1 6.5+ and this workspace
+# links openvm, and the two meet over the openvm-worker-proto socket
+# protocol instead of a linker. See the workspace Cargo.toml note.
+[workspace]
+
+[dependencies]
+openvm-worker-proto = { path = "../openvm-worker-proto" }
+# OpenVM is not published on crates.io; git deps pinned to the release
+# tag, exactly mirroring the pins the root workspace carried before the
+# split. default-features drops `jemalloc` (no other allocator-sensitive
+# stacks live in this binary, but parity with the prior arrangement keeps
+# behavior identical); `parallel` keeps rayon proving.
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", default-features = false, features = ["parallel"] }
+openvm-sdk-config = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", default-features = false }
+openvm-continuations = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", default-features = false }
+openvm-verify-stark-host = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", default-features = false }
+# Lives in the separate stark-backend repo; MUST stay on the exact tag the
+# openvm workspace pins (openvm v2.0.2 pins stark-backend v2.0.1) so cargo
+# unifies it with openvm-sdk's copy into one package instance.
+openvm-stark-sdk = { version = "2.0.1", git = "https://github.com/openvm-org/stark-backend.git", tag = "v2.0.1", default-features = false }
+# App-proof wire format (`.app.proof` files); pinned to the version the
+# openvm workspace pins so encodings stay byte-identical.
+bitcode = { version = "0.6.5", default-features = false, features = ["serde"] }
+serde = { version = "1.0.198", features = ["derive"] }
+serde_json = "1.0.117"
+bincode = "1.3.3"
+toml = "0.8.20"
+sha2 = "0.10.8"
+anyhow = "1.0.86"
+log = "0.4.22"
+env_logger = "0.11.8"
+clap = { version = "4.5.41", features = ["derive"] }
+# Progress capture: a tracing Layer counts openvm's per-segment spans.
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["registry"] }
+
+[features]
+# Same names as the contemplant used to carry, so release tooling maps
+# CONTEMPLANT feature lists straight through.
+enable-openvm-cuda = ["openvm-sdk/cuda"]
+enable-openvm-evm = ["openvm-sdk/evm-prove"]

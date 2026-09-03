@@ -1,0 +1,16 @@
+[package]
+name = "openvm-worker-proto"
+version = "0.1.0"
+license = "LicenseRef-VPL WITH AGPL-3.0-only"
+edition = "2024"
+
+# Wire types + framing for the openvm-worker subprocess boundary. This
+# crate is consumed from BOTH the root workspace (hierophant, contemplant)
+# and the excluded openvm-worker workspace, so its dependencies are
+# concrete versions rather than workspace inheritance, and it must stay
+# free of anything that pulls the SP1 or OpenVM stacks: the entire point
+# of the boundary is that those two dependency trees never share a
+# lockfile again.
+[dependencies]
+serde = { version = "1.0.198", features = ["derive"] }
+bincode = "1.3.3"

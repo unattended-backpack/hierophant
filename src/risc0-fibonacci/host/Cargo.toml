@@ -20,7 +20,7 @@ risc0-build = "3.0"
 [dependencies]
 
 # Paired with the risc0-zkvm version the hierophant contemplant links against
-# (currently 2.3.x). If that version is bumped, bump bonsai-sdk in lockstep or
+# (currently 3.0.x). If that version is bumped, bump bonsai-sdk in lockstep or
 # the Bonsai wire format will drift.
 risc0-zkvm = { version = "3.0", default-features = false, features = ["client"] }
 

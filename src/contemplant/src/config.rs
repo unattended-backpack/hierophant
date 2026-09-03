@@ -110,6 +110,13 @@ pub struct Config {
     // Only Some if this contemplant has a Magister
     #[serde(default = "default_magister_drop_endpoint")]
     pub magister_drop_endpoint: Option<String>,
+    // Compute the proof's total shard/segment count before proving so
+    // /contemplants shows a percentage (done/total) rather than a bare
+    // count. Costs one extra execution pass, which is cheap relative to
+    // proving. Default true; set false (CONTEMPLANT_PROOF_TOTALS=false)
+    // to skip the pass and report indeterminate live counts instead.
+    #[serde(default = "default_compute_proof_totals")]
+    pub compute_proof_totals: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -138,6 +145,10 @@ fn default_http_port() -> u16 {
 
 fn default_magister_drop_endpoint() -> Option<String> {
     None
+}
+
+fn default_compute_proof_totals() -> bool {
+    true
 }
 
 // realistically we shouldn't need more than 1, but some edge cases require us to store more
@@ -208,6 +219,7 @@ impl Config {
                 max_proofs_stored: default_max_proofs_stored(),
                 assessor: AssessorConfig::default(),
                 magister_drop_endpoint: default_magister_drop_endpoint(),
+                compute_proof_totals: default_compute_proof_totals(),
             }
         };
 
@@ -233,6 +245,11 @@ impl Config {
         }
         if let Ok(val) = env::var("MAGISTER_DROP_ENDPOINT") {
             config.magister_drop_endpoint = Some(val);
+        }
+        if let Ok(val) = env::var("CONTEMPLANT_PROOF_TOTALS") {
+            config.compute_proof_totals = val
+                .parse()
+                .context("CONTEMPLANT_PROOF_TOTALS must be 'true' or 'false'")?;
         }
         if let Ok(val) = env::var("MOONGATE_LOG_PATH") {
             config.assessor.moongate_log_path = val;
@@ -355,35 +372,13 @@ impl Config {
                     prover.vm
                 );
             }
-            // OpenVM EVM (halo2) proving is a cargo-feature-gated opt-in: the
-            // binary must be built with `--features enable-openvm-evm` so the
-            // halo2/snark-verifier stack is linked in. Reject at startup when
-            // a featureless build gets an EVM config, so the operator sees a
-            // clean error instead of per-request failures.
-            #[cfg(not(feature = "enable-openvm-evm"))]
-            if prover.evm_enabled {
-                anyhow::bail!(
-                    "OpenVM EVM proofs require building the contemplant with `--features enable-openvm-evm`. \
-                     Rebuild with that feature (and install the KZG params via `cargo openvm setup --evm`) \
-                     or set evm_enabled = false on the openvm [[provers]] entry."
-                );
-            }
-            // OpenVM CUDA support is a cargo-feature-gated opt-in, mirroring
-            // the RISC Zero arrangement: the binary must be built with
-            // `--features enable-openvm-cuda` so the openvm-sdk `cuda`
-            // bindings are linked in. Reject at startup when a CUDA-less
-            // build gets a CUDA config, so the operator sees a clean error
-            // instead of a silent CPU fallback.
-            #[cfg(not(feature = "enable-openvm-cuda"))]
-            if matches!(prover.vm, VmChoice::OpenVm)
-                && matches!(prover.backend, ProverBackend::Cuda)
-            {
-                anyhow::bail!(
-                    "OpenVM CUDA backend requires building the contemplant with `--features enable-openvm-cuda`. \
-                     Rebuild with that feature (and run the container with GPU access, e.g. `--gpus all`) \
-                     or set backend = \"cpu\" on the openvm [[provers]] entry."
-                );
-            }
+            // OpenVM CUDA/EVM support is no longer a feature of THIS
+            // binary: since the 6.5 split, OpenVM proving runs in the
+            // spawned `openvm-worker` subprocess, whose build features
+            // (enable-openvm-cuda / enable-openvm-evm) gate those
+            // capabilities. The worker validates its own flags at spawn
+            // and exits loudly on a mismatch, which the executor
+            // surfaces on the first assigned proof.
         }
 
         Ok(config)

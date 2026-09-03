@@ -62,6 +62,12 @@ pub struct WorkerRegisterInfo {
     // endpoint to hit to drop this contemplant from it's Magister.
     // Only Some if this contemplant has a Magister
     pub magister_drop_endpoint: Option<String>,
+    // Random per-process nonce, fresh at contemplant startup. Lets the
+    // hierophant distinguish a ws reconnect from the SAME process (its
+    // in-flight assignment is still being proven — carry it over) from
+    // a restarted process (all in-memory proof state lost — register
+    // fresh).
+    pub instance_nonce: u64,
 }
 
 impl Display for WorkerRegisterInfo {
@@ -314,9 +320,7 @@ impl Display for ContemplantProofStatus {
         };
 
         let progress_update = match self.progress {
-            Some(ProgressUpdate::Execution(x)) => format!("{x}% executed"),
-            Some(ProgressUpdate::Serialization(x)) => format!("{x}% serialized"),
-            Some(ProgressUpdate::Done) => "Done".to_string(),
+            Some(p) => p.to_string(),
             None => "not started".to_string(),
         };
 
@@ -330,33 +334,87 @@ impl Display for ContemplantProofStatus {
     }
 }
 
-// contemplant's progress on their current proof
+// The phase of a proof a contemplant is currently in. Ordered by the order
+// they run in, so progress is monotonic across a phase transition even
+// though each phase's `done` counter restarts from zero. Every zkVM's
+// proving pipeline maps onto these four:
+//   Execute   - running the guest / counting shards|segments (cheap)
+//   Prove     - per-shard|per-segment STARK proving (the expensive core)
+//   Aggregate - recursion / compression of the STARK proof tree
+//   Wrap      - SNARK wrap (PLONK/Groth16/halo2) for on-chain verification
+#[derive(Copy, Debug, Eq, PartialEq, Serialize, Deserialize, Clone)]
+pub enum ProvePhase {
+    Execute,
+    Prove,
+    Aggregate,
+    Wrap,
+}
+
+impl ProvePhase {
+    // Monotonic rank used by the Ord impl below.
+    pub fn rank(&self) -> u8 {
+        match self {
+            ProvePhase::Execute => 0,
+            ProvePhase::Prove => 1,
+            ProvePhase::Aggregate => 2,
+            ProvePhase::Wrap => 3,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ProvePhase::Execute => "execute",
+            ProvePhase::Prove => "prove",
+            ProvePhase::Aggregate => "aggregate",
+            ProvePhase::Wrap => "wrap",
+        }
+    }
+}
+
+// contemplant's progress on their current proof. VM-neutral: each executor
+// reports which phase it is in and how much of that phase is done. `total`
+// == 0 means indeterminate - a live per-unit tick with no reachable total
+// (SP1's opaque gpu-server, or any coarse phase); `done` still advances, so
+// it remains a real liveness signal even without a percentage.
 #[derive(Copy, Debug, Eq, PartialEq, Serialize, Deserialize, Clone)]
 pub enum ProgressUpdate {
-    Execution(u64),     // 0 to 100
-    Serialization(u64), // 0 to 100
-    Done,               // Finished
+    Phase { phase: ProvePhase, done: u64, total: u64 },
+    Done, // Finished
+}
+
+impl ProgressUpdate {
+    // Convenience constructors for the executors.
+    pub fn phase(phase: ProvePhase, done: u64, total: u64) -> Self {
+        ProgressUpdate::Phase { phase, done, total }
+    }
+    pub fn indeterminate(phase: ProvePhase, done: u64) -> Self {
+        ProgressUpdate::Phase { phase, done, total: 0 }
+    }
 }
 
 impl Display for ProgressUpdate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let msg = match self {
-            ProgressUpdate::Execution(x) => {
-                format!("{x}% executed")
+        match self {
+            ProgressUpdate::Phase { phase, done, total } => {
+                if *total > 0 {
+                    let pct = (*done).saturating_mul(100) / (*total);
+                    write!(f, "{}: {done}/{total} ({pct}%)", phase.as_str())
+                } else {
+                    write!(f, "{}: {done}", phase.as_str())
+                }
             }
-            ProgressUpdate::Serialization(x) => {
-                format!("{x}% serialized")
-            }
-            ProgressUpdate::Done => "done".to_string(),
-        };
-
-        write!(f, "{msg}")
+            ProgressUpdate::Done => write!(f, "done"),
+        }
     }
 }
 
 impl Default for ProgressUpdate {
     fn default() -> Self {
-        Self::Execution(0)
+        ProgressUpdate::Phase {
+            phase: ProvePhase::Execute,
+            done: 0,
+            total: 0,
+        }
     }
 }
 
@@ -366,22 +424,21 @@ impl PartialOrd for ProgressUpdate {
     }
 }
 
-// Progress order goes Execution(0) -> Execution(100) -> Serialization(0) -> Serialization(100) -> Done
+// Progress order: Done is greatest; otherwise by (phase rank, work done).
+// Phase rank dominates so a phase transition always counts as progress even
+// though `done` resets, and within a phase a rising `done` (shard/segment
+// count or percent) counts as progress. `total` is display-only and is
+// intentionally NOT part of the ordering.
 impl Ord for ProgressUpdate {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
-            // Done is always greatest
             (ProgressUpdate::Done, ProgressUpdate::Done) => Ordering::Equal,
             (ProgressUpdate::Done, _) => Ordering::Greater,
             (_, ProgressUpdate::Done) => Ordering::Less,
-
-            // Serialization > Execution
-            (ProgressUpdate::Serialization(_), ProgressUpdate::Execution(_)) => Ordering::Greater,
-            (ProgressUpdate::Execution(_), ProgressUpdate::Serialization(_)) => Ordering::Less,
-
-            // Same variant - compare by value
-            (ProgressUpdate::Execution(x), ProgressUpdate::Execution(y)) => x.cmp(y),
-            (ProgressUpdate::Serialization(x), ProgressUpdate::Serialization(y)) => x.cmp(y),
+            (
+                ProgressUpdate::Phase { phase: pa, done: da, .. },
+                ProgressUpdate::Phase { phase: pb, done: db, .. },
+            ) => pa.rank().cmp(&pb.rank()).then_with(|| da.cmp(db)),
         }
     }
 }

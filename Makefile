@@ -16,6 +16,7 @@ BUILD_IMAGE ?= unattended/petros:latest
 RUNTIME_IMAGE ?= debian:trixie-slim
 VENDOR_BASE_URL ?=
 SP1_CIRCUITS_VERSION ?=
+SP1_GPU_SERVER_VERSION ?=
 RISC0_GROTH16_PROVER_TAG ?=
 RISC0_GROTH16_RZUP_VERSION ?=
 OPENVM_GIT_VERSION ?=
@@ -79,6 +80,21 @@ CONTEMPLANT_FEATURES ?=
 DOCKER_CONTEMPLANT_FEATURES := $(or $(CONTEMPLANT_FEATURES),$(CONTEMPLANT_RELEASE_FEATURES))
 NATIVE_CONTEMPLANT_FEATURES := $(or $(CONTEMPLANT_FEATURES),enable-native-gnark)
 
+# The 6.5 split moved the enable-openvm-* cargo features into the
+# openvm-worker subprocess build (its own workspace; see the root
+# Cargo.toml note). Operators keep passing ONE feature list; the
+# enable-openvm-* terms are routed to the worker build and everything
+# else to the contemplant binary build.
+empty :=
+space := $(empty) $(empty)
+comma := ,
+CONTEMPLANT_FEATURE_WORDS := $(subst $(comma),$(space),$(DOCKER_CONTEMPLANT_FEATURES))
+DOCKER_OPENVM_WORKER_FEATURES := $(subst $(space),$(comma),$(strip $(filter enable-openvm-%,$(CONTEMPLANT_FEATURE_WORDS))))
+DOCKER_CONTEMPLANT_MAIN_FEATURES := $(subst $(space),$(comma),$(strip $(filter-out enable-openvm-%,$(CONTEMPLANT_FEATURE_WORDS))))
+NATIVE_FEATURE_WORDS := $(subst $(comma),$(space),$(NATIVE_CONTEMPLANT_FEATURES))
+NATIVE_OPENVM_WORKER_FEATURES := $(subst $(space),$(comma),$(strip $(filter enable-openvm-%,$(NATIVE_FEATURE_WORDS))))
+NATIVE_CONTEMPLANT_MAIN_FEATURES := $(subst $(space),$(comma),$(strip $(filter-out enable-openvm-%,$(NATIVE_FEATURE_WORDS))))
+
 .PHONY: init
 init:
 	@echo "Initializing configuration files ..."
@@ -129,8 +145,8 @@ provision: provision-sp1 provision-risc0 provision-openvm
 
 .PHONY: provision-sp1
 provision-sp1:
-	@if [ -z "$(VENDOR_BASE_URL)" ] || [ -z "$(SP1_CIRCUITS_VERSION)" ]; then \
-		echo "ERROR: VENDOR_BASE_URL and SP1_CIRCUITS_VERSION must be set" >&2; \
+	@if [ -z "$(VENDOR_BASE_URL)" ] || [ -z "$(SP1_CIRCUITS_VERSION)" ] || [ -z "$(SP1_GPU_SERVER_VERSION)" ]; then \
+		echo "ERROR: VENDOR_BASE_URL, SP1_CIRCUITS_VERSION, and SP1_GPU_SERVER_VERSION must be set" >&2; \
 		echo "Load them from .env.maintainer or set as environment variables" >&2; \
 		exit 1; \
 	fi
@@ -140,7 +156,7 @@ provision-sp1:
 	@mkdir -p ~/.sp1/bin
 	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "groth16.tar.gz" "provers/sp1/$(SP1_CIRCUITS_VERSION)" "sp1/$(SP1_CIRCUITS_VERSION)/"
 	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "plonk.tar.gz" "provers/sp1/$(SP1_CIRCUITS_VERSION)" "sp1/$(SP1_CIRCUITS_VERSION)/"
-	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "sp1-gpu-server.tar.gz" "provers/sp1/$(SP1_CIRCUITS_VERSION)" "sp1/$(SP1_CIRCUITS_VERSION)/"
+	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "sp1-gpu-server.tar.gz" "provers/sp1/gpu-server/$(SP1_GPU_SERVER_VERSION)" "sp1/gpu-server/$(SP1_GPU_SERVER_VERSION)/"
 	@cp -r /tmp/extracted-groth16/$(SP1_CIRCUITS_VERSION)/* ~/.sp1/circuits/groth16/$(SP1_CIRCUITS_VERSION)/
 	@cp -r /tmp/extracted-plonk/$(SP1_CIRCUITS_VERSION)/* ~/.sp1/circuits/plonk/$(SP1_CIRCUITS_VERSION)/
 	@touch ~/.sp1/circuits/groth16/.download_complete
@@ -173,13 +189,13 @@ provision-openvm:
 		exit 1; \
 	fi
 	@echo "Provisioning OpenVM assets (aggregation keys $(OPENVM_AGG_KEYS_VERSION)) ..."
-	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "openvm-agg-keys.tar.gz" "provers/openvm/$(OPENVM_AGG_KEYS_VERSION)" "openvm/$(OPENVM_AGG_KEYS_VERSION)/"
+	@VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "openvm-agg-keys.tar.gz" "provers/openvm/halo2/$(OPENVM_AGG_KEYS_VERSION)" "openvm/halo2/$(OPENVM_AGG_KEYS_VERSION)/"
 	@mkdir -p ~/.openvm
 	@cp -r /tmp/extracted-openvm-agg-keys/* ~/.openvm/
 	@rm -rf /tmp/extracted-openvm-agg-keys
 	@if [ -n "$(OPENVM_EVM_ASSETS_VERSION)" ]; then \
 		echo "Provisioning OpenVM EVM assets ($(OPENVM_EVM_ASSETS_VERSION); ~13.5 GB) ..."; \
-		VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "openvm-halo2-pk.tar.gz" "provers/openvm/$(OPENVM_EVM_ASSETS_VERSION)" "openvm/$(OPENVM_EVM_ASSETS_VERSION)/" && \
+		VENDOR_BASE_URL=$(VENDOR_BASE_URL) container/vendor.sh "openvm-halo2-pk.tar.gz" "provers/openvm/halo2/$(OPENVM_EVM_ASSETS_VERSION)" "openvm/halo2/$(OPENVM_EVM_ASSETS_VERSION)/" && \
 		mkdir -p ~/.openvm/params && \
 		mv /tmp/extracted-openvm-halo2-pk/halo2.pk ~/.openvm/halo2.pk && \
 		rm -rf /tmp/extracted-openvm-halo2-pk && \
@@ -207,12 +223,14 @@ clean:
 .PHONY: build
 build:
 	@echo "Building native artifacts ..."
-	@echo "  Contemplant features: $(NATIVE_CONTEMPLANT_FEATURES)"
+	@echo "  Contemplant features: $(NATIVE_CONTEMPLANT_MAIN_FEATURES) (worker: $(NATIVE_OPENVM_WORKER_FEATURES))"
 	mkdir -p out
 	cargo build --release --bin hierophant
-	cargo build --release --bin contemplant --features "$(NATIVE_CONTEMPLANT_FEATURES)"
+	cargo build --release --bin contemplant --features "$(NATIVE_CONTEMPLANT_MAIN_FEATURES)"
+	cargo build --release --manifest-path src/openvm-worker/Cargo.toml --features "$(NATIVE_OPENVM_WORKER_FEATURES)"
 	cp ./target/release/hierophant ./out/hierophant
 	cp ./target/release/contemplant ./out/contemplant
+	cp ./src/openvm-worker/target/release/openvm-worker ./out/openvm-worker
 	@echo "Build complete."
 
 .PHONY: test
@@ -426,7 +444,7 @@ docker-c:
 	@echo "Building Contemplant image ..."
 	@echo "  Build image:   $(BUILD_IMAGE)"
 	@echo "  Runtime image: $(RUNTIME_IMAGE)"
-	@echo "  Features:      $(DOCKER_CONTEMPLANT_FEATURES)"
+	@echo "  Features:      $(DOCKER_CONTEMPLANT_MAIN_FEATURES) (worker: $(DOCKER_OPENVM_WORKER_FEATURES))"
 	@echo "  Output tag:    $(CONTEMPLANT_NAME):$(IMAGE_TAG)"
 	@mkdir -p out
 	docker build \
@@ -437,13 +455,15 @@ docker-c:
 		--build-arg RUNTIME_IMAGE=$(RUNTIME_IMAGE) \
 		--build-arg VENDOR_BASE_URL=$(VENDOR_BASE_URL) \
 		--build-arg SP1_CIRCUITS_VERSION=$(SP1_CIRCUITS_VERSION) \
+		--build-arg SP1_GPU_SERVER_VERSION=$(SP1_GPU_SERVER_VERSION) \
 		--build-arg RISC0_GROTH16_PROVER_TAG=$(RISC0_GROTH16_PROVER_TAG) \
 		--build-arg RISC0_GROTH16_RZUP_VERSION=$(RISC0_GROTH16_RZUP_VERSION) \
 		--build-arg OPENVM_GIT_VERSION=$(OPENVM_GIT_VERSION) \
 		--build-arg OPENVM_AGG_KEYS_VERSION=$(OPENVM_AGG_KEYS_VERSION) \
 		--build-arg OPENVM_EVM_ASSETS_VERSION=$(OPENVM_EVM_ASSETS_VERSION) \
 		--build-arg OPENVM_KZG_VERSION=$(OPENVM_KZG_VERSION) \
-		--build-arg CONTEMPLANT_FEATURES=$(DOCKER_CONTEMPLANT_FEATURES) \
+		--build-arg CONTEMPLANT_FEATURES=$(DOCKER_CONTEMPLANT_MAIN_FEATURES) \
+		--build-arg OPENVM_WORKER_FEATURES=$(DOCKER_OPENVM_WORKER_FEATURES) \
 		-f Dockerfile.contemplant \
 		-t $(CONTEMPLANT_NAME):$(IMAGE_TAG) \
 		.
@@ -457,7 +477,7 @@ docker:
 .PHONY: ci
 ci:
 	@echo "Building Docker images from pre-built binaries (CI mode) ..."
-	@if [ ! -f out/hierophant ] || [ ! -f out/contemplant ]; then \
+	@if [ ! -f out/hierophant ] || [ ! -f out/contemplant ] || [ ! -f out/openvm-worker ]; then \
 		echo "ERROR: Pre-built binaries not found in ./out/" >&2; \
 		echo "Run 'make build' first to create the binaries." >&2; \
 		exit 1; \
@@ -488,6 +508,7 @@ ci:
 		--build-arg RUNTIME_IMAGE=$(RUNTIME_IMAGE) \
 		--build-arg VENDOR_BASE_URL=$(VENDOR_BASE_URL) \
 		--build-arg SP1_CIRCUITS_VERSION=$(SP1_CIRCUITS_VERSION) \
+		--build-arg SP1_GPU_SERVER_VERSION=$(SP1_GPU_SERVER_VERSION) \
 		--build-arg RISC0_GROTH16_PROVER_TAG=$(RISC0_GROTH16_PROVER_TAG) \
 		--build-arg RISC0_GROTH16_RZUP_VERSION=$(RISC0_GROTH16_RZUP_VERSION) \
 		--build-arg OPENVM_GIT_VERSION=$(OPENVM_GIT_VERSION) \

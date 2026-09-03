@@ -5,7 +5,7 @@
 //
 // Toolchain: openvm-build shells out to `cargo +<toolchain>` where
 // <toolchain> defaults to the OpenVM-pinned nightly (nightly-2026-01-18 for
-// v2.0.1; override with OPENVM_RUST_TOOLCHAIN). Its preflight requires
+// v2.0.2; override with OPENVM_RUST_TOOLCHAIN). Its preflight requires
 // rustup to report the toolchain installed with rust-src; when missing it
 // tries to install both through rustup, which needs network. Petros
 // pre-materializes the vendored nightly (with its install manifests) under

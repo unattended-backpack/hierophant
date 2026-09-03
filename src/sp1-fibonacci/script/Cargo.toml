@@ -19,7 +19,7 @@ path = "src/bin/evm.rs"
 # proofs through NETWORK_RPC_URL -> NetworkProver, so it must be explicit.
 # `reserved-capacity` (implies network) flips the 6.x NetworkProver default
 # from Mainnet's auction flow to the Reserved/base flow hierophant serves.
-sp1-sdk = { version = "6.2.1", features = ["native-gnark", "reserved-capacity"] }
+sp1-sdk = { version = "6.6.0", features = ["native-gnark", "reserved-capacity"] }
 # The 6.x prove/setup surface is async.
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 clap = { version = "4.0", features = ["derive", "env"] }
@@ -34,4 +34,4 @@ alloy-sol-types = { workspace = true }
 fibonacci-lib = { path = "../lib" }
 
 [build-dependencies]
-sp1-build = "6.2.1"
+sp1-build = "6.6.0"

@@ -34,7 +34,7 @@ pub fn openvm_routes() -> Router<Arc<HierophantState>> {
 
 async fn handle_version() -> Json<VersionResponse> {
     Json(VersionResponse {
-        openvm: vec![super::verify::OPENVM_VERSION.into()],
+        openvm: vec![super::verify::openvm_version()],
     })
 }
 

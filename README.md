@@ -253,15 +253,23 @@ OpenVM is not published on crates.io and is consumed as git dependencies
 pinned to a release tag, with the source itself vendored: image builds fetch
 bare mirrors of both OpenVM repos from the CDN (checksums under
 [`provers/openvm/git/`](./provers/openvm/)) and rewrite the github URLs to
-them, with cargo's lockfile commit-SHA check re-verifying identity. To bump
-the release, update the `tag = "v..."` on the `openvm-*` entries in the
-workspace [`Cargo.toml`](./Cargo.toml) (the `openvm-stark-sdk` tag follows
+them, with cargo's lockfile commit-SHA check re-verifying identity.
+
+Since the 6.5 split, openvm-sdk lives ONLY in the excluded
+[`src/openvm-worker/`](./src/openvm-worker/) workspace (the quarantine
+that lets the main workspace track current sp1-sdk releases; see the
+root [`Cargo.toml`](./Cargo.toml) note), reached by the hierophant
+(verification) and contemplant (proving) over a unix socket. To bump
+the release, update the `tag = "v..."` on the `openvm-*` entries in
+[`src/openvm-worker/Cargo.toml`](./src/openvm-worker/Cargo.toml) (the
+`openvm-stark-sdk` tag follows
 whatever stark-backend tag the new OpenVM release pins, which may lag;
-OpenVM v2.0.1, for example, pins stark-backend v2.0.0) and, in lockstep, the tags in
+OpenVM v2.0.2, for example, pins stark-backend v2.0.1) and, in lockstep, the tags in
 [`src/openvm-fibonacci/`](./src/openvm-fibonacci/) (guest + host),
-regenerate all three lockfiles, re-mirror the git repos under a matching
+regenerate the worker and openvm-fibonacci lockfiles, re-mirror the git
+repos under a matching
 `OPENVM_GIT_VERSION`, and bump petros's `OPENVM_VERSION` (each release pins
-a specific guest nightly, `nightly-2026-01-18` for v2.0.1, vendored there
+a specific guest nightly, `nightly-2026-01-18` for the v2.0.x line, vendored there
 as `openvm-tc`). Operators who serve OpenVM `stark`/`evm` modes should also
 refresh their `~/.openvm/` artifacts with the matching release, since
 aggregation keys are release-specific. Note also that OpenVM major lines are

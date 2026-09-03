@@ -19,6 +19,7 @@ pub enum WorkerRegistryCommand {
         groth16_enabled: bool,
         openvm_evm_enabled: bool,
         magister_drop_endpoint: Option<String>,
+        instance_nonce: u64,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     },
     // sp1_sdk requests the status of a proof
@@ -37,6 +38,11 @@ pub enum WorkerRegistryCommand {
     ProofProgressUpdate {
         request_id: B256,
         progress_update: Option<ProgressUpdate>,
+    },
+    // Observability: pending-queue depth and the oldest queued
+    // request's age in seconds.
+    PendingInfo {
+        resp_sender: oneshot::Sender<(usize, Option<u64>)>,
     },
     Workers {
         resp_sender: oneshot::Sender<Vec<(String, WorkerState)>>,
@@ -72,6 +78,7 @@ impl fmt::Debug for WorkerRegistryCommand {
             WorkerRegistryCommand::ProofProgressUpdate { .. } => "ProofProgressUpdate",
             WorkerRegistryCommand::ProofStatusRequest { .. } => "ProofStatusRequest",
             WorkerRegistryCommand::ProofStatusResponse { .. } => "ProofStatusResponse",
+            WorkerRegistryCommand::PendingInfo { .. } => "PendingInfo",
             WorkerRegistryCommand::Workers { .. } => "Workers",
             WorkerRegistryCommand::DeadWorkers { .. } => "DeadWorkers",
             WorkerRegistryCommand::ProofHistory { .. } => "ProofHistory",

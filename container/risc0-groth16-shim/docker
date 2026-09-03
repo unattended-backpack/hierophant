@@ -176,7 +176,9 @@ sv_start=$(date +%s)
 # the subshell keeps those pipes open → parent's .output() hangs forever.
 (
   exec >/dev/null 2>"$sv_err"
-  if ./stark_verify "$work_dir/input.json" "$witness"; then
+  # nice: stark_verify saturates cores; keep the contemplant's
+  # heartbeat/websocket threads schedulable under full load.
+  if nice -n 10 ./stark_verify "$work_dir/input.json" "$witness"; then
     shim_log "stark_verify finished in $(( $(date +%s) - sv_start ))s"
   else
     rc=$?
@@ -194,7 +196,8 @@ prover_start=$(date +%s)
 
 # Same fd-hygiene treatment for prover: its stderr goes to a file, not the
 # inherited pipe. Output/exit code are still captured here in the main shim.
-./prover \
+# nice: same scheduling courtesy as stark_verify above.
+nice -n 10 ./prover \
   stark_verify.cs \
   stark_verify_final.pk.dmp \
   "$witness" \
