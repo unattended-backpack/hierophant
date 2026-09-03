@@ -22,6 +22,16 @@ pub struct WorkerState {
     pub assessor_config: AssessorConfig,
     // just used for healthcheck.  Is set to true in api/connect_to_hierophant
     pub ready: Arc<Mutex<bool>>,
+    // Fresh random value per process, sent with every (re)registration so
+    // the hierophant can tell a ws blip (same process, assignment still
+    // running) from a process restart (in-memory proofs lost).
+    pub instance_nonce: u64,
+    // Fired when the advertised capability set changes (e.g. SP1
+    // permanently demoted after repeated CUDA backend deaths): the ws
+    // task drops its connection so the reconnect re-registers with the
+    // updated capabilities immediately instead of waiting for a
+    // natural blip.
+    pub reconnect: Arc<tokio::sync::Notify>,
 }
 
 impl WorkerState {
@@ -31,6 +41,8 @@ impl WorkerState {
         let mut sp1_executor: Option<Sp1Executor> = None;
         let mut risc0_executor: Option<Risc0Executor> = None;
         let mut openvm_executor: Option<OpenVmExecutor> = None;
+
+        let compute_totals = config.compute_proof_totals;
 
         for prover_cfg in &config.provers {
             match prover_cfg.vm {
@@ -46,9 +58,10 @@ impl WorkerState {
                     let progress_tracking_available = false;
                     info!("SP1 progress tracking disabled (unavailable on sp1-sdk 6.x)");
                     sp1_executor = Some(Sp1Executor {
-                        active_prover: active,
+                        active_prover: Arc::new(tokio::sync::RwLock::new(active)),
                         mock_prover: mock,
                         progress_tracking_available,
+                        cuda_deaths: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                     });
                 }
                 VmChoice::Risc0 => {
@@ -59,6 +72,7 @@ impl WorkerState {
                     risc0_executor = Some(Risc0Executor::new(
                         prover_cfg.backend,
                         prover_cfg.groth16_enabled,
+                        compute_totals,
                     ));
                 }
                 VmChoice::OpenVm => {
@@ -69,6 +83,7 @@ impl WorkerState {
                     openvm_executor = Some(OpenVmExecutor::new(
                         prover_cfg.backend,
                         prover_cfg.evm_enabled,
+                        compute_totals,
                     ));
                 }
             }
@@ -78,6 +93,18 @@ impl WorkerState {
         let proof_store_client = ProofStoreClient::new(config.max_proofs_stored);
         let ready = Arc::new(Mutex::new(false));
 
+        // No rand dependency needed: nanos-since-epoch XOR'd with the pid
+        // is unique enough to tell "same process reconnected" from "new
+        // process" at one hierophant.
+        let instance_nonce = {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0);
+            nanos ^ ((std::process::id() as u64) << 32)
+        };
+
         Self {
             sp1_executor,
             risc0_executor,
@@ -85,18 +112,35 @@ impl WorkerState {
             proof_store_client,
             assessor_config: config.assessor.clone(),
             ready,
+            instance_nonce,
+            reconnect: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
     pub fn supported_vms(&self) -> Vec<VmKind> {
         let mut out = Vec::new();
-        if self.sp1_executor.is_some() {
+        // A permanently-dead CUDA backend (repeated sp1-gpu-server
+        // deaths; see MAX_CONSECUTIVE_CUDA_DEATHS) demotes the SP1
+        // capability at the next registration instead of advertising a
+        // VM every assignment would fail.
+        if self
+            .sp1_executor
+            .as_ref()
+            .is_some_and(|e| !e.backend_permanently_dead())
+        {
             out.push(VmKind::Sp1);
         }
         if self.risc0_executor.is_some() {
             out.push(VmKind::Risc0);
         }
-        if self.openvm_executor.is_some() {
+        // Same arrangement for a permanently-dead openvm-worker child
+        // (repeated subprocess deaths; see
+        // MAX_CONSECUTIVE_WORKER_DEATHS in openvm_executor.rs).
+        if self
+            .openvm_executor
+            .as_ref()
+            .is_some_and(|e| !e.worker_permanently_dead())
+        {
             out.push(VmKind::OpenVm);
         }
         out
@@ -125,7 +169,7 @@ impl WorkerState {
     }
 }
 
-async fn build_sp1_active(
+pub(crate) async fn build_sp1_active(
     backend: ProverBackend,
     moongate_endpoint: &Option<String>,
 ) -> ActiveSp1Prover {

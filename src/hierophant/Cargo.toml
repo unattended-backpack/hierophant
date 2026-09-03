@@ -26,12 +26,11 @@ sp1-sdk = { workspace = true, features = ["native-gnark"] }
 sp1-prover.workspace = true
 zstd.workspace = true
 risc0-zkvm.workspace = true
-openvm-sdk.workspace = true
-openvm-sdk-config.workspace = true
-openvm-stark-sdk.workspace = true
-openvm-continuations.workspace = true
-openvm-verify-stark-host.workspace = true
-bitcode.workspace = true
+# OpenVM verification happens in the spawned openvm-worker subprocess
+# (see src/openvm-worker); only the socket protocol is linked here,
+# keeping openvm-sdk's upstream p3-* pins out of this binary's graph so
+# sp1-sdk 6.5+ can live in it.
+openvm-worker-proto = { path = "../openvm-worker-proto" }
 env_logger.workspace = true
 reqwest.workspace = true
 futures-util.workspace = true

@@ -13,9 +13,10 @@ Assets are namespaced by VM and versioned by their upstream tag:
 ```
 provers/
 ├── sp1/
-│   └── <SP1_CIRCUITS_VERSION>/      # e.g. v6.1.0 (SP1_CIRCUIT_VERSION const)
-│       ├── groth16.tar.gz.sha256    # SP1 Groth16 circuit artifacts
-│       ├── plonk.tar.gz.sha256      # SP1 Plonk circuit artifacts
+│   ├── <SP1_CIRCUITS_VERSION>/      # e.g. v6.1.0 (SP1_CIRCUIT_VERSION const)
+│   │   ├── groth16.tar.gz.sha256    # SP1 Groth16 circuit artifacts
+│   │   └── plonk.tar.gz.sha256      # SP1 Plonk circuit artifacts
+│   └── gpu-server/<SP1_GPU_SERVER_VERSION>/  # keyed by the sp1-sdk crate version
 │       └── sp1-gpu-server.tar.gz.sha256  # Succinct CUDA prover server
 ├── risc0/
 │   └── <RISC0_GROTH16_PROVER_TAG>/  # e.g. v2025-04-03.1 (upstream tag)
@@ -27,7 +28,8 @@ The matching layout on the vendor CDN is identical:
 
 ```
 ${VENDOR_BASE_URL}/
-├── sp1/<SP1_CIRCUITS_VERSION>/{groth16,plonk,sp1-gpu-server}.tar.gz
+├── sp1/<SP1_CIRCUITS_VERSION>/{groth16,plonk}.tar.gz
+├── sp1/gpu-server/<SP1_GPU_SERVER_VERSION>/sp1-gpu-server.tar.gz
 └── risc0/<RISC0_GROTH16_PROVER_TAG>/risc0-groth16-prover.tar.gz
 ```
 
@@ -46,7 +48,7 @@ three SP1 vendor assets. The `.env.maintainer` variable that drives this is
 2. Produce the three tarballs locally. `<new-version>` is the
    `SP1_CIRCUIT_VERSION` constant baked into the sp1-prover crate you are
    bumping to (NOT necessarily the sdk version; e.g. every sdk from 6.2.1
-   through 6.3.1 pins circuits v6.1.0):
+   through 6.5.0 pins circuits v6.1.0):
 
    ```bash
    # Circuits; download Succinct's release artifacts directly and re-wrap

@@ -69,6 +69,13 @@ pub struct WorkerRegistryConfig {
     // Some() then the execution report is done and the proof has started executing.
     #[serde(default = "default_worker_max_execution_report_mins")]
     pub worker_max_execution_report_mins: u64,
+    // How long after assignment a worker's "unknown request" status answer is
+    // bridged as still-starting rather than relayed as a loss. Covers the
+    // request payload's transfer to the worker plus executor spin-up (wrap
+    // requests carry whole succinct receipts and warm the Groth16 shim; the
+    // race was observed live from 5s up past 25s after assignment).
+    #[serde(default = "default_assignment_startup_grace_secs")]
+    pub assignment_startup_grace_secs: u64,
 }
 
 impl Default for WorkerRegistryConfig {
@@ -80,8 +87,13 @@ impl Default for WorkerRegistryConfig {
             worker_required_progress_interval_mins: default_worker_required_progress_interval_mins(
             ),
             worker_max_execution_report_mins: default_worker_max_execution_report_mins(),
+            assignment_startup_grace_secs: default_assignment_startup_grace_secs(),
         }
     }
+}
+
+fn default_assignment_startup_grace_secs() -> u64 {
+    90
 }
 
 fn default_pub_key() -> Address {
@@ -101,8 +113,13 @@ fn default_worker_response_timeout_secs() -> Duration {
 }
 
 fn default_max_worker_heartbeat_interval_secs() -> Duration {
-    // Give the workers a large berth by default, 3 mins
-    Duration::from_secs(3 * 60)
+    // Give the workers a large berth by default, 10 mins. Eviction is
+    // destructive (the Magister destroys the worker and any in-flight
+    // proof is reported lost), while the contemplant now auto-reconnects
+    // and re-registers after transient websocket loss — so a short
+    // window turns brief network blips or scheduler stalls during
+    // heavy proving into dead workers for no gain.
+    Duration::from_secs(10 * 60)
 }
 
 fn default_artifact_store_directory() -> String {

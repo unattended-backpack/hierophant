@@ -16,10 +16,11 @@ futures-util.workspace = true
 tokio-tungstenite.workspace = true
 sp1-sdk.workspace = true
 risc0-zkvm.workspace = true
-openvm-sdk.workspace = true
-openvm-sdk-config.workspace = true
-openvm-stark-sdk.workspace = true
-bitcode.workspace = true
+# OpenVM proving happens in the spawned openvm-worker subprocess (see
+# src/openvm-worker); only the socket protocol is linked here, keeping
+# openvm-sdk's upstream p3-* pins out of this binary's graph so sp1-sdk
+# 6.5+ can live in it.
+openvm-worker-proto = { path = "../openvm-worker-proto" }
 sha2.workspace = true
 network-lib = { path = "../network-lib" }
 toml.workspace = true
@@ -34,14 +35,13 @@ tracing-appender = "0.2.3"
 tracing-subscriber.workspace = true
 tracing.workspace = true
 clap.workspace = true
+# SP1 progress: sp1-cuda spawns sp1-gpu-server with inherited stderr, so we
+# tap our own stderr (dup2) to parse the server's progress lines.
+libc = "0.2"
 
 [features]
 enable-native-gnark = ["sp1-sdk/native-gnark"]
 enable-risc0-cuda = ["risc0-zkvm/cuda"]
-# Links openvm-sdk's CUDA backend (GpuSdk) into the binary. Same deploy-time
-# caveats as enable-risc0-cuda: requires a CUDA runtime at load time.
-enable-openvm-cuda = ["openvm-sdk/cuda"]
-# Links the halo2/snark-verifier stack needed to produce OpenVM EVM proofs.
-# Off by default because it is a large compile-time addition; required for
-# `evm_enabled = true` on an openvm [[provers]] entry.
-enable-openvm-evm = ["openvm-sdk/evm-prove"]
+# The former enable-openvm-cuda / enable-openvm-evm features moved to
+# the openvm-worker crate (its own workspace) with the same names; build
+# the worker with them instead of this binary.

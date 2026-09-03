@@ -8,6 +8,7 @@ use log::{error, info, trace, warn};
 use network_lib::{
     WorkerRegisterInfo, messages::FromContemplantMessage, protocol::CONTEMPLANT_VERSION,
 };
+use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Duration;
 use tokio_tungstenite::{
@@ -27,6 +28,8 @@ use tokio_tungstenite::{
 pub async fn connect_to_hierophant(
     config: Config,
     worker_state: WorkerState,
+    response_sender: mpsc::Sender<FromContemplantMessage>,
+    response_receiver: Arc<tokio::sync::Mutex<mpsc::Receiver<FromContemplantMessage>>>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<()> {
     let hierophant_ws_address = config.hierophant_ws_address.clone();
@@ -62,6 +65,7 @@ pub async fn connect_to_hierophant(
         groth16_enabled: worker_state.groth16_enabled(),
         openvm_evm_enabled: worker_state.openvm_evm_enabled(),
         magister_drop_endpoint: config.magister_drop_endpoint.clone(),
+        instance_nonce: worker_state.instance_nonce,
     };
 
     info!(
@@ -90,13 +94,38 @@ pub async fn connect_to_hierophant(
         }
     });
 
-    // Channel for inter-contemplant use.  Sends messages from the thread that receives tasks from the
-    // hierophant ws conntection to the thread that sends ws messages back to the hierophant
-    let (response_sender, mut response_receiver) = mpsc::channel(100);
+    // The response channel is PERSISTENT (owned by main, shared across
+    // reconnects) so proving tasks spawned under one connection can
+    // deliver results over whichever connection is live when they
+    // finish. Heartbeats ride a per-connection channel that send_task
+    // drains with priority, so a queue of large proof uploads can
+    // never starve liveness signaling.
+    let (heartbeat_sender, mut heartbeat_receiver) =
+        mpsc::channel::<FromContemplantMessage>(8);
 
-    // this thread solely sends ws messages back to the hierophant
+    // this thread solely sends ws messages back to the hierophant.
+    // Biased select: pending heartbeats always jump the response
+    // queue; a shutdown broadcast produces a clean Close frame.
+    let response_receiver_clone = response_receiver.clone();
+    let mut send_shutdown_rx = shutdown_rx.resubscribe();
     let mut send_task = tokio::spawn(async move {
-        while let Some(ws_msg) = response_receiver.recv().await {
+        // Holding the lock for the lifetime of this connection is
+        // correct: exactly one connection is live at a time, and an
+        // aborted or exited send_task releases it for the successor.
+        let mut response_receiver = response_receiver_clone.lock().await;
+        loop {
+            let ws_msg = tokio::select! {
+                biased;
+                _ = send_shutdown_rx.recv() => break,
+                maybe_hb = heartbeat_receiver.recv() => match maybe_hb {
+                    Some(hb) => hb,
+                    None => break,
+                },
+                maybe_msg = response_receiver.recv() => match maybe_msg {
+                    Some(msg) => msg,
+                    None => break,
+                },
+            };
             // serialize message
             let ws_msg_bytes = match bincode::serialize(&ws_msg) {
                 Ok(bytes) => bytes,
@@ -156,15 +185,36 @@ pub async fn connect_to_hierophant(
     });
 
     // Spawns a task that sends a Heartbeat message every <heartbeat_interval_seconds> to the
-    // Hierophant
-    let response_sender_clone = response_sender.clone();
+    // Hierophant (over the priority channel send_task drains first).
+    let hb_interval = Duration::from_secs(config.heartbeat_interval_seconds);
     let mut heartbeat_task = tokio::spawn(async move {
-        let mut interval =
-            tokio::time::interval(Duration::from_secs(config.heartbeat_interval_seconds));
+        let mut interval = tokio::time::interval(hb_interval);
+        // After a stall, one late heartbeat is all hierophant needs;
+        // a catch-up burst is just queue noise.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut last_tick = tokio::time::Instant::now();
         loop {
             interval.tick().await;
-            let heartbeat = FromContemplantMessage::Heartbeat;
-            if response_sender_clone.send(heartbeat).await.is_err() {
+            // Self-diagnose scheduling starvation: a timer firing far
+            // past its interval means this runtime (or the whole
+            // process) was starved of CPU — classically by proving
+            // work saturating every core. Signal to lower
+            // RAYON_NUM_THREADS / reserve cores.
+            let late_by = last_tick.elapsed().saturating_sub(hb_interval);
+            if late_by > hb_interval {
+                warn!(
+                    "Heartbeat timer fired {}s late (interval {}s) — runtime/CPU \
+                     starvation; check proving thread counts",
+                    late_by.as_secs(),
+                    hb_interval.as_secs()
+                );
+            }
+            last_tick = tokio::time::Instant::now();
+            if heartbeat_sender
+                .send(FromContemplantMessage::Heartbeat)
+                .await
+                .is_err()
+            {
                 // Channel closed, exit
                 break;
             }
@@ -183,6 +233,18 @@ pub async fn connect_to_hierophant(
 
     //wait for either task to finish and kill the other task
     tokio::select! {
+        // A capability change (e.g. the SP1 CUDA backend permanently
+        // demoted after repeated deaths) only reaches the hierophant at
+        // registration time, so drop this connection deliberately: the
+        // outer loop re-dials within seconds and the fresh
+        // WorkerRegisterInfo advertises the reduced capability set.
+        _ = worker_state.reconnect.notified() => {
+            info!("Capability change requested re-registration; dropping ws to reconnect");
+            recv_task.abort();
+            send_task.abort();
+            heartbeat_task.abort();
+            exit_task.abort();
+        }
         _ = (&mut send_task) => {
             info!("send task exited");
             recv_task.abort();
@@ -210,17 +272,19 @@ pub async fn connect_to_hierophant(
         _ = shutdown_rx.recv() => {
             // SIGINT/SIGTERM broadcast from main; perform a clean WebSocket
             // close instead of letting docker SIGKILL tear the TCP connection
-            // down mid-frame. Sequence matters: abort the tasks that hold
-            // sender clones, then drop our own response_sender, so the
-            // receive end of the response channel gets EOF and send_task's
-            // while-loop exits. send_task then emits `Message::Close(None)`
-            // which hierophant logs at INFO instead of the alarming
-            // "Connection reset without closing handshake" ERROR.
+            // down mid-frame. send_task observes the same shutdown
+            // broadcast through its own subscription and emits
+            // `Message::Close(None)` before exiting, which hierophant
+            // logs at INFO instead of the alarming "Connection reset
+            // without closing handshake" ERROR.
             info!("Shutdown signal received; closing hierophant WebSocket cleanly");
             recv_task.abort();
             heartbeat_task.abort();
             exit_task.abort();
-            drop(response_sender);
+            // send_task listens on its own shutdown subscription and
+            // emits `Message::Close(None)` before exiting; the
+            // response channel itself is persistent (owned by main)
+            // and intentionally stays open across reconnects.
             // Bounded wait; if hierophant is already gone the sendpath may
             // fail; either way we shouldn't block shutdown for longer than
             // docker's default grace period.

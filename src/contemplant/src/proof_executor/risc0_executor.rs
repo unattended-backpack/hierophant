@@ -1,12 +1,84 @@
 use crate::config::ProverBackend;
 use crate::worker_state::WorkerState;
 
-use anyhow::{Context, Result, anyhow};
-use log::info;
-use network_lib::{ContemplantProofStatus, ProgressUpdate, Risc0ProofMode, Risc0ProofRequest};
-use risc0_zkvm::{ExecutorEnv, ProverOpts, Receipt, default_prover};
+use anyhow::{Result, anyhow};
+use log::{error, info};
+use network_lib::{
+    ContemplantProofStatus, ProgressUpdate, ProvePhase, Risc0ProofMode, Risc0ProofRequest,
+};
+use risc0_zkvm::{Executor, ExecutorEnv, ProverOpts, Receipt, default_executor, default_prover};
 use sp1_sdk::network::proto::base::types::ExecutionStatus;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tokio::{sync::mpsc, time::Instant};
+use tracing::field::{Field, Visit};
+use tracing::span::Attributes;
+use tracing::{Event, Id, Subscriber};
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+use tracing_subscriber::registry::LookupSpan;
+
+// RISC0 wraps each proven segment in a `tracing::debug!("prove_segment")`
+// event (its ProverServer::prove_segment default; see risc0-zkvm
+// host/server/prove/mod.rs). We attach a scoped tracing subscriber with
+// this counting layer around the (otherwise untouched) `prove_with_opts`
+// call so the proving path is byte-identical and we merely observe its
+// own instrumentation. Best-effort: if the marker ever moves or is
+// compiled out, R0 progress degrades to the coarse phase markers the
+// executor emits directly, and proving is entirely unaffected. `total`
+// is 0 (indeterminate): a live per-segment count without a percentage.
+struct R0SegmentLayer {
+    count: Arc<AtomicU64>,
+    // Exact segment total from the pre-proving execute pass (0 = unknown,
+    // reported as indeterminate).
+    total: Arc<AtomicU64>,
+    tx: mpsc::UnboundedSender<ProgressUpdate>,
+}
+
+#[derive(Default)]
+struct ProveSegmentDetector {
+    hit: bool,
+}
+impl Visit for ProveSegmentDetector {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" && format!("{value:?}").contains("prove_segment") {
+            self.hit = true;
+        }
+    }
+}
+
+impl R0SegmentLayer {
+    fn tick(&self) {
+        let done = self.count.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self.tx.send(ProgressUpdate::Phase {
+            phase: ProvePhase::Prove,
+            done,
+            total: self.total.load(Ordering::Relaxed),
+        });
+    }
+}
+
+impl<S> Layer<S> for R0SegmentLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        // The event's own name is the message for `debug!("prove_segment")`.
+        if event.metadata().name().contains("prove_segment") {
+            self.tick();
+            return;
+        }
+        let mut d = ProveSegmentDetector::default();
+        event.record(&mut d);
+        if d.hit {
+            self.tick();
+        }
+    }
+    fn on_new_span(&self, attrs: &Attributes<'_>, _id: &Id, _ctx: Context<'_, S>) {
+        if attrs.metadata().name() == "prove_segment" {
+            self.tick();
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Risc0Executor {
@@ -26,10 +98,13 @@ pub struct Risc0Executor {
     // container/risc0-groth16-shim/docker. On CUDA builds the CPU shim is
     // bypassed entirely; risc0-groth16 has its own in-process cuda path.
     pub groth16_enabled: bool,
+    // Run an execute pass before proving to learn the exact segment total
+    // so progress is a percentage rather than a bare count.
+    pub compute_totals: bool,
 }
 
 impl Risc0Executor {
-    pub fn new(backend: ProverBackend, groth16_enabled: bool) -> Self {
+    pub fn new(backend: ProverBackend, groth16_enabled: bool, compute_totals: bool) -> Self {
         // NOTE on CPU vs CUDA dispatch:
         //
         // risc0-zkvm 3.x selects its active prover at *compile time* via the
@@ -47,6 +122,7 @@ impl Risc0Executor {
         Self {
             backend,
             groth16_enabled,
+            compute_totals,
         }
     }
 }
@@ -55,7 +131,9 @@ pub(super) async fn execute(
     state: WorkerState,
     executor: Risc0Executor,
     proof_request: Risc0ProofRequest,
-    exit_sender: mpsc::Sender<String>,
+    // Retained for genuinely fatal, environment-level errors; per-proof
+    // failures report `Unexecutable` and keep the worker alive.
+    _exit_sender: mpsc::Sender<String>,
 ) {
     info!(
         "Received RISC Zero proof request {} (mode {}, backend {:?})",
@@ -70,12 +148,14 @@ pub(super) async fn execute(
         .insert(proof_request.request_id, initial_status)
         .await;
 
-    // CPU-only v1: no cycle-accurate progress tracking is wired up yet.
-    // Push an initial non-zero Execution update so hierophant's progress
-    // watchdog knows work has started.
+    // Execute-phase kick so the watchdog sees work start; the counting
+    // layer below then streams real per-segment Prove ticks.
     state
         .proof_store_client
-        .proof_progress_update(proof_request.request_id, ProgressUpdate::Execution(1))
+        .proof_progress_update(
+            proof_request.request_id,
+            ProgressUpdate::indeterminate(ProvePhase::Execute, 1),
+        )
         .await;
 
     let request_id = proof_request.request_id;
@@ -85,6 +165,21 @@ pub(super) async fn execute(
         request_id
     );
     let groth16_enabled = executor.groth16_enabled;
+    let compute_totals = executor.compute_totals;
+
+    // Bridge the blocking-thread progress ticks (from the tracing layer and
+    // the coarse phase markers) to the async proof store. UnboundedSender
+    // ::send is sync and non-blocking, so it is safe from a blocking thread.
+    let (progress_tx, mut progress_rx) =
+        mpsc::unbounded_channel::<ProgressUpdate>();
+    {
+        let store = state.proof_store_client.clone();
+        tokio::spawn(async move {
+            while let Some(update) = progress_rx.recv().await {
+                store.proof_progress_update(request_id, update).await;
+            }
+        });
+    }
 
     tokio::task::spawn(async move {
         let start_time = Instant::now();
@@ -95,6 +190,7 @@ pub(super) async fn execute(
         let input = proof_request.input;
         let mode = proof_request.mode;
         let wrap_of = proof_request.wrap_of;
+        let progress_tx_blocking = progress_tx.clone();
 
         let proof_res: Result<Vec<u8>> = tokio::task::spawn_blocking(move || {
             let opts = match mode {
@@ -110,31 +206,78 @@ pub(super) async fn execute(
                 }
             };
 
-            let prover = default_prover();
-
-            let wrapped_receipt: Receipt = if let Some(source_bytes) = wrap_of {
-                // Two-step wrap: caller has an existing STARK receipt and
-                // wants us to compress it to a smaller form (almost always
-                // Groth16 for onchain verification).
-                let source: Receipt = bincode::deserialize(&source_bytes)
-                    .map_err(|e| anyhow!("Deserialize source receipt for wrap: {e}"))?;
-                prover
-                    .compress(&opts, &source)
-                    .map_err(|e| anyhow!("RISC Zero compress (wrap) error: {e}"))?
-            } else {
-                // Fresh proof: build ExecutorEnv from `input` and prove the ELF.
-                let env = ExecutorEnv::builder()
-                    .write_slice(&input)
-                    .build()
-                    .map_err(|e| anyhow!("Build RISC Zero ExecutorEnv: {e}"))?;
-                prover
-                    .prove_with_opts(env, &elf, &opts)
-                    .map_err(|e| anyhow!("RISC Zero prover error: {e}"))?
-                    .receipt
+            // Scoped subscriber: the counting layer observes risc0's own
+            // per-segment `prove_segment` events during proving without
+            // altering the (byte-identical) prove call.
+            let total = Arc::new(AtomicU64::new(0));
+            let layer = R0SegmentLayer {
+                count: Arc::new(AtomicU64::new(0)),
+                total: total.clone(),
+                tx: progress_tx_blocking.clone(),
             };
+            let subscriber = tracing_subscriber::registry().with(layer);
 
-            bincode::serialize(&wrapped_receipt)
-                .map_err(|e| anyhow!("Serialize RISC Zero receipt: {e}"))
+            tracing::subscriber::with_default(subscriber, || {
+                let prover = default_prover();
+
+                let wrapped_receipt: Receipt = if let Some(source_bytes) = wrap_of {
+                    // Two-step wrap: caller has an existing STARK receipt and
+                    // wants us to compress it to a smaller form (almost always
+                    // Groth16 for onchain verification). This is the Wrap phase.
+                    let _ = progress_tx_blocking
+                        .send(ProgressUpdate::indeterminate(ProvePhase::Wrap, 1));
+                    let source: Receipt = bincode::deserialize(&source_bytes)
+                        .map_err(|e| anyhow!("Deserialize source receipt for wrap: {e}"))?;
+                    prover
+                        .compress(&opts, &source)
+                        .map_err(|e| anyhow!("RISC Zero compress (wrap) error: {e}"))?
+                } else {
+                    // Learn the exact segment total via an execute pass (no
+                    // proving) so the per-segment ticks carry a percentage.
+                    // Cheap next to proving; on failure fall back to a live
+                    // count (proving is never affected).
+                    if compute_totals {
+                        let env = ExecutorEnv::builder()
+                            .write_slice(&input)
+                            .build()
+                            .map_err(|e| anyhow!("Build RISC Zero ExecutorEnv (total): {e}"))?;
+                        match default_executor().execute(env, &elf) {
+                            Ok(info) => {
+                                let n = info.segments.len() as u64;
+                                info!("RISC Zero segment total (execute): {n}");
+                                total.store(n, Ordering::Relaxed);
+                            }
+                            Err(e) => log::warn!(
+                                "RISC Zero total computation failed, using live count: {e}"
+                            ),
+                        }
+                    }
+                    // Fresh proof: build ExecutorEnv from `input` and prove the ELF.
+                    let _ = progress_tx_blocking.send(ProgressUpdate::Phase {
+                        phase: ProvePhase::Prove,
+                        done: 0,
+                        total: total.load(Ordering::Relaxed),
+                    });
+                    let env = ExecutorEnv::builder()
+                        .write_slice(&input)
+                        .build()
+                        .map_err(|e| anyhow!("Build RISC Zero ExecutorEnv: {e}"))?;
+                    let receipt = prover
+                        .prove_with_opts(env, &elf, &opts)
+                        .map_err(|e| anyhow!("RISC Zero prover error: {e}"))?
+                        .receipt;
+                    // Succinct/Groth16 modes fold segments into a recursion
+                    // tree after core proving; mark the Aggregate phase.
+                    if !matches!(mode, Risc0ProofMode::Composite) {
+                        let _ = progress_tx_blocking
+                            .send(ProgressUpdate::indeterminate(ProvePhase::Aggregate, 1));
+                    }
+                    receipt
+                };
+
+                bincode::serialize(&wrapped_receipt)
+                    .map_err(|e| anyhow!("Serialize RISC Zero receipt: {e}"))
+            })
         })
         .await
         .map_err(|e| anyhow!("RISC Zero prover join error: {e}"))
@@ -157,13 +300,13 @@ pub(super) async fn execute(
             Err(e) => {
                 let error_msg = format!("Error proving {display} at minute {minutes}: {e}");
 
-                // Match the SP1 path: on prover error the contemplant exits so
-                // hierophant reassigns the proof to a fresh worker.
-                exit_sender
-                    .send(error_msg)
-                    .await
-                    .context("Send exit error message to main thread")
-                    .unwrap();
+                // Report the failure and stay alive. A request whose guest
+                // faults (a poisoned input, a program bug) is the request's
+                // problem, not the worker's: exiting here lets any bad
+                // request kill every contemplant in the fleet one by one.
+                // Reporting `Unexecutable` lets hierophant settle the proof
+                // per its policy while this worker returns to Idle.
+                error!("{error_msg}");
 
                 state
                     .proof_store_client

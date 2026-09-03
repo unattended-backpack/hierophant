@@ -16,7 +16,14 @@ re-verifies the mirror served exactly the pinned commits. Regenerate with
 `git clone --mirror` of each repository, confirm `git rev-parse <tag>^{commit}`
 matches the SHA recorded in `Cargo.lock`, tar, and upload.
 
-## `<version>/openvm-agg-keys.tar.gz`
+## `halo2/<line>/openvm-agg-keys.tar.gz`
+
+The `halo2/` axis is keyed by the OpenVM minor line (for example `v2.0`)
+rather than the SDK patch tag. Upstream regenerates the halo2 circuits and
+their keys per minor release and holds them stable across patch releases,
+so a patch bump of the SDK reuses the same key material without a fresh
+multi-gigabyte upload. `petros` pins the same artifacts under its
+`src/openvm/halo2/<line>/` and verifies them by regeneration.
 
 The deterministic aggregation keys (`internal_recursive.pk` + `.vk` +
 `root.pk`, the root key required whenever `halo2.pk` is seeded for EVM
@@ -25,7 +32,7 @@ proving) staged into both images' `~/.openvm/` when
 `src/scripts/generate-openvm-agg-keys.sh`; verify by regeneration on
 independent hardware (the script prints the per-file hashes to compare).
 
-## `<version>/openvm-halo2-pk.tar.gz`
+## `halo2/<line>/openvm-halo2-pk.tar.gz`
 
 The OpenVM EVM (halo2) proving key, mirrored from upstream's public artifact
 bucket and shipped gzip-compressed: the key's structured regions compress

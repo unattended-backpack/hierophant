@@ -1,4 +1,3 @@
-mod assessor;
 mod openvm_executor;
 mod risc0_executor;
 mod sp1_executor;

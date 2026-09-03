@@ -1,287 +1,127 @@
+//! OpenVM proving via the `openvm-worker` subprocess.
+//!
+//! The proving implementation that used to live in this file (openvm-sdk
+//! keygen + prove, key caches, ~/.openvm artifact loading) moved verbatim
+//! into `src/openvm-worker` at the 6.5 split: openvm-sdk exact-pins the
+//! upstream plonky3 crates while sp1-sdk 6.2.2+ pins the Succinct forks
+//! at the same 0.4 minor, so the two stacks cannot share this binary's
+//! dependency graph. This executor is now a client that spawns the
+//! worker once (warm key caches live for the worker's lifetime, exactly
+//! like the old in-process statics) and drives it over a unix socket,
+//! with the same death-respawn-demote hardening the SP1 executor applies
+//! to its sp1-gpu-server child.
+
 use crate::config::ProverBackend;
 use crate::worker_state::WorkerState;
 
-use anyhow::{Context, Result, anyhow};
-use log::{info, warn};
+use anyhow::{Result, anyhow};
+use log::{error, info, warn};
 use network_lib::{
-    ContemplantProofStatus, OpenVmProofMode, OpenVmProofRequest, ProgressUpdate,
+    ContemplantProofStatus, OpenVmProofMode, OpenVmProofRequest, ProgressUpdate, ProvePhase,
 };
-#[cfg(feature = "enable-openvm-cuda")]
-use openvm_sdk::GpuSdk;
-use openvm_sdk::{
-    CpuSdk, StdIn,
-    config::{AggregationSystemParams, AppConfig},
-    keygen::{AggProvingKey, AppProvingKey},
-    types::VersionedVmStarkProof,
+use openvm_worker_proto::{
+    ProofMode, ProvePhase as WireProvePhase, WorkerClient, WorkerRequest, WorkerResponse,
 };
-use openvm_sdk_config::SdkVmConfig;
-// openvm-sdk doesn't re-export the system-params helpers or the key types
-// its ~/.openvm artifacts contain; they come from openvm-stark-sdk, pinned
-// to the exact tag the openvm workspace pins (see workspace Cargo.toml).
-use openvm_stark_sdk::config::{MAX_APP_LOG_STACKED_HEIGHT, app_params_with_100_bits_security};
 use sp1_sdk::network::proto::base::types::ExecutionStatus;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
 use tokio::{sync::mpsc, time::Instant};
+
+/// Consecutive worker transport deaths tolerated before the executor
+/// stops respawning `openvm-worker` and permanently drops the worker's
+/// OpenVM capability (advertised at the next ws registration). Mirrors
+/// MAX_CONSECUTIVE_CUDA_DEATHS on the SP1 side: respawns rescue
+/// transient deaths (an OOM spike mid-keygen, a driver hiccup); a box
+/// that kills the worker this many proofs in a row is structurally
+/// unfit for OpenVM work.
+const MAX_CONSECUTIVE_WORKER_DEATHS: u32 = 3;
 
 #[derive(Clone)]
 pub struct OpenVmExecutor {
-    // CPU vs CUDA. openvm-sdk picks a compile-time default (the `cuda`
-    // cargo feature aliases `Sdk` to GpuSdk), but CpuSdk stays exported in
-    // a cuda-featured build, so the executor dispatches on this field at
-    // runtime through AnySdk below. A CUDA backend still requires a binary
-    // built with `--features enable-openvm-cuda` plus GPU access at
-    // launch; a CPU backend proves on the CPU in every build.
     pub backend: ProverBackend,
-    // True when the operator has opted into EVM (halo2-wrapped) proofs. This
-    // requires the KZG params + halo2 key installed by
-    // `cargo openvm setup --evm` under ~/.openvm/, and a binary built with
-    // `--features enable-openvm-evm` so the halo2 prover is linked in.
     pub evm_enabled: bool,
+    /// Owns the openvm-worker child; spawned on first use and respawned
+    /// by the client after a death. Shared so every proof reuses the
+    /// same long-lived worker (whose in-process key caches carry the
+    /// warmth the old in-process statics had).
+    client: Arc<WorkerClient>,
+    /// Consecutive transport deaths; reset to zero by any response from
+    /// a live worker (including request-level failures).
+    worker_deaths: Arc<AtomicU32>,
+    /// Ask the worker to compute the exact segment total (execute_metered)
+    /// so progress is a percentage rather than a bare count.
+    compute_totals: bool,
 }
 
 impl OpenVmExecutor {
-    pub fn new(backend: ProverBackend, evm_enabled: bool) -> Self {
+    pub fn new(backend: ProverBackend, evm_enabled: bool, compute_totals: bool) -> Self {
+        let socket = std::env::temp_dir().join(format!(
+            "openvm-worker-contemplant-{}.sock",
+            std::process::id()
+        ));
+        let mut args = vec![
+            "--backend".to_string(),
+            match backend {
+                ProverBackend::Cpu => "cpu".to_string(),
+                ProverBackend::Cuda => "cuda".to_string(),
+            },
+        ];
+        if evm_enabled {
+            args.push("--evm".to_string());
+        }
+        let client = Arc::new(WorkerClient::new(socket, args));
+        // Spawn eagerly so a missing/broken worker binary is loud at
+        // startup rather than at the first assigned proof; failures here
+        // are retried lazily by call_blocking, so only log.
+        if let Err(e) = client.ensure_running() {
+            error!("failed to spawn openvm-worker at startup (will retry per request): {e}");
+        }
         Self {
             backend,
             evm_enabled,
-        }
-    }
-}
-
-// Aggregation proving keys per app-config hash. Deriving one is the heaviest
-// part of stark/evm proving: the internal-recursive circuit keygen alone is
-// minutes + tens of GB of RAM. openvm v2 splits the key into an app-config-
-// dependent prefix (leaf + internal-for-leaf) and a universal
-// internal-recursive part that `cargo openvm setup` persists to
-// ~/.openvm/internal_recursive.pk, so a cold start assembles prefix keygen +
-// that file when present. The assembled key is cached here so every proof
-// after the first skips keygen entirely.
-static AGG_PK_CACHE: OnceLock<Mutex<HashMap<String, AggProvingKey>>> = OnceLock::new();
-
-// App proving keys per app-config hash. The SDK builder's dependency chain
-// (`halo2_pk` -> `root_pk` -> `agg_pk` -> `app_pk`) means any seeded
-// aggregation key must be accompanied by an explicit app key; app keygen is
-// the cheap one, and AppProvingKey is Arc-backed so caching it per config
-// makes repeat proofs skip it entirely (mirrors hierophant's verify side).
-static APP_PK_CACHE: OnceLock<Mutex<HashMap<String, AppProvingKey<SdkVmConfig>>>> =
-    OnceLock::new();
-
-// Runtime backend dispatch over openvm-sdk's compile-time SDK types. With
-// the `cuda` cargo feature upstream aliases `Sdk` to GpuSdk, but CpuSdk
-// stays exported alongside it, so wrapping both lets the configured
-// ProverBackend pick the prover at runtime. IMPORTANT CAVEAT: this honesty
-// only reaches the app stage, which is engine-generic. The aggregation
-// stages behind stark/evm modes are hardwired by upstream: openvm-sdk's
-// AggProver (prover/agg.rs) selects InnerGpuProver by crate feature, so a
-// cuda-featured binary aggregates on the GPU regardless of which SDK is
-// constructed here (see the warning in prove_blocking). The proving-key
-// types are engine-independent, so the caches above serve both variants; a
-// contemplant process only ever constructs the variant its config names.
-enum AnySdk {
-    Cpu(CpuSdk),
-    #[cfg(feature = "enable-openvm-cuda")]
-    Gpu(GpuSdk),
-}
-
-macro_rules! with_sdk {
-    ($any:expr, $sdk:ident => $body:expr) => {
-        match $any {
-            AnySdk::Cpu($sdk) => $body,
-            #[cfg(feature = "enable-openvm-cuda")]
-            AnySdk::Gpu($sdk) => $body,
-        }
-    };
-}
-
-// The error every constructor returns for a CUDA backend in a build without
-// the cuda feature. Config validation rejects that combination up front, so
-// reaching it means a routing bug rather than an operator mistake.
-#[cfg(not(feature = "enable-openvm-cuda"))]
-macro_rules! no_cuda_err {
-    () => {
-        Err(anyhow!(
-            "This contemplant binary was built without `--features enable-openvm-cuda` and cannot serve an OpenVM CUDA backend."
-        ))
-    };
-}
-
-impl AnySdk {
-    fn new(
-        backend: ProverBackend,
-        app_config: AppConfig<SdkVmConfig>,
-        agg_params: AggregationSystemParams,
-    ) -> Result<Self> {
-        match backend {
-            ProverBackend::Cpu => CpuSdk::new(app_config, agg_params)
-                .map(AnySdk::Cpu)
-                .map_err(|e| anyhow!("construct OpenVM CPU SDK: {e}")),
-            #[cfg(feature = "enable-openvm-cuda")]
-            ProverBackend::Cuda => GpuSdk::new(app_config, agg_params)
-                .map(AnySdk::Gpu)
-                .map_err(|e| anyhow!("construct OpenVM GPU SDK: {e}")),
-            #[cfg(not(feature = "enable-openvm-cuda"))]
-            ProverBackend::Cuda => no_cuda_err!(),
+            client,
+            worker_deaths: Arc::new(AtomicU32::new(0)),
+            compute_totals,
         }
     }
 
-    // The builder's dependency chain requires an explicit app_pk whenever
-    // agg_pk is seeded.
-    fn with_keys(
-        backend: ProverBackend,
-        app_pk: AppProvingKey<SdkVmConfig>,
-        agg_pk: AggProvingKey,
-    ) -> Result<Self> {
-        match backend {
-            ProverBackend::Cpu => CpuSdk::builder()
-                .app_pk(app_pk)
-                .agg_pk(agg_pk)
-                .build()
-                .map(AnySdk::Cpu)
-                .map_err(|e| anyhow!("construct OpenVM CPU SDK with aggregation key: {e}")),
-            #[cfg(feature = "enable-openvm-cuda")]
-            ProverBackend::Cuda => GpuSdk::builder()
-                .app_pk(app_pk)
-                .agg_pk(agg_pk)
-                .build()
-                .map(AnySdk::Gpu)
-                .map_err(|e| anyhow!("construct OpenVM GPU SDK with aggregation key: {e}")),
-            #[cfg(not(feature = "enable-openvm-cuda"))]
-            ProverBackend::Cuda => no_cuda_err!(),
-        }
-    }
-
-    fn app_keygen_pk(&self) -> AppProvingKey<SdkVmConfig> {
-        with_sdk!(self, sdk => sdk.app_keygen().0)
-    }
-
-    fn agg_pk(&self) -> AggProvingKey {
-        with_sdk!(self, sdk => sdk.agg_pk())
-    }
-
-    fn assemble_agg_pk(&self, internal_recursive: MultiStarkProvingKey) -> AggProvingKey {
-        with_sdk!(self, sdk => AggProvingKey {
-            prefix: sdk.agg_prefix_pk(),
-            internal_recursive: Arc::new(internal_recursive),
-        })
-    }
-
-    fn prove_app(&self, elf: Vec<u8>, program_name: String, stdin: StdIn) -> Result<Vec<u8>> {
-        with_sdk!(self, sdk => {
-            let mut prover = sdk
-                .app_prover(elf)
-                .map_err(|e| anyhow!("construct OpenVM app prover: {e}"))?
-                .with_program_name(program_name);
-            let proof = prover
-                .prove(stdin)
-                .map_err(|e| anyhow!("OpenVM app prover error: {e}"))?;
-            bitcode::serialize(&proof).map_err(|e| anyhow!("encode OpenVM app proof: {e}"))
-        })
-    }
-
-    fn prove_stark(&self, elf: Vec<u8>, stdin: StdIn) -> Result<Vec<u8>> {
-        with_sdk!(self, sdk => {
-            let (proof, _baseline) = sdk
-                .prove(elf, stdin, &[])
-                .map_err(|e| anyhow!("OpenVM stark prover error: {e}"))?;
-            let versioned = VersionedVmStarkProof::new(proof)
-                .map_err(|e| anyhow!("encode OpenVM stark proof: {e}"))?;
-            serde_json::to_vec(&versioned)
-                .map_err(|e| anyhow!("serialize OpenVM stark proof JSON: {e}"))
-        })
-    }
-
-    #[cfg(feature = "enable-openvm-evm")]
-    fn prove_evm_bytes(&self, elf: Vec<u8>, stdin: StdIn) -> Result<Vec<u8>> {
-        with_sdk!(self, sdk => {
-            let proof = sdk
-                .prove_evm(elf, stdin, &[])
-                .map_err(|e| anyhow!("OpenVM EVM prover error: {e}"))?;
-            serde_json::to_vec(&proof).map_err(|e| anyhow!("serialize OpenVM EVM proof: {e}"))
-        })
-    }
-
-    #[cfg(feature = "enable-openvm-evm")]
-    fn for_evm(
-        backend: ProverBackend,
-        seeded: Option<(AppProvingKey<SdkVmConfig>, AggProvingKey)>,
-        app_config: AppConfig<SdkVmConfig>,
-        halo2_root: Option<(
-            openvm_sdk::keygen::Halo2ProvingKey,
-            openvm_sdk::keygen::RootProvingKey,
-        )>,
-    ) -> Result<Self> {
-        match backend {
-            ProverBackend::Cpu => {
-                let builder = match seeded {
-                    Some((app_pk, agg_pk)) => CpuSdk::builder().app_pk(app_pk).agg_pk(agg_pk),
-                    None => CpuSdk::builder()
-                        .app_config(app_config)
-                        .agg_params(AggregationSystemParams::default()),
-                };
-                let builder = match halo2_root {
-                    Some((halo2_pk, root_pk)) => builder.root_pk(root_pk).halo2_pk(halo2_pk),
-                    None => builder,
-                };
-                builder
-                    .build()
-                    .map(AnySdk::Cpu)
-                    .map_err(|e| anyhow!("construct OpenVM CPU SDK for EVM proving: {e}"))
-            }
-            #[cfg(feature = "enable-openvm-cuda")]
-            ProverBackend::Cuda => {
-                let builder = match seeded {
-                    Some((app_pk, agg_pk)) => GpuSdk::builder().app_pk(app_pk).agg_pk(agg_pk),
-                    None => GpuSdk::builder()
-                        .app_config(app_config)
-                        .agg_params(AggregationSystemParams::default()),
-                };
-                let builder = match halo2_root {
-                    Some((halo2_pk, root_pk)) => builder.root_pk(root_pk).halo2_pk(halo2_pk),
-                    None => builder,
-                };
-                builder
-                    .build()
-                    .map(AnySdk::Gpu)
-                    .map_err(|e| anyhow!("construct OpenVM GPU SDK for EVM proving: {e}"))
-            }
-            #[cfg(not(feature = "enable-openvm-cuda"))]
-            ProverBackend::Cuda => no_cuda_err!(),
-        }
+    /// True once the worker has died [`MAX_CONSECUTIVE_WORKER_DEATHS`]
+    /// times in a row: respawns have stopped, and `supported_vms()`
+    /// omits OpenVM from the worker's capabilities at its next
+    /// registration.
+    pub fn worker_permanently_dead(&self) -> bool {
+        self.worker_deaths.load(Ordering::Relaxed) >= MAX_CONSECUTIVE_WORKER_DEATHS
     }
 }
 
-// Produces (and caches) the app proving key for a config, via a throwaway
-// default-aggregation SDK whose only job is the app keygen.
-fn ensure_app_pk(
-    backend: ProverBackend,
-    app_config: AppConfig<SdkVmConfig>,
-    config_key: &str,
-) -> Result<AppProvingKey<SdkVmConfig>> {
-    let cache = APP_PK_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(app_pk) = cache
-        .lock()
-        .expect("app pk cache poisoned")
-        .get(config_key)
-        .cloned()
-    {
-        return Ok(app_pk);
+fn to_proto_mode(mode: OpenVmProofMode) -> ProofMode {
+    match mode {
+        OpenVmProofMode::App => ProofMode::App,
+        OpenVmProofMode::Stark => ProofMode::Stark,
+        OpenVmProofMode::Evm => ProofMode::Evm,
     }
-    let sdk = AnySdk::new(backend, app_config, AggregationSystemParams::default())
-        .context("construct OpenVM SDK for app keygen")?;
-    let app_pk = sdk.app_keygen_pk();
-    cache
-        .lock()
-        .expect("app pk cache poisoned")
-        .insert(config_key.to_string(), app_pk.clone());
-    Ok(app_pk)
+}
+
+// The worker speaks the proto ProvePhase mirror (proto cannot link
+// network-lib); map it back to the wire enum for the proof store.
+fn from_proto_phase(phase: WireProvePhase) -> ProvePhase {
+    match phase {
+        WireProvePhase::Execute => ProvePhase::Execute,
+        WireProvePhase::Prove => ProvePhase::Prove,
+        WireProvePhase::Aggregate => ProvePhase::Aggregate,
+        WireProvePhase::Wrap => ProvePhase::Wrap,
+    }
 }
 
 pub(super) async fn execute(
     state: WorkerState,
     executor: OpenVmExecutor,
     proof_request: OpenVmProofRequest,
-    exit_sender: mpsc::Sender<String>,
+    // Retained for genuinely fatal, environment-level errors; per-proof
+    // failures report `Unexecutable` and keep the worker alive.
+    _exit_sender: mpsc::Sender<String>,
 ) {
     info!(
         "Received OpenVM proof request {} (mode {}, backend {:?})",
@@ -296,12 +136,15 @@ pub(super) async fn execute(
         .insert(proof_request.request_id, initial_status)
         .await;
 
-    // No cycle-accurate progress tracking is wired up for OpenVM (parity with
-    // RISC Zero). Push an initial non-zero Execution update so hierophant's
-    // progress watchdog knows work has started.
+    // Kick off with an Execute-phase tick so hierophant's progress
+    // watchdog sees work has started; the worker then streams real
+    // per-segment Prove ticks over the socket (see below).
     state
         .proof_store_client
-        .proof_progress_update(proof_request.request_id, ProgressUpdate::Execution(1))
+        .proof_progress_update(
+            proof_request.request_id,
+            ProgressUpdate::indeterminate(ProvePhase::Execute, 1),
+        )
         .await;
 
     let request_id = proof_request.request_id;
@@ -310,41 +153,73 @@ pub(super) async fn execute(
         proof_request.mode.as_str(),
         request_id
     );
-    let evm_enabled = executor.evm_enabled;
-    let backend = executor.backend;
+
+    // Bridge the worker's synchronous progress callback (fired on the
+    // blocking thread) to the async proof store. UnboundedSender::send is
+    // sync and non-blocking, so it is safe to call from the callback.
+    let (progress_tx, mut progress_rx) =
+        tokio::sync::mpsc::unbounded_channel::<ProgressUpdate>();
+    {
+        let store = state.proof_store_client.clone();
+        tokio::spawn(async move {
+            while let Some(update) = progress_rx.recv().await {
+                store.proof_progress_update(request_id, update).await;
+            }
+        });
+    }
 
     tokio::task::spawn(async move {
         let start_time = Instant::now();
 
-        // openvm-sdk's keygen + prover calls are CPU-blocking, so we run them
-        // on a blocking thread.
-        let elf = proof_request.elf;
-        let app_config_toml = proof_request.app_config_toml;
-        let input = proof_request.input;
-        let mode = proof_request.mode;
-        // NOTE: like the RISC Zero path, `mock` is accepted but not
-        // implemented for OpenVM; a real proof is produced regardless.
-
-        let proof_res: Result<Vec<u8>> = tokio::task::spawn_blocking(move || {
-            prove_blocking(
-                elf,
-                app_config_toml,
-                input,
-                mode,
-                evm_enabled,
-                backend,
-                request_id.to_string(),
-            )
+        // The worker call blocks for the whole proving run; keep it off
+        // the async runtime. NOTE: like the RISC Zero path, `mock` is
+        // accepted but not implemented for OpenVM; a real proof is
+        // produced regardless.
+        let req = WorkerRequest::Prove {
+            request_id: request_id.to_string(),
+            mode: to_proto_mode(proof_request.mode),
+            elf: proof_request.elf,
+            app_config_toml: proof_request.app_config_toml,
+            input: proof_request.input,
+            with_total: executor.compute_totals,
+        };
+        let client = executor.client.clone();
+        let call_res = tokio::task::spawn_blocking(move || {
+            client.call_blocking(&req, |phase, done, total| {
+                let _ = progress_tx.send(ProgressUpdate::Phase {
+                    phase: from_proto_phase(phase),
+                    done,
+                    total,
+                });
+            })
         })
         .await
-        .map_err(|e| anyhow!("OpenVM prover join error: {e}"))
-        .and_then(|inner| inner);
+        .map_err(|e| anyhow!("OpenVM worker join error: {e}"));
 
         let minutes = (start_time.elapsed().as_secs_f32() / 60.0).round() as u32;
+
+        // Split transport failures (worker health) from request failures
+        // (this proof's problem) before the shared reporting below.
+        let (proof_res, transport_death): (Result<Vec<u8>>, bool) = match call_res {
+            Ok(Ok(WorkerResponse::Proof(bytes))) => (Ok(bytes), false),
+            Ok(Ok(WorkerResponse::Err(msg))) => {
+                (Err(anyhow!("openvm-worker rejected the request: {msg}")), false)
+            }
+            Ok(Ok(_)) => (
+                Err(anyhow!("openvm-worker returned an unexpected response kind")),
+                false,
+            ),
+            Ok(Err(io_err)) => (
+                Err(anyhow!("openvm-worker transport failure: {io_err}")),
+                true,
+            ),
+            Err(join_err) => (Err(join_err), false),
+        };
 
         match proof_res {
             Ok(proof_bytes) => {
                 info!("Completed {display} in {minutes} minutes");
+                executor.worker_deaths.store(0, Ordering::Relaxed);
                 state
                     .proof_store_client
                     .proof_status_update(
@@ -357,13 +232,13 @@ pub(super) async fn execute(
             Err(e) => {
                 let error_msg = format!("Error proving {display} at minute {minutes}: {e}");
 
-                // Match the SP1 path: on prover error the contemplant exits so
-                // hierophant reassigns the proof to a fresh worker.
-                exit_sender
-                    .send(error_msg)
-                    .await
-                    .context("Send exit error message to main thread")
-                    .unwrap();
+                // Report the failure and stay alive. A request whose guest
+                // faults (a poisoned input, a program bug) is the request's
+                // problem, not the worker's: exiting here lets any bad
+                // request kill every contemplant in the fleet one by one.
+                // Reporting `Unexecutable` lets hierophant settle the proof
+                // per its policy while this worker returns to Idle.
+                warn!("{error_msg}");
 
                 state
                     .proof_store_client
@@ -373,309 +248,37 @@ pub(super) async fn execute(
                         None,
                     )
                     .await;
+
+                // A transport death is a WORKER-health failure, not a
+                // request fault. The client already killed the child, so
+                // the next request respawns it; count consecutive deaths
+                // and, past the cap, force re-registration so
+                // `supported_vms()` drops OpenVM while other VMs keep
+                // serving (exact mirror of the SP1 CUDA arrangement).
+                if transport_death {
+                    let responded = !executor.worker_permanently_dead();
+                    let deaths =
+                        executor.worker_deaths.fetch_add(1, Ordering::Relaxed) + 1;
+                    if deaths < MAX_CONSECUTIVE_WORKER_DEATHS {
+                        error!(
+                            "openvm-worker died (consecutive death {deaths} of \
+                             {MAX_CONSECUTIVE_WORKER_DEATHS}); it will be respawned on \
+                             the next request"
+                        );
+                    } else if responded {
+                        error!(
+                            "openvm-worker died {deaths} consecutive times; giving up \
+                             on respawns. Forcing re-registration to drop OpenVM from \
+                             this worker's capabilities; SP1/R0 capabilities are \
+                             unaffected."
+                        );
+                        state.reconnect.notify_one();
+                    }
+                } else {
+                    // The worker answered (with a failure): it is alive.
+                    executor.worker_deaths.store(0, Ordering::Relaxed);
+                }
             }
         }
     });
-}
-
-// Builds the AppConfig both proving and (hierophant-side) verification agree
-// on. Mirrors openvm v2's CLI exactly: a supplied `openvm.toml` deserializes
-// straight into AppConfig (system_params defaulting when the file only has
-// `[app_vm_config.*]` tables); no file means the default rv32im + io config.
-pub(crate) fn build_app_config(app_config_toml: Option<&str>) -> Result<AppConfig<SdkVmConfig>> {
-    match app_config_toml {
-        Some(toml) => {
-            toml::from_str(toml).map_err(|e| anyhow!("parse OpenVM app config TOML: {e}"))
-        }
-        None => Ok(AppConfig::riscv32(app_params_with_100_bits_security(
-            MAX_APP_LOG_STACKED_HEIGHT,
-        ))),
-    }
-}
-
-fn config_cache_key(app_config_toml: Option<&String>) -> String {
-    use sha2::{Digest, Sha256};
-    match app_config_toml {
-        Some(toml) => format!("{:x}", Sha256::digest(toml.as_bytes())),
-        None => "default-riscv32".to_string(),
-    }
-}
-
-// Wire encodings intentionally mirror `cargo openvm prove` file conventions so
-// clients can feed downloaded bytes straight into openvm tooling:
-//   app   -> bitcode bytes of ContinuationVmProof (the `.app.proof` format)
-//   stark -> VersionedVmStarkProof JSON (the `.stark.proof` format)
-//   evm   -> EvmProof JSON (the `.evm.proof` format)
-fn prove_blocking(
-    elf: Vec<u8>,
-    app_config_toml: Option<String>,
-    input: Vec<Vec<u8>>,
-    mode: OpenVmProofMode,
-    evm_enabled: bool,
-    backend: ProverBackend,
-    request_id: String,
-) -> Result<Vec<u8>> {
-    let app_config = build_app_config(app_config_toml.as_deref())?;
-    let config_key = config_cache_key(app_config_toml.as_ref());
-
-    let mut stdin = StdIn::default();
-    for stream in &input {
-        stdin.write_bytes(stream);
-    }
-
-    match mode {
-        OpenVmProofMode::App => {
-            // App keygen runs per request (cached only within this SDK
-            // value). It is the cheap keygen; parity with the SP1 executor
-            // calling `setup()` per request.
-            let sdk = AnySdk::new(backend, app_config, AggregationSystemParams::default())?;
-            sdk.prove_app(elf, format!("hierophant-{request_id}"), stdin)
-        }
-        OpenVmProofMode::Stark => {
-            warn_cpu_aggregation_is_gpu(backend);
-            let sdk = build_sdk_with_agg(backend, app_config, &config_key)?;
-            let proof_bytes = sdk.prove_stark(elf, stdin)?;
-            store_agg_pk(&sdk, &config_key);
-            Ok(proof_bytes)
-        }
-        OpenVmProofMode::Evm => {
-            if !evm_enabled {
-                return Err(anyhow!(
-                    "EVM proofs are not enabled on this contemplant. Set `evm_enabled = true` on the openvm [[provers]] entry (or CONTEMPLANT_OPENVM_EVM=true); requires the KZG params + halo2 key installed by `cargo openvm setup --evm` and a binary built with `--features enable-openvm-evm`."
-                ));
-            }
-            warn_cpu_aggregation_is_gpu(backend);
-            prove_evm(backend, app_config, &config_key, elf, stdin)
-        }
-    }
-}
-
-// Upstream openvm-sdk v2.0.1 pins its aggregation prover by crate feature
-// (AggProver in prover/agg.rs uses InnerGpuProver whenever `cuda` is on),
-// so stark/evm aggregation in a cuda-featured binary runs on the GPU even
-// for a cpu-backend worker; only the app stage honors the runtime choice.
-// Surface that loudly instead of silently burning GPU on a "cpu" worker.
-// True CPU aggregation requires a binary built without enable-openvm-cuda.
-#[cfg(feature = "enable-openvm-cuda")]
-fn warn_cpu_aggregation_is_gpu(backend: ProverBackend) {
-    if backend == ProverBackend::Cpu {
-        warn!(
-            "This contemplant is configured with an OpenVM cpu backend, but the binary was built with enable-openvm-cuda and upstream openvm-sdk selects its aggregation prover by crate feature: the aggregation stages of this stark/evm proof will run on the GPU. App proofs honor the cpu backend. For true CPU aggregation, deploy a binary built without enable-openvm-cuda."
-        );
-    }
-}
-
-#[cfg(not(feature = "enable-openvm-cuda"))]
-fn warn_cpu_aggregation_is_gpu(_backend: ProverBackend) {}
-
-// Constructs an SDK with aggregation state ready when it can be had cheaply
-// (cache or ~/.openvm artifact); otherwise the returned SDK lazily runs the
-// full aggregation keygen in-process (slow, tens of GB of RAM).
-fn build_sdk_with_agg(
-    backend: ProverBackend,
-    app_config: AppConfig<SdkVmConfig>,
-    config_key: &str,
-) -> Result<AnySdk> {
-    match ensure_agg_pk(backend, app_config.clone(), config_key)? {
-        Some(agg_pk) => {
-            let app_pk = ensure_app_pk(backend, app_config, config_key)?;
-            AnySdk::with_keys(backend, app_pk, agg_pk)
-        }
-        None => AnySdk::new(backend, app_config, AggregationSystemParams::default()),
-    }
-}
-
-// Produces the aggregation proving key without full keygen when possible:
-// per-config cache first, then assembly of an in-process prefix keygen (the
-// app-config-dependent half; also re-runs the cheap app keygen) with the
-// universal internal-recursive key `cargo openvm setup` writes. Returns None
-// when neither source is available; callers fall back to the SDK's lazy
-// full keygen.
-fn ensure_agg_pk(
-    backend: ProverBackend,
-    app_config: AppConfig<SdkVmConfig>,
-    config_key: &str,
-) -> Result<Option<AggProvingKey>> {
-    let cache = AGG_PK_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(agg_pk) = cache
-        .lock()
-        .expect("agg pk cache poisoned")
-        .get(config_key)
-        .cloned()
-    {
-        return Ok(Some(agg_pk));
-    }
-
-    let Some(internal_recursive) = try_load_internal_recursive_pk() else {
-        info!(
-            "No pre-generated OpenVM internal-recursive key at ~/.openvm/internal_recursive.pk; the SDK will run full aggregation keygen in-process (slow, RAM-heavy). Run `cargo openvm setup` to pre-generate it."
-        );
-        return Ok(None);
-    };
-
-    info!(
-        "Assembling OpenVM aggregation key: prefix keygen in-process + internal-recursive key from ~/.openvm/internal_recursive.pk"
-    );
-    let sdk = AnySdk::new(backend, app_config, AggregationSystemParams::default())
-        .context("construct OpenVM SDK for prefix keygen")?;
-    let agg_pk = sdk.assemble_agg_pk(internal_recursive);
-    cache
-        .lock()
-        .expect("agg pk cache poisoned")
-        .insert(config_key.to_string(), agg_pk.clone());
-    Ok(Some(agg_pk))
-}
-
-// Snapshots the (possibly lazily generated) aggregation key of a used SDK
-// into the cache so later proofs skip keygen. Cheap: the key is Arc-backed.
-fn store_agg_pk(sdk: &AnySdk, config_key: &str) {
-    let cache = AGG_PK_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut cache = cache.lock().expect("agg pk cache poisoned");
-    if !cache.contains_key(config_key) {
-        cache.insert(config_key.to_string(), sdk.agg_pk());
-    }
-}
-
-// The universal internal-recursive proving key that `cargo openvm setup`
-// writes; program- and app-config-independent. Missing or unreadable files
-// only downgrade to in-process keygen.
-fn try_load_internal_recursive_pk() -> Option<MultiStarkProvingKey> {
-    let home = std::env::var_os("HOME")?;
-    let path = std::path::Path::new(&home).join(".openvm/internal_recursive.pk");
-    if !path.exists() {
-        return None;
-    }
-    match openvm_sdk::fs::read_object_from_file::<MultiStarkProvingKey, _>(&path) {
-        Ok(pk) => {
-            info!(
-                "Loaded OpenVM internal-recursive proving key from {}",
-                path.display()
-            );
-            Some(pk)
-        }
-        Err(e) => {
-            warn!(
-                "Failed to read OpenVM internal-recursive proving key at {}: {e}. Falling back to in-process keygen.",
-                path.display()
-            );
-            None
-        }
-    }
-}
-
-type MultiStarkProvingKey =
-    openvm_stark_sdk::openvm_stark_backend::keygen::types::MultiStarkProvingKey<openvm_sdk::SC>;
-
-#[cfg(feature = "enable-openvm-evm")]
-fn prove_evm(
-    backend: ProverBackend,
-    app_config: AppConfig<SdkVmConfig>,
-    config_key: &str,
-    elf: Vec<u8>,
-    stdin: StdIn,
-) -> Result<Vec<u8>> {
-    // Seed whatever heavy keys the `cargo openvm setup --evm` artifacts can
-    // supply; anything missing falls back to in-process keygen (the halo2
-    // keygen alone needs ~70 GB of RAM). The SDK's builder rejects a
-    // halo2_pk without a matching root_pk (the root aggregation circuit key
-    // that bridges the STARK stack into the halo2 wrap), so the two are
-    // loaded and applied as a pair.
-    let agg_pk = ensure_agg_pk(backend, app_config.clone(), config_key)?;
-    let halo2_pk = try_load_halo2_pk();
-    let root_pk = try_load_root_pk();
-
-    // Seeding agg_pk demands an explicit app_pk per the builder's dependency
-    // chain; without a seedable agg key, app_config alone lets the SDK
-    // keygen the whole tower lazily.
-    let seeded = match agg_pk {
-        Some(agg_pk) => Some((
-            ensure_app_pk(backend, app_config.clone(), config_key)?,
-            agg_pk,
-        )),
-        None => None,
-    };
-    let halo2_root = match (halo2_pk, root_pk) {
-        (Some(halo2_pk), Some(root_pk)) => Some((halo2_pk, root_pk)),
-        (Some(_), None) => {
-            warn!(
-                "~/.openvm/halo2.pk is present but ~/.openvm/root.pk is missing; the SDK rejects halo2_pk without root_pk, so BOTH will be keygen'd in-process (very slow, ~70 GB of RAM). Provision root.pk alongside halo2.pk (it ships in the openvm-agg-keys bundle)."
-            );
-            None
-        }
-        (None, _) => {
-            info!(
-                "No pre-generated OpenVM halo2 key at ~/.openvm/halo2.pk; the SDK will run halo2 keygen in-process (very slow, ~70 GB of RAM). Run `cargo openvm setup --evm` to pre-generate it."
-            );
-            None
-        }
-    };
-    let sdk = AnySdk::for_evm(backend, seeded, app_config, halo2_root)?;
-
-    let proof_bytes = sdk.prove_evm_bytes(elf, stdin)?;
-    store_agg_pk(&sdk, config_key);
-    Ok(proof_bytes)
-}
-
-#[cfg(feature = "enable-openvm-evm")]
-fn try_load_halo2_pk() -> Option<openvm_sdk::keygen::Halo2ProvingKey> {
-    let home = std::env::var_os("HOME")?;
-    let path = std::path::Path::new(&home).join(".openvm/halo2.pk");
-    if !path.exists() {
-        return None;
-    }
-    match openvm_sdk::fs::read_halo2_pk_from_file(&path) {
-        Ok(pk) => {
-            info!("Loaded OpenVM halo2 proving key from {}", path.display());
-            Some(pk)
-        }
-        Err(e) => {
-            warn!(
-                "Failed to read OpenVM halo2 proving key at {}: {e}. Falling back to in-process keygen.",
-                path.display()
-            );
-            None
-        }
-    }
-}
-
-// The root aggregation proving key `cargo openvm setup --evm` writes;
-// app-config-independent, required by the SDK whenever halo2_pk is seeded.
-// Missing or unreadable files downgrade to in-process keygen via the
-// pair-matching in prove_evm.
-#[cfg(feature = "enable-openvm-evm")]
-fn try_load_root_pk() -> Option<openvm_sdk::keygen::RootProvingKey> {
-    let home = std::env::var_os("HOME")?;
-    let path = std::path::Path::new(&home).join(".openvm/root.pk");
-    if !path.exists() {
-        return None;
-    }
-    match openvm_sdk::fs::read_object_from_file::<openvm_sdk::keygen::RootProvingKey, _>(&path) {
-        Ok(pk) => {
-            info!("Loaded OpenVM root proving key from {}", path.display());
-            Some(pk)
-        }
-        Err(e) => {
-            warn!(
-                "Failed to read OpenVM root proving key at {}: {e}. Falling back to in-process keygen.",
-                path.display()
-            );
-            None
-        }
-    }
-}
-
-#[cfg(not(feature = "enable-openvm-evm"))]
-fn prove_evm(
-    _backend: ProverBackend,
-    _app_config: AppConfig<SdkVmConfig>,
-    _config_key: &str,
-    _elf: Vec<u8>,
-    _stdin: StdIn,
-) -> Result<Vec<u8>> {
-    // Config validation rejects evm_enabled=true on featureless builds, so
-    // reaching this arm means hierophant routed an EVM request to a worker
-    // that never advertised the capability.
-    Err(anyhow!(
-        "This contemplant binary was built without `--features enable-openvm-evm` and cannot produce OpenVM EVM proofs."
-    ))
 }

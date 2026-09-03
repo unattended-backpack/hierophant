@@ -33,6 +33,9 @@ pub fn create_router(state: Arc<HierophantState>) -> Router {
         .route("/contemplants", get(contemplants))
         // Get all dead contemplants
         .route("/dead-contemplants", get(dead_contemplants))
+        // Pending-queue depth + oldest entry age (requests waiting for
+        // an idle capable worker)
+        .route("/pending", get(pending))
         // get a history of all completed proofs and the contemplant who finished it
         .route("/proof-history", get(handle_proof_history))
         // Health check.  Returns true indicating that http has started
@@ -102,6 +105,26 @@ async fn contemplants(
         Err(e) => {
             let error_msg = format!("Error sending workers command: {e}");
             error!("{error_msg}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+async fn pending(
+    State(state): State<Arc<HierophantState>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match state
+        .proof_router
+        .worker_registry_client
+        .pending_info()
+        .await
+    {
+        Ok((depth, oldest_secs)) => Ok(Json(serde_json::json!({
+            "pending": depth,
+            "oldest_secs": oldest_secs,
+        }))),
+        Err(e) => {
+            error!("Error sending pending-info command: {e}");
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }

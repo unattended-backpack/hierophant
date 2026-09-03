@@ -55,3 +55,10 @@ this_hierophant_ip = "hierophant"
 # OPTIONAL: Maximum minutes for execution report phase (default: 45).
 # Time allowed for execution report before proof generation starts.
 # worker_registry.worker_max_execution_report_mins = 45
+
+# How long after assignment a worker's "unknown request" status answer
+# is bridged as still-starting rather than relayed as a terminal loss.
+# Covers the request payload's transfer to the worker plus executor
+# spin-up (wrap requests ship whole succinct receipts and warm the
+# Groth16 shim before answering polls; observed race window 5-25s+).
+# worker_registry.assignment_startup_grace_secs = 90

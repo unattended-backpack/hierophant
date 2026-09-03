@@ -44,6 +44,7 @@ impl WorkerRegistryClient {
             awaiting_proof_status_responses,
             proof_history,
             reqwest_client,
+            pending_requests: std::collections::VecDeque::new(),
         };
 
         tokio::task::spawn(async move { worker_registry.background_event_loop().await });
@@ -110,6 +111,7 @@ impl WorkerRegistryClient {
                 groth16_enabled: worker_register_info.groth16_enabled,
                 openvm_evm_enabled: worker_register_info.openvm_evm_enabled,
                 magister_drop_endpoint: worker_register_info.magister_drop_endpoint,
+                instance_nonce: worker_register_info.instance_nonce,
                 from_hierophant_sender,
             })
             .await
@@ -194,13 +196,13 @@ impl WorkerRegistryClient {
                     request_id
                 );
 
-                // add strike to the worker working on this request
-                self.sender
-                    .send(WorkerRegistryCommand::StrikeWorkerOfRequest { request_id })
-                    .await
-                    .map_err(|e| {
-                        anyhow::anyhow!("Failed to send command StrikeWorkerOfRequest: {}", e)
-                    })?;
+                // Deliberately NO strike here. A worker deep in GPU proving
+                // (rayon + CUDA saturated) can lag a status response past
+                // this timeout while being perfectly healthy; with
+                // max_worker_strikes=3, striking per slow poll destroyed
+                // instances mid-proof. Genuine death is already policed by
+                // the heartbeat window and the proof-timeout/progress
+                // checks in `WorkerState::should_drop`.
 
                 // If we returned a ProofStatus::lost here it would prompt the client
                 // to re-request the proof.  We want the client to instead re-request
@@ -251,6 +253,16 @@ impl WorkerRegistryClient {
         let (resp_sender, receiver) = oneshot::channel();
         self.sender
             .send(WorkerRegistryCommand::Workers { resp_sender })
+            .await?;
+
+        receiver.await.map_err(|e| anyhow!(e))
+    }
+
+    /// Pending-queue observability: (depth, oldest entry's age in secs).
+    pub async fn pending_info(&self) -> Result<(usize, Option<u64>)> {
+        let (resp_sender, receiver) = oneshot::channel();
+        self.sender
+            .send(WorkerRegistryCommand::PendingInfo { resp_sender })
             .await?;
 
         receiver.await.map_err(|e| anyhow!(e))

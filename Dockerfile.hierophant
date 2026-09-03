@@ -53,7 +53,9 @@ ARG OPENVM_AGG_KEYS_VERSION=
 WORKDIR /tmp
 COPY container/vendor.sh /tmp/vendor.sh
 COPY provers/ /tmp/provers/
-RUN /tmp/vendor.sh "groth16.tar.gz" "provers/sp1/${SP1_CIRCUITS_VERSION}" "sp1/${SP1_CIRCUITS_VERSION}/" && \
+RUN --mount=type=cache,id=hierophant-vendor-${BUILD_CACHE_ID},target=/vendor-cache,sharing=locked,uid=10001,gid=10001 \
+  export VENDOR_CACHE_DIR=/vendor-cache && \
+  /tmp/vendor.sh "groth16.tar.gz" "provers/sp1/${SP1_CIRCUITS_VERSION}" "sp1/${SP1_CIRCUITS_VERSION}/" && \
   /tmp/vendor.sh "plonk.tar.gz" "provers/sp1/${SP1_CIRCUITS_VERSION}" "sp1/${SP1_CIRCUITS_VERSION}/"
 RUN mkdir -p /home/petros/.sp1/circuits/groth16/${SP1_CIRCUITS_VERSION} && \
   mkdir -p /home/petros/.sp1/circuits/plonk/${SP1_CIRCUITS_VERSION} && \
@@ -66,7 +68,9 @@ RUN mkdir -p /home/petros/.sp1/circuits/groth16/${SP1_CIRCUITS_VERSION} && \
 # pointing cargo at them. Mirror of the Dockerfile.contemplant arrangement;
 # see the comment there for why git-fetch-with-cli lives in the cargo config
 # FILE rather than the env var.
-RUN /tmp/vendor.sh "openvm-git-mirror.tar.gz" \
+RUN --mount=type=cache,id=hierophant-vendor-${BUILD_CACHE_ID},target=/vendor-cache,sharing=locked,uid=10001,gid=10001 \
+  export VENDOR_CACHE_DIR=/vendor-cache && \
+  /tmp/vendor.sh "openvm-git-mirror.tar.gz" \
     "provers/openvm/git/${OPENVM_GIT_VERSION}" \
     "openvm/git/${OPENVM_GIT_VERSION}/" && \
   /tmp/vendor.sh "stark-backend-git-mirror.tar.gz" \
@@ -86,10 +90,12 @@ RUN /tmp/vendor.sh "openvm-git-mirror.tar.gz" \
     >> "${CARGO_HOME:-$HOME/.cargo}/config.toml"
 
 # Stage the vendored OpenVM aggregation keys when a version is pinned.
-RUN if [ -n "${OPENVM_AGG_KEYS_VERSION}" ]; then \
+RUN --mount=type=cache,id=hierophant-vendor-${BUILD_CACHE_ID},target=/vendor-cache,sharing=locked,uid=10001,gid=10001 \
+  export VENDOR_CACHE_DIR=/vendor-cache && \
+  if [ -n "${OPENVM_AGG_KEYS_VERSION}" ]; then \
     /tmp/vendor.sh "openvm-agg-keys.tar.gz" \
-      "provers/openvm/${OPENVM_AGG_KEYS_VERSION}" \
-      "openvm/${OPENVM_AGG_KEYS_VERSION}/" && \
+      "provers/openvm/halo2/${OPENVM_AGG_KEYS_VERSION}" \
+      "openvm/halo2/${OPENVM_AGG_KEYS_VERSION}/" && \
     mkdir -p /home/petros/.openvm && \
     cp -r /tmp/extracted-openvm-agg-keys/* /home/petros/.openvm/; \
   else \
@@ -120,6 +126,11 @@ COPY src/hierophant/ src/hierophant/
 COPY src/contemplant/ src/contemplant/
 COPY src/network-lib/ src/network-lib/
 COPY src/fibonacci/ src/fibonacci/
+COPY src/openvm-worker-proto/ src/openvm-worker-proto/
+# The openvm-worker is its own excluded workspace (the openvm-sdk
+# quarantine; see the root Cargo.toml note); the hierophant spawns it
+# for stark-mode proof verification.
+COPY src/openvm-worker/ src/openvm-worker/
 
 # Conditionally build from source or use a pre-built binary. Cache mounts
 # per the contemplant Dockerfile's build step; ids intentionally identical.
@@ -127,14 +138,21 @@ COPY out/ /build/out/
 RUN --mount=type=cache,id=hierophant-cargo-registry-${BUILD_CACHE_ID},target=/home/petros/.cargo/registry,uid=10001,gid=10001 \
   --mount=type=cache,id=hierophant-cargo-git-${BUILD_CACHE_ID},target=/home/petros/.cargo/git,uid=10001,gid=10001 \
   --mount=type=cache,id=hierophant-target-${BUILD_CACHE_ID},target=/build/target,uid=10001,gid=10001 \
+  --mount=type=cache,id=hierophant-openvm-worker-target-${BUILD_CACHE_ID},target=/build/worker-target,uid=10001,gid=10001 \
   if [ "$BUILD_TYPE" = "prebuilt" ]; then \
   echo "Using pre-built binary from ./out/hierophant"; \
   test -f /build/out/hierophant || (echo "ERROR: BUILD_TYPE=prebuilt but no binary found in ./out/hierophant" >&2 && exit 1); \
   cp /build/out/hierophant /build/hierophant-binary; \
+  test -f /build/out/openvm-worker || (echo "ERROR: BUILD_TYPE=prebuilt but no binary found in ./out/openvm-worker" >&2 && exit 1); \
+  cp /build/out/openvm-worker /build/openvm-worker-binary; \
 else \
   echo "Building from source ..."; \
   cargo build --release --bin hierophant --locked; \
   cp /build/target/release/hierophant /build/hierophant-binary; \
+  echo "Building openvm-worker (verification; CPU, no EVM proving) ..."; \
+  CARGO_TARGET_DIR=/build/worker-target cargo build --release \
+    --manifest-path src/openvm-worker/Cargo.toml --locked; \
+  cp /build/worker-target/release/openvm-worker /build/openvm-worker-binary; \
 fi
 
 # Stage the glibc + libgcc /nix/store closure for the SP1 core-executor
@@ -170,6 +188,10 @@ LABEL org.opencontainers.image.licenses="LicenseRef-VPL WITH AGPL-3.0-only"
 
 # Copy binaries from builder.
 COPY --from=builder /build/hierophant-binary /usr/local/bin/hierophant
+# The openvm-sdk quarantine subprocess; the hierophant spawns it for
+# stark-mode proof verification (see src/openvm-worker).
+COPY --from=builder /build/openvm-worker-binary /usr/local/bin/openvm-worker
+ENV OPENVM_WORKER_PATH=/usr/local/bin/openvm-worker
 
 # Nix loader closure for the embedded SP1 core-executor runner (see the
 # staging RUN at the end of the builder stage): lands at the exact
@@ -188,9 +210,11 @@ RUN apt-get update && \
   apt-get install -y --no-install-recommends \
     ca-certificates \
     patchelf && \
-  chmod +x /usr/local/bin/hierophant && \
+  chmod +x /usr/local/bin/hierophant /usr/local/bin/openvm-worker && \
   patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/hierophant && \
   patchelf --remove-rpath /usr/local/bin/hierophant && \
+  patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 /usr/local/bin/openvm-worker && \
+  patchelf --remove-rpath /usr/local/bin/openvm-worker && \
   apt-get remove -y patchelf && \
   apt-get autoremove -y && \
   rm -rf /var/lib/apt/lists/*

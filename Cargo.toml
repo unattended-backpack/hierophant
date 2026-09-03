@@ -4,8 +4,19 @@ members = [
   "src/contemplant",
   "src/network-lib",
   "src/fibonacci",
+  "src/openvm-worker-proto",
 ]
-exclude = ["src/sp1-fibonacci", "src/risc0-fibonacci", "src/openvm-fibonacci"]
+# openvm-worker is excluded ON PURPOSE: it is the quarantine workspace
+# that links openvm-sdk (upstream p3-air =0.4.3) so this workspace can
+# link sp1-sdk 6.5+ (slop's p3-air =0.4.3-succinct); the two exact pins
+# cannot share one lockfile. The hierophant and contemplant talk to it
+# through src/openvm-worker-proto over a unix socket.
+exclude = [
+  "src/sp1-fibonacci",
+  "src/risc0-fibonacci",
+  "src/openvm-fibonacci",
+  "src/openvm-worker",
+]
 resolver = "2"
 
 [workspace.package]
@@ -44,50 +55,35 @@ alloy-primitives = { version = "1.0.0", default-features = false, features = [
 	"serde",
 ] }
 clap = "4.5.41"
-# =6.2.1, deliberately NOT 6.2.2+: slop-air >=6.2.2 pins p3-air
-# =0.4.3-succinct, which cargo cannot unify with the upstream p3-air =0.4.3
-# that openvm v2.0.1 pins (same 0.4 compatibility bucket, different bytes).
-# slop 6.2.1 rides p3 ^0.3.3-succinct - a different 0.x minor - so the SP1
-# and OpenVM stacks coexist in one binary. Guests built with the v6.2.2
-# toolchain prove fine against a 6.2.x-family network (same
-# within-family skew as the prior 5.0.8-guest / 5.0.4-network pairing).
-# Revisit when openvm releases against plonky3 0.5+.
+# 6.6.0 across the whole workspace since the openvm-worker split
+# (2026-09-02). History: slop-air >=6.2.2 pins p3-air =0.4.3-succinct,
+# which cargo cannot unify with the upstream p3-air =0.4.3 that openvm
+# pins (v2.0.2 included; same 0.4 bucket, different bytes), so this
+# workspace was held at =6.2.1 (whose slop rode p3 ^0.3.3-succinct, a
+# different minor). The conflict is now resolved STRUCTURALLY: openvm-sdk
+# lives only in the excluded src/openvm-worker workspace (its own
+# lockfile), reached over a unix socket, so nothing here links the
+# upstream p3 pins and sp1 can track current releases. The program vkey
+# is fixed by the circuit version (v6.1.0), verified byte-identical
+# across 6.2.1/6.5.0 for the deployed guests.
 # sp1-sdk 6.x ships with `default = []`: the network client/proto stack and
 # the sp1-cuda client are opt-in features now, where 5.x always built them.
 # `network` names the proto modules hierophant's server mirrors and that
 # network-lib's shared types embed; `cuda` is the contemplant's GPU prover
 # (a pure-Rust client that drives a local `sp1-gpu-server` binary; no CUDA
 # toolchain is needed at build time).
-sp1-sdk = { version = "=6.2.1", features = ["network", "cuda"] }
+sp1-sdk = { version = "=6.6.0", features = ["network", "cuda"] }
 # Names the circuit-artifact directory helpers (groth16/plonk dirs) that
 # sp1-sdk 6.x stopped re-exporting from `sp1_sdk::install`. Same exact pin as
 # sp1-sdk's own dep so cargo unifies both into one package instance.
-sp1-prover = { version = "=6.2.1" }
+sp1-prover = { version = "=6.6.0" }
 # sp1-sdk 6.x clients zstd-compress artifact uploads (stdin, ELF) before the
 # presigned-URL PUT; hierophant decompresses on read. Same 0.13 req as the
 # sdk's own dep so the two unify.
 zstd = "0.13"
 risc0-zkvm = { version = "3.0", default-features = false, features = ["prove", "client"] }
-# OpenVM is not published on crates.io (only 0.0.0-reserved placeholders); it
-# is consumed as a git dependency pinned to a release tag, per upstream docs.
-# default-features drops `jemalloc`: openvm-stark-backend's jemalloc feature
-# registers a #[global_allocator], which we must not inherit into binaries
-# that also link the SP1 + RISC Zero stacks. `parallel` keeps rayon proving.
-openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.1", default-features = false, features = ["parallel"] }
-# Same tag as openvm-sdk; these name types openvm-sdk does not re-export:
-# SdkVmConfig (config parsing), CommitBytes (commit hex comparison), and
-# VmStarkProof (aggregated proof decoding).
-openvm-sdk-config = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.1", default-features = false }
-openvm-continuations = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.1", default-features = false }
-openvm-verify-stark-host = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.1", default-features = false }
-# Lives in the separate stark-backend repo; MUST stay on the exact tag the
-# openvm workspace pins (see openvm's root Cargo.toml for the release) so
-# cargo unifies it with openvm-sdk's copy into one package instance; OpenVM
-# v2.0.1 still pins stark-backend v2.0.0, so this tag intentionally lags the
-# openvm.git tags above. Names the system-params helpers and the
-# proving/verifying key types that openvm-sdk uses but does not re-export.
-openvm-stark-sdk = { version = "2.0.0", git = "https://github.com/openvm-org/stark-backend.git", tag = "v2.0.0", default-features = false }
-# App-proof wire format: openvm v2 persists app proofs as bitcode (its
-# `.app.proof` files); pinned to the exact version openvm's workspace pins so
-# the encodings stay byte-identical.
-bitcode = { version = "0.6.5", default-features = false, features = ["serde"] }
+# The openvm-sdk stack (and bitcode, its app-proof wire format) lives
+# ONLY in the excluded src/openvm-worker workspace since the 6.5 split;
+# see the exclude note at the top of this file. Nothing in this
+# workspace may link openvm-sdk: that reintroduces the upstream p3-air
+# exact pin and breaks the sp1 6.5 resolution.

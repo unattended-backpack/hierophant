@@ -9,8 +9,9 @@ use network_lib::{
     ContemplantProofRequest, ContemplantProofStatus, ProgressUpdate, VmKind,
     messages::FromHierophantMessage,
 };
-use std::collections::HashMap;
-use std::time::SystemTime;
+use sp1_sdk::network::proto::base::types::ExecutionStatus;
+use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, SystemTime};
 use tokio::{
     sync::{mpsc, oneshot},
     time::Instant,
@@ -30,7 +31,27 @@ pub(super) struct WorkerRegistry {
     // history of compelted proofs and information about the contemplant who completed it
     pub proof_history: Vec<CompletedProofInfo>,
     pub reqwest_client: reqwest::Client,
+    // Requests that arrived while no idle capable worker existed, oldest
+    // first, each stamped with its arrival time. Drained whenever
+    // capacity appears (worker registers, completes, or fails a proof).
+    // Without this queue such requests were silently dropped and the
+    // client's first status poll turned them into terminal failures.
+    pub pending_requests: VecDeque<(ContemplantProofRequest, Instant)>,
 }
+
+/// Most requests a full fleet outage is allowed to buffer before new
+/// arrivals are rejected (the client then sees the old lost-request
+/// behavior). Sized far above any sane proposer fan-out; the point is
+/// bounding memory, since a queued `wrap_of` request can carry a
+/// multi-MB receipt.
+const PENDING_QUEUE_CAP: usize = 64;
+
+/// How long a request may wait in the pending queue before it is
+/// dropped. Clients enforce their own (shorter) proof deadlines; this
+/// is just the backstop that keeps abandoned requests from pinning
+/// their payloads forever.
+const PENDING_TTL: Duration = Duration::from_secs(2 * 60 * 60);
+
 
 impl WorkerRegistry {
     pub(super) async fn background_event_loop(mut self) {
@@ -52,6 +73,7 @@ impl WorkerRegistry {
                     groth16_enabled,
                     openvm_evm_enabled,
                     magister_drop_endpoint,
+                    instance_nonce,
                     from_hierophant_sender,
                 } => {
                     self.handle_worker_ready(
@@ -61,6 +83,7 @@ impl WorkerRegistry {
                         groth16_enabled,
                         openvm_evm_enabled,
                         magister_drop_endpoint,
+                        instance_nonce,
                         from_hierophant_sender,
                     )
                     .await;
@@ -88,6 +111,13 @@ impl WorkerRegistry {
                 } => {
                     self.handle_proof_status_request(target_request_id, resp_sender)
                         .await;
+                }
+                WorkerRegistryCommand::PendingInfo { resp_sender } => {
+                    let oldest_secs = self
+                        .pending_requests
+                        .front()
+                        .map(|(_, queued_at)| queued_at.elapsed().as_secs());
+                    let _ = resp_sender.send((self.pending_requests.len(), oldest_secs));
                 }
                 WorkerRegistryCommand::Workers { resp_sender } => {
                     self.handle_workers(resp_sender);
@@ -185,13 +215,51 @@ impl WorkerRegistry {
     }
 
     async fn handle_assign_proof(&mut self, proof_request: &ContemplantProofRequest) {
+        // remove any dead workers
+        self.trim_workers();
+
+        if self.try_assign(proof_request).await {
+            return;
+        }
+
+        // No idle capable worker right now: queue the request so the
+        // next capacity event (worker registers, completes, or fails a
+        // proof) picks it up, instead of dropping it — a dropped
+        // request turns into a terminal failure on the client's first
+        // status poll.
+        let request_id = proof_request.request_id();
+        if self
+            .pending_requests
+            .iter()
+            .any(|(r, _)| r.request_id() == request_id)
+        {
+            return;
+        }
+        if self.pending_requests.len() >= PENDING_QUEUE_CAP {
+            warn!(
+                "Pending queue full ({PENDING_QUEUE_CAP}); dropping proof request {request_id}"
+            );
+            return;
+        }
+        info!(
+            "No idle capable worker for {} {} proof {request_id}; queued (pending: {})",
+            proof_request.vm(),
+            proof_request.mode_name(),
+            self.pending_requests.len() + 1
+        );
+        self.pending_requests
+            .push_back((proof_request.clone(), Instant::now()));
+    }
+
+    /// One assignment attempt. Returns true when the request found a
+    /// home (or a worker is already busy with it); false leaves the
+    /// caller to queue or drop it.
+    async fn try_assign(&mut self, proof_request: &ContemplantProofRequest) -> bool {
         let request_id = proof_request.request_id();
         let target_vm = proof_request.vm();
         let mode_name = proof_request.mode_name();
         let needs_groth16 = proof_request.needs_groth16();
         let needs_openvm_evm = proof_request.needs_openvm_evm();
-        // remove any dead workers
-        self.trim_workers();
 
         // iterate over all workers, filtered to those that can serve this
         // specific request (right VM + Groth16 capability when needed).
@@ -212,7 +280,7 @@ impl WorkerRegistry {
                     info!(
                         "Received proof request for {target_vm} {mode_name} proof {request_id} but worker {worker_addr} is already busy with it"
                     );
-                    return;
+                    return true;
                 } else {
                     continue;
                 }
@@ -242,17 +310,12 @@ impl WorkerRegistry {
                         worker_state.name
                     );
                     worker_state.assigned_proof(request_id, target_vm, mode_name.clone());
-                    return;
+                    return true;
                 }
             }
         }
-        // We iterated through all the workers and couldn't find an idle one who could
-        // receive the request.
-        //
-        // This doesn't result in deadlock because the proposer will call `/status/request_id`
-        // which will trigger another AssignProof request here
-        // TODO: don't drive on proof status requests
-
+        // We iterated through all the workers and couldn't find an idle
+        // one who could receive the request.
         let requirement = if needs_groth16 {
             format!("{target_vm}-capable Groth16-enabled")
         } else if needs_openvm_evm {
@@ -260,7 +323,39 @@ impl WorkerRegistry {
         } else {
             format!("{target_vm}-capable")
         };
-        warn!("No {requirement} idle workers available for proof {request_id}");
+        debug!("No {requirement} idle workers available for proof {request_id}");
+        false
+    }
+
+    /// Try to place queued requests onto whatever capacity just
+    /// appeared. Entries older than [`PENDING_TTL`] are dropped first;
+    /// entries that still find no worker keep their queue position.
+    async fn drain_pending(&mut self) {
+        self.pending_requests.retain(|(request, queued_at)| {
+            let stale = queued_at.elapsed() > PENDING_TTL;
+            if stale {
+                warn!(
+                    "Dropping pending proof {} after {}s in queue",
+                    request.request_id(),
+                    queued_at.elapsed().as_secs()
+                );
+            }
+            !stale
+        });
+
+        let mut still_pending = VecDeque::new();
+        while let Some((request, queued_at)) = self.pending_requests.pop_front() {
+            if self.try_assign(&request).await {
+                info!(
+                    "Assigned queued proof {} after {}s in queue",
+                    request.request_id(),
+                    queued_at.elapsed().as_secs()
+                );
+            } else {
+                still_pending.push_back((request, queued_at));
+            }
+        }
+        self.pending_requests = still_pending;
     }
 
     async fn handle_worker_ready(
@@ -271,16 +366,62 @@ impl WorkerRegistry {
         groth16_enabled: bool,
         openvm_evm_enabled: bool,
         magister_drop_endpoint: Option<String>,
+        instance_nonce: u64,
         from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
     ) {
-        let default_state = WorkerState::new(
+        // A reconnecting contemplant arrives under a fresh peer addr, so
+        // its previous registration lingers under the old key. Locate it
+        // by instance identity — the magister drop endpoint is unique per
+        // instance; the name is the fallback for magister-less workers —
+        // and remove it SILENTLY, never through the eviction path: the
+        // eviction's magister drop call would destroy the live instance
+        // that just re-registered.
+        let stale_key = self
+            .workers
+            .iter()
+            .find(|(addr, ws)| {
+                **addr != worker_addr
+                    && match (&magister_drop_endpoint, &ws.magister_drop_endpoint) {
+                        (Some(new_ep), Some(old_ep)) => new_ep == old_ep,
+                        _ => ws.name == worker_name,
+                    }
+            })
+            .map(|(key, _)| key.clone());
+
+        let mut carried_status: Option<WorkerStatus> = None;
+        if let Some(key) = stale_key {
+            if let Some(old_state) = self.workers.remove(&key) {
+                if old_state.instance_nonce == instance_nonce && old_state.is_busy() {
+                    // Same process, new socket: a ws blip mid-proof. Carry
+                    // the assignment over so the still-running proof keeps
+                    // answering status polls and completes normally.
+                    info!(
+                        "Contemplant {worker_name} reconnected ({key} -> {worker_addr}); \
+                         carrying its in-flight assignment over ({})",
+                        old_state.status
+                    );
+                    carried_status = Some(old_state.status);
+                } else {
+                    info!(
+                        "Removed stale registry entry for {worker_name} at {key} \
+                         (superseded by registration from {worker_addr})"
+                    );
+                }
+            }
+        }
+
+        let mut default_state = WorkerState::new(
             worker_name.clone(),
             supported_vms,
             groth16_enabled,
             openvm_evm_enabled,
             magister_drop_endpoint,
+            instance_nonce,
             from_hierophant_sender,
         );
+        if let Some(status) = carried_status {
+            default_state.status = status;
+        }
         match self
             .workers
             .insert(worker_addr.clone(), default_state.clone())
@@ -301,6 +442,8 @@ impl WorkerRegistry {
                 info!("New contemplant {worker_name} at {worker_addr} added to registry");
             }
         }
+
+        self.drain_pending().await;
     }
 
     async fn handle_proof_progress_update(
@@ -376,6 +519,7 @@ impl WorkerRegistry {
                     self.proof_history.push(completed_proof_info);
                 }
             }
+            self.drain_pending().await;
         } else {
             warn!("Worker registry couldn't find worker who was assigned proof {request_id}");
         }
@@ -386,6 +530,11 @@ impl WorkerRegistry {
         request_id: B256,
         maybe_proof_status: Option<ContemplantProofStatus>,
     ) {
+        let maybe_proof_status = self.bridge_startup_race(request_id, maybe_proof_status);
+
+        self.free_worker_of_failed_proof(request_id, maybe_proof_status.as_ref())
+            .await;
+
         let tasks_awaiting = match self.awaiting_proof_status_responses.remove(&request_id) {
             Some(s) => s,
             None => {
@@ -399,6 +548,83 @@ impl WorkerRegistry {
                 // this contemplant responded.  The contemplant was already given
                 // a strike for this, so nothing to do here
             }
+        }
+    }
+
+    // A contemplant that answers "unknown request" (None) for a proof this
+    // registry JUST assigned to it is almost certainly still receiving the
+    // request: the worker is marked Busy at ws-send time, but a multi-MB
+    // witness takes seconds to cross the wire, and a status poll racing the
+    // transfer would otherwise be relayed as a loss — which the proof
+    // routes record as a STICKY terminal failure while the worker proves
+    // on, orphaned. Within the grace window, substitute "unexecuted"
+    // (fulfillment: Assigned) so clients keep polling; past it, relay the
+    // None as a genuine loss.
+    fn bridge_startup_race(
+        &self,
+        request_id: B256,
+        maybe_proof_status: Option<ContemplantProofStatus>,
+    ) -> Option<ContemplantProofStatus> {
+        if maybe_proof_status.is_some() {
+            return maybe_proof_status;
+        }
+        if let Some((worker_addr, worker_state)) =
+            self.workers.iter().find(|(_, worker_state)| {
+                matches!(
+                    worker_state.status,
+                    WorkerStatus::Busy { request_id: busy_request_id, .. }
+                        if busy_request_id == request_id
+                )
+            })
+        {
+            if let WorkerStatus::Busy { start_time, .. } = &worker_state.status {
+                if start_time.elapsed()
+                    < Duration::from_secs(self.config.assignment_startup_grace_secs)
+                {
+                    info!(
+                        "Worker {} at {worker_addr} does not know proof {request_id} yet \
+                         ({}s after assignment); bridging as still-starting",
+                        worker_state.name,
+                        start_time.elapsed().as_secs()
+                    );
+                    return Some(ContemplantProofStatus::unexecuted());
+                }
+            }
+        }
+        None
+    }
+
+    // The failure-path counterpart to `handle_proof_complete`: a contemplant
+    // reporting Unexecutable has abandoned the proof, so the worker must
+    // return to Idle or it stays Busy forever and the registry deems every
+    // subsequent request unfulfillable once all workers are wedged.
+    async fn free_worker_of_failed_proof(
+        &mut self,
+        request_id: B256,
+        maybe_proof_status: Option<&ContemplantProofStatus>,
+    ) {
+        let unexecutable = maybe_proof_status.is_some_and(|status| {
+            status.execution_status == i32::from(ExecutionStatus::Unexecutable)
+        });
+        if !unexecutable {
+            return;
+        }
+
+        if let Some((worker_addr, worker_state)) =
+            self.workers.iter_mut().find(|(_, worker_state)| {
+                matches!(
+                    worker_state.status,
+                    WorkerStatus::Busy { request_id: busy_request_id, .. }
+                        if busy_request_id == request_id
+                )
+            })
+        {
+            let worker_name = worker_state.name.clone();
+            worker_state.failed_proof();
+            warn!(
+                "Worker {worker_name} at {worker_addr} reported proof {request_id} as unexecutable and is now Idle."
+            );
+            self.drain_pending().await;
         }
     }
 
@@ -460,8 +686,24 @@ impl WorkerRegistry {
                 }) {
                 Some(worker_assigned) => worker_assigned,
                 None => {
-                    info!("No worker is assigned to proof {target_request_id}");
-                    let _ = resp_sender.send(None);
+                    // A queued request is alive, just not started — report
+                    // it as unexecuted rather than lost, or the client
+                    // terminal-fails a proof that is simply waiting for
+                    // capacity.
+                    if self
+                        .pending_requests
+                        .iter()
+                        .any(|(r, _)| r.request_id() == target_request_id)
+                    {
+                        info!(
+                            "Proof {target_request_id} is queued awaiting an idle worker"
+                        );
+                        let _ =
+                            resp_sender.send(Some(ContemplantProofStatus::unexecuted()));
+                    } else {
+                        info!("No worker is assigned to proof {target_request_id}");
+                        let _ = resp_sender.send(None);
+                    }
                     return;
                 }
             };
