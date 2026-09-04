@@ -231,6 +231,13 @@ build:
 	cp ./target/release/hierophant ./out/hierophant
 	cp ./target/release/contemplant ./out/contemplant
 	cp ./src/openvm-worker/target/release/openvm-worker ./out/openvm-worker
+	# Second, CUDA-free openvm-worker for the hierophant (verify only). The
+	# coordinator ships no CUDA, so its worker must not link libcudart/libcuda;
+	# built with NO features regardless of CONTEMPLANT_FEATURES (which carries
+	# the contemplant's GPU features). Consumed by Dockerfile.hierophant's
+	# prebuilt path as ./out/openvm-worker-cpu.
+	cargo build --release --manifest-path src/openvm-worker/Cargo.toml
+	cp ./src/openvm-worker/target/release/openvm-worker ./out/openvm-worker-cpu
 	@echo "Build complete."
 
 .PHONY: test

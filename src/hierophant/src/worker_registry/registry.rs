@@ -503,7 +503,7 @@ impl WorkerRegistry {
                     let minutes_to_complete = start_time.elapsed().as_secs_f32() / 60.0;
                     // clone state we need out before mutating worker_state
                     let worker_name = worker_state.name.clone();
-                    worker_state.completed_proof(minutes_to_complete);
+                    worker_state.completed_proof();
                     info!(
                         "Worker {worker_name} at {worker_addr} completed a {vm} {mode_name} proof in {minutes_to_complete} minutes and is now Idle."
                     );

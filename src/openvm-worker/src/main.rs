@@ -16,7 +16,7 @@ use anyhow::{Result, anyhow};
 use clap::Parser;
 use log::{error, info, warn};
 use openvm_worker_proto::{ProofMode, WorkerRequest, WorkerResponse, read_frame, write_frame};
-use progress::{SegmentCountLayer, WorkerEvent};
+use progress::WorkerEvent;
 use prove::ProverBackend;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -148,41 +148,31 @@ fn handle_request(
             with_total,
         } => {
             info!("prove request {request_id} (mode {})", mode.as_str());
-            // Run the CPU-blocking prove on its own thread with a tracing
-            // subscriber that counts per-segment spans; forward each tick
-            // and the final result over a channel to this thread, which
-            // writes Progress frames as they arrive and the terminal frame
-            // at the end. A dropped progress tick never affects proving.
+            // Run the CPU-blocking prove on its own thread; it reports the
+            // segment count once (Size) then the terminal result over a
+            // channel to this thread, which writes the corresponding frames.
             let (tx, rx) = std::sync::mpsc::channel::<WorkerEvent>();
-            let total = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-            let total_prove = total.clone();
             let jh = std::thread::spawn(move || {
-                let tx_layer = tx.clone();
-                let subscriber = tracing_subscriber::registry()
-                    .with(SegmentCountLayer::new(tx_layer, total));
-                let result = tracing::subscriber::with_default(subscriber, || {
-                    prove::prove_blocking(
-                        elf,
-                        app_config_toml,
-                        input,
-                        mode,
-                        evm_enabled,
-                        backend,
-                        request_id,
-                        with_total,
-                        total_prove,
-                    )
-                });
+                let tx_prove = tx.clone();
+                let result = prove::prove_blocking(
+                    elf,
+                    app_config_toml,
+                    input,
+                    mode,
+                    evm_enabled,
+                    backend,
+                    request_id,
+                    with_total,
+                    tx_prove,
+                );
                 let _ = tx.send(WorkerEvent::Done(result));
             });
 
             let mut write_res = Ok(());
             while let Ok(ev) = rx.recv() {
                 match ev {
-                    WorkerEvent::Progress { phase, done, total } => {
-                        if let Err(e) =
-                            write_frame(stream, &WorkerResponse::Progress { phase, done, total })
-                        {
+                    WorkerEvent::Size(segments) => {
+                        if let Err(e) = write_frame(stream, &WorkerResponse::Size { segments }) {
                             // Parent went away; stop streaming but let the
                             // prove thread finish and self-clean.
                             write_res = Err(e);

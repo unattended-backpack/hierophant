@@ -32,6 +32,10 @@ pub struct WorkerState {
     // updated capabilities immediately instead of waiting for a
     // natural blip.
     pub reconnect: Arc<tokio::sync::Notify>,
+    // Per-(vm, mode) learned proving throughput, used to produce a live
+    // ETA (see rate_model). In-memory + per-process: this box self-
+    // calibrates as it works.
+    pub rate_model: Arc<Mutex<crate::rate_model::RateModel>>,
 }
 
 impl WorkerState {
@@ -55,13 +59,11 @@ impl WorkerState {
                     // with a locally spawned sp1-gpu-server that offers no
                     // watchable log endpoint, so tracking is unavailable on
                     // every backend until the new server grows an equivalent.
-                    let progress_tracking_available = false;
-                    info!("SP1 progress tracking disabled (unavailable on sp1-sdk 6.x)");
                     sp1_executor = Some(Sp1Executor {
                         active_prover: Arc::new(tokio::sync::RwLock::new(active)),
                         mock_prover: mock,
-                        progress_tracking_available,
                         cuda_deaths: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                        compute_totals,
                     });
                 }
                 VmChoice::Risc0 => {
@@ -114,6 +116,7 @@ impl WorkerState {
             ready,
             instance_nonce,
             reconnect: Arc::new(tokio::sync::Notify::new()),
+            rate_model: Arc::new(Mutex::new(crate::rate_model::RateModel::new())),
         }
     }
 

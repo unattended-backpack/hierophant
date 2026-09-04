@@ -334,75 +334,90 @@ impl Display for ContemplantProofStatus {
     }
 }
 
-// The phase of a proof a contemplant is currently in. Ordered by the order
-// they run in, so progress is monotonic across a phase transition even
-// though each phase's `done` counter restarts from zero. Every zkVM's
-// proving pipeline maps onto these four:
-//   Execute   - running the guest / counting shards|segments (cheap)
-//   Prove     - per-shard|per-segment STARK proving (the expensive core)
-//   Aggregate - recursion / compression of the STARK proof tree
-//   Wrap      - SNARK wrap (PLONK/Groth16/halo2) for on-chain verification
-#[derive(Copy, Debug, Eq, PartialEq, Serialize, Deserialize, Clone)]
-pub enum ProvePhase {
-    Execute,
-    Prove,
-    Aggregate,
-    Wrap,
-}
-
-impl ProvePhase {
-    // Monotonic rank used by the Ord impl below.
-    pub fn rank(&self) -> u8 {
-        match self {
-            ProvePhase::Execute => 0,
-            ProvePhase::Prove => 1,
-            ProvePhase::Aggregate => 2,
-            ProvePhase::Wrap => 3,
-        }
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ProvePhase::Execute => "execute",
-            ProvePhase::Prove => "prove",
-            ProvePhase::Aggregate => "aggregate",
-            ProvePhase::Wrap => "wrap",
-        }
-    }
-}
-
-// contemplant's progress on their current proof. VM-neutral: each executor
-// reports which phase it is in and how much of that phase is done. `total`
-// == 0 means indeterminate - a live per-unit tick with no reachable total
-// (SP1's opaque gpu-server, or any coarse phase); `done` still advances, so
-// it remains a real liveness signal even without a percentage.
+// Contemplant's progress on its current proof, in the cycle-rate ETA model
+// (see the progress-tracking redesign). VM-neutral and free of any
+// per-prover phase introspection: the only universally-observable boundary
+// is Execute -> Prove, which is exactly when the cycle count becomes known
+// and an estimate can turn on, so it is folded into the estimate state
+// itself rather than tracked as a separate (and, for SP1, unobservable)
+// phase.
+//
+//   Estimating - no ETA yet: still executing (cycle count unknown), or
+//                executed but this contemplant has no prior samples for this
+//                (vm, mode). `reason` distinguishes the two.
+//   Proving    - cycle count known AND a learned rate exists: a live ETA.
+//                The observer derives percent from wall-clock elapsed
+//                (WorkerStatus::Busy.start_time) vs `estimate_secs`, clamps
+//                at 100%, and reads any over-run as "running long".
+//   Done       - finished.
 #[derive(Copy, Debug, Eq, PartialEq, Serialize, Deserialize, Clone)]
 pub enum ProgressUpdate {
-    Phase { phase: ProvePhase, done: u64, total: u64 },
-    Done, // Finished
+    Estimating(EstimateReason),
+    Proving { cycles: u64, estimate_secs: u64 },
+    Done,
+}
+
+// Why no ETA is available, for an observer that wants to tell a still-warming
+// proof apart from an un-learned (vm, mode) on this contemplant.
+#[derive(Copy, Debug, Eq, PartialEq, Serialize, Deserialize, Clone)]
+pub enum EstimateReason {
+    // Still running the guest; the cycle count is not known yet.
+    Executing,
+    // Executed, but this contemplant has proven no prior proof of this
+    // (vm, mode) and so cannot estimate this one. It can next time.
+    NoHistory,
+}
+
+impl EstimateReason {
+    fn rank(&self) -> u8 {
+        match self {
+            EstimateReason::Executing => 0,
+            EstimateReason::NoHistory => 1,
+        }
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EstimateReason::Executing => "executing",
+            EstimateReason::NoHistory => "no history for this proof kind yet",
+        }
+    }
 }
 
 impl ProgressUpdate {
     // Convenience constructors for the executors.
-    pub fn phase(phase: ProvePhase, done: u64, total: u64) -> Self {
-        ProgressUpdate::Phase { phase, done, total }
+    pub fn executing() -> Self {
+        ProgressUpdate::Estimating(EstimateReason::Executing)
     }
-    pub fn indeterminate(phase: ProvePhase, done: u64) -> Self {
-        ProgressUpdate::Phase { phase, done, total: 0 }
+    pub fn no_history() -> Self {
+        ProgressUpdate::Estimating(EstimateReason::NoHistory)
+    }
+    pub fn proving(cycles: u64, estimate_secs: u64) -> Self {
+        ProgressUpdate::Proving {
+            cycles,
+            estimate_secs,
+        }
+    }
+
+    // Monotonic rank used by the Ord impl: Estimating(0..=1) < Proving(2) < Done(3).
+    fn rank(&self) -> u32 {
+        match self {
+            ProgressUpdate::Estimating(r) => r.rank() as u32,
+            ProgressUpdate::Proving { .. } => 2,
+            ProgressUpdate::Done => 3,
+        }
     }
 }
 
 impl Display for ProgressUpdate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ProgressUpdate::Phase { phase, done, total } => {
-                if *total > 0 {
-                    let pct = (*done).saturating_mul(100) / (*total);
-                    write!(f, "{}: {done}/{total} ({pct}%)", phase.as_str())
-                } else {
-                    write!(f, "{}: {done}", phase.as_str())
-                }
+            ProgressUpdate::Estimating(reason) => {
+                write!(f, "estimating ({})", reason.as_str())
             }
+            ProgressUpdate::Proving {
+                cycles,
+                estimate_secs,
+            } => write!(f, "proving {cycles} cycles, ~{estimate_secs}s est"),
             ProgressUpdate::Done => write!(f, "done"),
         }
     }
@@ -410,11 +425,7 @@ impl Display for ProgressUpdate {
 
 impl Default for ProgressUpdate {
     fn default() -> Self {
-        ProgressUpdate::Phase {
-            phase: ProvePhase::Execute,
-            done: 0,
-            total: 0,
-        }
+        ProgressUpdate::Estimating(EstimateReason::Executing)
     }
 }
 
@@ -424,22 +435,13 @@ impl PartialOrd for ProgressUpdate {
     }
 }
 
-// Progress order: Done is greatest; otherwise by (phase rank, work done).
-// Phase rank dominates so a phase transition always counts as progress even
-// though `done` resets, and within a phase a rising `done` (shard/segment
-// count or percent) counts as progress. `total` is display-only and is
-// intentionally NOT part of the ordering.
+// Monotonic order so `progress_update` never regresses a contemplant's
+// reported state: Estimating < Proving < Done. `cycles`/`estimate_secs` are
+// display-only and intentionally NOT part of the ordering (only one Proving
+// is normally emitted per proof).
 impl Ord for ProgressUpdate {
     fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (ProgressUpdate::Done, ProgressUpdate::Done) => Ordering::Equal,
-            (ProgressUpdate::Done, _) => Ordering::Greater,
-            (_, ProgressUpdate::Done) => Ordering::Less,
-            (
-                ProgressUpdate::Phase { phase: pa, done: da, .. },
-                ProgressUpdate::Phase { phase: pb, done: db, .. },
-            ) => pa.rank().cmp(&pb.rank()).then_with(|| da.cmp(db)),
-        }
+        self.rank().cmp(&other.rank())
     }
 }
 

@@ -42,16 +42,6 @@ pub enum ProofMode {
     Evm,
 }
 
-/// Mirrors network-lib's ProvePhase (proto cannot depend on network-lib,
-/// which links sp1-sdk). The caller maps this back onto the wire enum.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
-pub enum ProvePhase {
-    Execute,
-    Prove,
-    Aggregate,
-    Wrap,
-}
-
 impl ProofMode {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -73,9 +63,9 @@ pub enum WorkerRequest {
         elf: Vec<u8>,
         app_config_toml: Option<String>,
         input: Vec<Vec<u8>>,
-        // When true, run execute_metered before proving to learn the exact
-        // segment total, so Progress frames carry a percentage. Cheap
-        // relative to proving.
+        // When true, run execute_metered before proving and report the
+        // resulting segment count once (a `Size` frame) so the contemplant
+        // can feed it to its cycle-rate ETA model. Cheap relative to proving.
         with_total: bool,
     },
     /// Verify a proof against the uploaded ELF + app config; VerifyOk means
@@ -100,17 +90,16 @@ pub enum WorkerResponse {
     /// and mean the worker itself is unhealthy; a WorkerResponse::Err
     /// means the worker is alive and rejected THIS request.
     Err(String),
-    /// A non-terminal progress tick emitted during a Prove request. Zero
-    /// or more of these arrive on the connection before the terminal
-    /// Proof/Err frame. `total == 0` means indeterminate (live count, no
-    /// reachable total).
-    Progress { phase: ProvePhase, done: u64, total: u64 },
+    /// The size signal for a Prove request: OpenVM's segment count from a
+    /// metered execution pass, sent once (when `with_total`) before the
+    /// terminal Proof/Err frame, for the contemplant's cycle-rate ETA model.
+    Size { segments: u64 },
 }
 
 impl WorkerResponse {
-    /// A terminal frame ends the request; a Progress frame does not.
+    /// A terminal frame ends the request; a Size frame does not.
     pub fn is_terminal(&self) -> bool {
-        !matches!(self, WorkerResponse::Progress { .. })
+        !matches!(self, WorkerResponse::Size { .. })
     }
 }
 
@@ -147,17 +136,17 @@ pub fn read_frame<R: Read, T: DeserializeOwned>(r: &mut R) -> io::Result<T> {
 /// Err here is a TRANSPORT failure (worker dead, socket gone) as opposed to
 /// WorkerResponse::Err, which is the request's own failure. A verify/version
 /// request simply gets its one terminal frame with no Progress in between.
-pub fn call<F: FnMut(ProvePhase, u64, u64)>(
+pub fn call<F: FnMut(u64)>(
     socket: &Path,
     req: &WorkerRequest,
-    mut on_progress: F,
+    mut on_size: F,
 ) -> io::Result<WorkerResponse> {
     let mut stream = UnixStream::connect(socket)?;
     write_frame(&mut stream, req)?;
     loop {
         let frame: WorkerResponse = read_frame(&mut stream)?;
         match frame {
-            WorkerResponse::Progress { phase, done, total } => on_progress(phase, done, total),
+            WorkerResponse::Size { segments } => on_size(segments),
             terminal => return Ok(terminal),
         }
     }
@@ -236,17 +225,17 @@ impl WorkerClient {
     /// error carrying the exit status. Any transport failure after the
     /// request went out kills the child (next call respawns) and returns
     /// the error to the caller for its own death accounting.
-    pub fn call_blocking<F: FnMut(ProvePhase, u64, u64)>(
+    pub fn call_blocking<F: FnMut(u64)>(
         &self,
         req: &WorkerRequest,
-        mut on_progress: F,
+        mut on_size: F,
     ) -> io::Result<WorkerResponse> {
         self.ensure_running()?;
         let deadline = Instant::now() + STARTUP_GRACE;
         loop {
             // Retries only happen on connect failure, before any proving
             // begins, so re-sending the request emits no duplicate progress.
-            match call(&self.socket, req, &mut on_progress) {
+            match call(&self.socket, req, &mut on_size) {
                 Ok(resp) => return Ok(resp),
                 Err(e)
                     if matches!(

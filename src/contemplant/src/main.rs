@@ -4,7 +4,7 @@ mod api;
 mod message_handler;
 mod proof_executor;
 mod proof_store;
-mod sp1_progress;
+mod rate_model;
 mod worker_state;
 
 use crate::config::Config;
@@ -30,12 +30,6 @@ async fn main() -> Result<()> {
     debug!("Using config {config_file}");
 
     let config = Config::load(&config_file).context("load configuration")?;
-
-    // Redirect our stderr through a tap BEFORE any prover (and thus the
-    // sp1-gpu-server child, which inherits fd 2) is built, so the SP1
-    // progress reader can see the server's lines. Best-effort: on failure
-    // it leaves stderr untouched.
-    sp1_progress::install();
 
     // Set up the SP1 SDK logger.
     utils::setup_logger();
