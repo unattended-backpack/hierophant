@@ -6,7 +6,7 @@ use log::{error, info};
 use network_lib::{
     ContemplantProofStatus, ProgressUpdate, Risc0ProofMode, Risc0ProofRequest, VmKind,
 };
-use risc0_zkvm::{Executor, ExecutorEnv, ProverOpts, Receipt, default_executor, default_prover};
+use risc0_zkvm::{ExecutorEnv, ProverOpts, Receipt, default_executor, default_prover};
 use sp1_sdk::network::proto::base::types::ExecutionStatus;
 use tokio::{sync::mpsc, time::Instant};
 
