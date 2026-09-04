@@ -20,7 +20,6 @@ use progress::WorkerEvent;
 use prove::ProverBackend;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use tracing_subscriber::layer::SubscriberExt;
 
 #[derive(Parser)]
 #[command(about = "OpenVM proving/verification worker (subprocess of hierophant or contemplant)")]

@@ -291,8 +291,3 @@ impl Display for WorkerStatus {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-}

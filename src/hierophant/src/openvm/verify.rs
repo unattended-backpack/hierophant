@@ -70,8 +70,8 @@ pub fn verify_openvm_proof(
     };
     let mut last_err: Option<std::io::Error> = None;
     for attempt in 1..=VERIFY_TRANSPORT_RETRIES {
-        // Verify emits no Progress frames; the callback is never invoked.
-        match worker().call_blocking(&req, |_, _, _| {}) {
+        // Verify emits no Size frames; the callback is never invoked.
+        match worker().call_blocking(&req, |_| {}) {
             Ok(WorkerResponse::VerifyOk) => return Ok(()),
             Ok(WorkerResponse::Err(msg)) => return Err(anyhow!("{msg}")),
             Ok(_) => return Err(anyhow!("openvm-worker returned an unexpected response kind")),
@@ -97,7 +97,7 @@ pub fn verify_openvm_proof(
 pub fn openvm_version() -> String {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION
-        .get_or_init(|| match worker().call_blocking(&WorkerRequest::Version, |_, _, _| {}) {
+        .get_or_init(|| match worker().call_blocking(&WorkerRequest::Version, |_| {}) {
             Ok(WorkerResponse::Version(v)) => v,
             Ok(_) | Err(_) => {
                 warn!("could not query openvm-worker for its OPENVM_VERSION");
