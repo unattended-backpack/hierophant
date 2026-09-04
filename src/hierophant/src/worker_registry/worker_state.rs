@@ -12,32 +12,36 @@ use tokio::{sync::mpsc, time::Instant};
 pub struct WorkerState {
     pub name: String,
     pub status: WorkerStatus,
-    pub supported_vms: Vec<VmKind>,
-    // Whether this worker can produce RISC Zero Groth16 proofs. Reported by
-    // the contemplant at registration; used by `handle_assign_proof` to skip
-    // workers that would reject a Groth16 request.
-    pub groth16_enabled: bool,
-    // Whether this worker can produce OpenVM EVM (halo2-wrapped) proofs.
-    // Reported by the contemplant at registration; used by
-    // `handle_assign_proof` to skip workers that would reject an EVM request.
-    pub openvm_evm_enabled: bool,
+    // VM kinds + per-VM sub-capabilities, consolidated (replaces the old
+    // supported_vms + groth16_enabled + openvm_evm_enabled trio).
+    pub capabilities: Capabilities,
     pub strikes: usize,
-    // Tracks the running average over SP1 Compressed proofs (the canonical
-    // "span proof" for SP1 op-succinct workloads); RISC Zero Composite proofs
-    // also roll into this metric.
-    pub num_completed_span_proofs: usize,
-    pub average_span_proof_time: f32,
-    #[serde(skip_serializing)]
+    // Whole-seconds age of the last heartbeat from this contemplant — the
+    // liveness signal ("is this worker alive / has it gone quiet?"). In the
+    // cycle-rate ETA model the ETA is a static estimate, so the heartbeat
+    // (not a progress tick) is what tells an observer the worker is alive.
+    #[serde(rename = "last_heartbeat_secs", serialize_with = "serialize_instant_age_secs")]
     pub last_heartbeat: Instant,
     #[serde(skip_serializing)]
     pub from_hierophant_sender: mpsc::Sender<FromHierophantMessage>,
+    // Control-plane URL for dropping this contemplant from its Magister;
+    // internal, not part of the observability view.
+    #[serde(skip_serializing)]
     pub magister_drop_endpoint: Option<String>,
-    // The contemplant process's per-startup nonce (see
-    // `WorkerRegisterInfo::instance_nonce`). A re-registration with the
-    // SAME nonce is a ws reconnect of a still-running process — its
-    // in-flight assignment is carried onto the fresh entry; a different
-    // nonce is a restarted process whose stale entry is simply removed.
+    // Per-startup nonce for reconnect-vs-restart detection; internal.
+    #[serde(skip_serializing)]
     pub instance_nonce: u64,
+}
+
+// A contemplant's proving capabilities, as reported at registration.
+#[derive(Clone, Debug, Serialize)]
+pub struct Capabilities {
+    pub vms: Vec<VmKind>,
+    // RISC Zero Groth16 (fresh or STARK -> Groth16 wrap). Meaningful only
+    // when `vms` contains Risc0.
+    pub risc0_groth16: bool,
+    // OpenVM EVM (halo2-wrapped). Meaningful only when `vms` contains OpenVm.
+    pub openvm_evm: bool,
 }
 
 impl WorkerState {
@@ -53,12 +57,12 @@ impl WorkerState {
         Self {
             name,
             status: WorkerStatus::Idle,
-            supported_vms,
-            groth16_enabled,
-            openvm_evm_enabled,
+            capabilities: Capabilities {
+                vms: supported_vms,
+                risc0_groth16: groth16_enabled,
+                openvm_evm: openvm_evm_enabled,
+            },
             strikes: 0,
-            num_completed_span_proofs: 0,
-            average_span_proof_time: 0.0,
             last_heartbeat: Instant::now(),
             from_hierophant_sender,
             magister_drop_endpoint,
@@ -71,7 +75,7 @@ impl WorkerState {
     }
 
     pub(super) fn supports(&self, vm: VmKind) -> bool {
-        self.supported_vms.contains(&vm)
+        self.capabilities.vms.contains(&vm)
     }
 
     // True iff this worker can serve the given request. Combines the VM-kind
@@ -81,36 +85,19 @@ impl WorkerState {
         if !self.supports(request.vm()) {
             return false;
         }
-        if request.needs_groth16() && !self.groth16_enabled {
+        if request.needs_groth16() && !self.capabilities.risc0_groth16 {
             return false;
         }
-        if request.needs_openvm_evm() && !self.openvm_evm_enabled {
+        if request.needs_openvm_evm() && !self.capabilities.openvm_evm {
             return false;
         }
         true
     }
 
-    pub(super) fn completed_proof(&mut self, minutes_to_complete: f32) {
-        if let WorkerStatus::Busy { vm, mode_name, .. } = &self.status {
-            // span-proof tracking: SP1 Compressed, RISC Zero Composite, and
-            // OpenVM App are the respective "default recursion-segment" modes
-            // that op-succinct-style workloads issue in bulk.  Average those
-            // together.
-            let is_span = matches!(
-                (vm, mode_name.as_str()),
-                (VmKind::Sp1, "COMPRESSED")
-                    | (VmKind::Risc0, "COMPOSITE")
-                    | (VmKind::OpenVm, "APP")
-            );
-            if is_span {
-                let n = self.num_completed_span_proofs as f32 + 1.0;
-                let old_average = self.average_span_proof_time;
-                let new_average = add_to_average(n, old_average, minutes_to_complete);
-                self.average_span_proof_time = new_average;
-                self.num_completed_span_proofs += 1;
-            }
-        }
-
+    // Return the worker to Idle after a successful proof. Per-(vm, mode)
+    // throughput is now learned contemplant-side (see rate_model), so the
+    // hierophant no longer tracks proof-time averages here.
+    pub(super) fn completed_proof(&mut self) {
         self.status = WorkerStatus::Idle;
         self.strikes = 0;
     }
@@ -227,13 +214,18 @@ impl WorkerState {
 impl Display for WorkerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let vms = self
-            .supported_vms
+            .capabilities
+            .vms
             .iter()
             .map(|v| v.as_str())
             .collect::<Vec<_>>()
             .join(",");
-        let groth16 = if self.groth16_enabled { ", Groth16" } else { "" };
-        let openvm_evm = if self.openvm_evm_enabled {
+        let groth16 = if self.capabilities.risc0_groth16 {
+            ", Groth16"
+        } else {
+            ""
+        };
+        let openvm_evm = if self.capabilities.openvm_evm {
             ", OpenVM-EVM"
         } else {
             ""
@@ -253,7 +245,7 @@ pub enum WorkerStatus {
         request_id: B256,
         vm: VmKind,
         mode_name: String,
-        #[serde(serialize_with = "serialize_instant_as_minutes")]
+        #[serde(rename = "elapsed_secs", serialize_with = "serialize_instant_age_secs")]
         start_time: Instant,
         progress: Option<ProgressUpdate>,
         #[serde(skip_serializing)]
@@ -261,13 +253,14 @@ pub enum WorkerStatus {
     },
 }
 
-pub fn serialize_instant_as_minutes<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
+// Serialize an Instant as its whole-seconds age (elapsed since capture), so
+// the client gets a machine-readable number to format as it likes rather
+// than a lossy pre-rounded human string.
+pub fn serialize_instant_age_secs<S>(instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    let minutes_elapsed = (instant.elapsed().as_secs_f64() / 60.0).round() as u32;
-    let minutes_elapsed = format!("{minutes_elapsed} minutes ago");
-    serializer.serialize_str(&minutes_elapsed)
+    serializer.serialize_u64(instant.elapsed().as_secs())
 }
 
 impl Display for WorkerStatus {
@@ -298,24 +291,8 @@ impl Display for WorkerStatus {
     }
 }
 
-// where n is the new number of elements
-fn add_to_average(n: f32, old_average: f32, new_element: f32) -> f32 {
-    old_average + ((new_element - old_average) / n)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_add_to_average() {
-        let a = add_to_average(3.0, 5.0, 5.0);
-        assert_eq!(a, 5.0);
-
-        let a = add_to_average(2.0, 1.0, 0.0);
-        assert_eq!(a, 0.5);
-
-        let a = add_to_average(4.0, 6.0, 4.0);
-        assert_eq!(a, 5.5);
-    }
 }

@@ -309,7 +309,7 @@ pub fn prove_blocking(
     backend: ProverBackend,
     request_id: String,
     with_total: bool,
-    total: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    tx: std::sync::mpsc::Sender<crate::progress::WorkerEvent>,
 ) -> Result<Vec<u8>> {
     let app_config = build_app_config(app_config_toml.as_deref())?;
     let config_key = config_cache_key(app_config_toml.as_ref());
@@ -319,18 +319,18 @@ pub fn prove_blocking(
         stdin.write_bytes(stream);
     }
 
-    // Learn the exact segment total before proving, so the per-segment
-    // ticks carry a percentage. A metered execution pass is cheap next to
-    // proving; on failure we log and fall back to an indeterminate count
-    // (proving is never affected).
+    // Report the segment count (the size signal for the contemplant's ETA
+    // model) via a metered execution pass before proving. Cheap next to
+    // proving; on failure we log and send nothing (the contemplant then
+    // shows no ETA rather than a wrong one).
     if with_total {
         let sdk = AnySdk::new(backend, app_config.clone(), AggregationSystemParams::default())?;
         match sdk.segment_count(elf.clone(), stdin.clone()) {
             Ok(n) => {
-                info!("OpenVM segment total (metered): {n}");
-                total.store(n, std::sync::atomic::Ordering::Relaxed);
+                info!("OpenVM segment count (metered): {n}");
+                let _ = tx.send(crate::progress::WorkerEvent::Size(n));
             }
-            Err(e) => warn!("OpenVM total computation failed, using live count: {e}"),
+            Err(e) => warn!("OpenVM segment-count pass failed, no ETA: {e}"),
         }
     }
 

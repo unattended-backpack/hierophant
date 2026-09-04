@@ -1,15 +1,9 @@
 //! OpenVM proving via the `openvm-worker` subprocess.
 //!
-//! The proving implementation that used to live in this file (openvm-sdk
-//! keygen + prove, key caches, ~/.openvm artifact loading) moved verbatim
-//! into `src/openvm-worker` at the 6.5 split: openvm-sdk exact-pins the
-//! upstream plonky3 crates while sp1-sdk 6.2.2+ pins the Succinct forks
-//! at the same 0.4 minor, so the two stacks cannot share this binary's
-//! dependency graph. This executor is now a client that spawns the
-//! worker once (warm key caches live for the worker's lifetime, exactly
-//! like the old in-process statics) and drives it over a unix socket,
-//! with the same death-respawn-demote hardening the SP1 executor applies
-//! to its sp1-gpu-server child.
+//! The proving implementation lives in `src/openvm-worker` (the 6.5 split:
+//! openvm-sdk and sp1-sdk can't share a dependency graph). This executor is a
+//! client that spawns the worker once (warm key caches) and drives it over a
+//! unix socket, with death-respawn-demote hardening mirroring the SP1 path.
 
 use crate::config::ProverBackend;
 use crate::worker_state::WorkerState;
@@ -17,41 +11,30 @@ use crate::worker_state::WorkerState;
 use anyhow::{Result, anyhow};
 use log::{error, info, warn};
 use network_lib::{
-    ContemplantProofStatus, OpenVmProofMode, OpenVmProofRequest, ProgressUpdate, ProvePhase,
+    ContemplantProofStatus, OpenVmProofMode, OpenVmProofRequest, ProgressUpdate, VmKind,
 };
-use openvm_worker_proto::{
-    ProofMode, ProvePhase as WireProvePhase, WorkerClient, WorkerRequest, WorkerResponse,
-};
+use openvm_worker_proto::{ProofMode, WorkerClient, WorkerRequest, WorkerResponse};
 use sp1_sdk::network::proto::base::types::ExecutionStatus;
 use std::sync::{
     Arc,
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicU32, AtomicU64, Ordering},
 };
 use tokio::{sync::mpsc, time::Instant};
 
-/// Consecutive worker transport deaths tolerated before the executor
-/// stops respawning `openvm-worker` and permanently drops the worker's
-/// OpenVM capability (advertised at the next ws registration). Mirrors
-/// MAX_CONSECUTIVE_CUDA_DEATHS on the SP1 side: respawns rescue
-/// transient deaths (an OOM spike mid-keygen, a driver hiccup); a box
-/// that kills the worker this many proofs in a row is structurally
-/// unfit for OpenVM work.
+/// Consecutive worker transport deaths tolerated before the executor stops
+/// respawning `openvm-worker` and drops the worker's OpenVM capability.
 const MAX_CONSECUTIVE_WORKER_DEATHS: u32 = 3;
 
 #[derive(Clone)]
 pub struct OpenVmExecutor {
     pub backend: ProverBackend,
     pub evm_enabled: bool,
-    /// Owns the openvm-worker child; spawned on first use and respawned
-    /// by the client after a death. Shared so every proof reuses the
-    /// same long-lived worker (whose in-process key caches carry the
-    /// warmth the old in-process statics had).
+    /// Owns the long-lived openvm-worker child (warm key caches).
     client: Arc<WorkerClient>,
-    /// Consecutive transport deaths; reset to zero by any response from
-    /// a live worker (including request-level failures).
+    /// Consecutive transport deaths; reset by any response from a live worker.
     worker_deaths: Arc<AtomicU32>,
-    /// Ask the worker to compute the exact segment total (execute_metered)
-    /// so progress is a percentage rather than a bare count.
+    /// Ask the worker to report its segment count (execute_metered) so the
+    /// cycle-rate ETA model has a size signal. Config `compute_proof_totals`.
     compute_totals: bool,
 }
 
@@ -72,9 +55,6 @@ impl OpenVmExecutor {
             args.push("--evm".to_string());
         }
         let client = Arc::new(WorkerClient::new(socket, args));
-        // Spawn eagerly so a missing/broken worker binary is loud at
-        // startup rather than at the first assigned proof; failures here
-        // are retried lazily by call_blocking, so only log.
         if let Err(e) = client.ensure_running() {
             error!("failed to spawn openvm-worker at startup (will retry per request): {e}");
         }
@@ -87,10 +67,8 @@ impl OpenVmExecutor {
         }
     }
 
-    /// True once the worker has died [`MAX_CONSECUTIVE_WORKER_DEATHS`]
-    /// times in a row: respawns have stopped, and `supported_vms()`
-    /// omits OpenVM from the worker's capabilities at its next
-    /// registration.
+    /// True once the worker has died [`MAX_CONSECUTIVE_WORKER_DEATHS`] times
+    /// in a row: respawns have stopped and `supported_vms()` omits OpenVM.
     pub fn worker_permanently_dead(&self) -> bool {
         self.worker_deaths.load(Ordering::Relaxed) >= MAX_CONSECUTIVE_WORKER_DEATHS
     }
@@ -101,17 +79,6 @@ fn to_proto_mode(mode: OpenVmProofMode) -> ProofMode {
         OpenVmProofMode::App => ProofMode::App,
         OpenVmProofMode::Stark => ProofMode::Stark,
         OpenVmProofMode::Evm => ProofMode::Evm,
-    }
-}
-
-// The worker speaks the proto ProvePhase mirror (proto cannot link
-// network-lib); map it back to the wire enum for the proof store.
-fn from_proto_phase(phase: WireProvePhase) -> ProvePhase {
-    match phase {
-        WireProvePhase::Execute => ProvePhase::Execute,
-        WireProvePhase::Prove => ProvePhase::Prove,
-        WireProvePhase::Aggregate => ProvePhase::Aggregate,
-        WireProvePhase::Wrap => ProvePhase::Wrap,
     }
 }
 
@@ -136,33 +103,43 @@ pub(super) async fn execute(
         .insert(proof_request.request_id, initial_status)
         .await;
 
-    // Kick off with an Execute-phase tick so hierophant's progress
-    // watchdog sees work has started; the worker then streams real
-    // per-segment Prove ticks over the socket (see below).
+    let request_id = proof_request.request_id;
+    let mode_name = proof_request.mode.as_str().to_string();
+
+    // Executing: no size / ETA yet.
     state
         .proof_store_client
-        .proof_progress_update(
-            proof_request.request_id,
-            ProgressUpdate::indeterminate(ProvePhase::Execute, 1),
-        )
+        .proof_progress_update(request_id, ProgressUpdate::executing())
         .await;
 
-    let request_id = proof_request.request_id;
     let display = format!(
         "OpenVM {} proof with request id {}",
         proof_request.mode.as_str(),
         request_id
     );
 
-    // Bridge the worker's synchronous progress callback (fired on the
-    // blocking thread) to the async proof store. UnboundedSender::send is
-    // sync and non-blocking, so it is safe to call from the callback.
-    let (progress_tx, mut progress_rx) =
-        tokio::sync::mpsc::unbounded_channel::<ProgressUpdate>();
+    // The worker reports OpenVM's segment count once (a Size frame) via the
+    // call_blocking callback on the blocking thread. Bridge it to an async
+    // task that turns it into a live ETA from this contemplant's learned
+    // rate; a shared cell keeps it for the completion path to record.
+    let size_cell = Arc::new(AtomicU64::new(0));
+    let (size_tx, mut size_rx) = tokio::sync::mpsc::unbounded_channel::<u64>();
     {
         let store = state.proof_store_client.clone();
+        let rate_model = state.rate_model.clone();
+        let size_cell = size_cell.clone();
+        let mode_name = mode_name.clone();
         tokio::spawn(async move {
-            while let Some(update) = progress_rx.recv().await {
+            if let Some(segments) = size_rx.recv().await {
+                size_cell.store(segments, Ordering::Relaxed);
+                let update = match rate_model
+                    .lock()
+                    .await
+                    .estimate_secs(VmKind::OpenVm, &mode_name, segments)
+                {
+                    Some(est) => ProgressUpdate::proving(segments, est),
+                    None => ProgressUpdate::no_history(),
+                };
                 store.proof_progress_update(request_id, update).await;
             }
         });
@@ -171,10 +148,6 @@ pub(super) async fn execute(
     tokio::task::spawn(async move {
         let start_time = Instant::now();
 
-        // The worker call blocks for the whole proving run; keep it off
-        // the async runtime. NOTE: like the RISC Zero path, `mock` is
-        // accepted but not implemented for OpenVM; a real proof is
-        // produced regardless.
         let req = WorkerRequest::Prove {
             request_id: request_id.to_string(),
             mode: to_proto_mode(proof_request.mode),
@@ -185,21 +158,17 @@ pub(super) async fn execute(
         };
         let client = executor.client.clone();
         let call_res = tokio::task::spawn_blocking(move || {
-            client.call_blocking(&req, |phase, done, total| {
-                let _ = progress_tx.send(ProgressUpdate::Phase {
-                    phase: from_proto_phase(phase),
-                    done,
-                    total,
-                });
+            client.call_blocking(&req, |segments| {
+                let _ = size_tx.send(segments);
             })
         })
         .await
         .map_err(|e| anyhow!("OpenVM worker join error: {e}"));
 
-        let minutes = (start_time.elapsed().as_secs_f32() / 60.0).round() as u32;
+        let elapsed_secs = start_time.elapsed().as_secs_f64();
+        let minutes = (elapsed_secs / 60.0).round() as u32;
 
-        // Split transport failures (worker health) from request failures
-        // (this proof's problem) before the shared reporting below.
+        // Split transport failures (worker health) from request failures.
         let (proof_res, transport_death): (Result<Vec<u8>>, bool) = match call_res {
             Ok(Ok(WorkerResponse::Proof(bytes))) => (Ok(bytes), false),
             Ok(Ok(WorkerResponse::Err(msg))) => {
@@ -209,10 +178,7 @@ pub(super) async fn execute(
                 Err(anyhow!("openvm-worker returned an unexpected response kind")),
                 false,
             ),
-            Ok(Err(io_err)) => (
-                Err(anyhow!("openvm-worker transport failure: {io_err}")),
-                true,
-            ),
+            Ok(Err(io_err)) => (Err(anyhow!("openvm-worker transport failure: {io_err}")), true),
             Err(join_err) => (Err(join_err), false),
         };
 
@@ -220,6 +186,15 @@ pub(super) async fn execute(
             Ok(proof_bytes) => {
                 info!("Completed {display} in {minutes} minutes");
                 executor.worker_deaths.store(0, Ordering::Relaxed);
+                // Learn this box's throughput for this (vm, mode).
+                let segments = size_cell.load(Ordering::Relaxed);
+                if segments > 0 {
+                    state
+                        .rate_model
+                        .lock()
+                        .await
+                        .record(VmKind::OpenVm, &mode_name, segments, elapsed_secs);
+                }
                 state
                     .proof_store_client
                     .proof_status_update(
@@ -228,49 +203,38 @@ pub(super) async fn execute(
                         Some(proof_bytes),
                     )
                     .await;
+                state
+                    .proof_store_client
+                    .proof_progress_update(request_id, ProgressUpdate::Done)
+                    .await;
             }
             Err(e) => {
                 let error_msg = format!("Error proving {display} at minute {minutes}: {e}");
-
-                // Report the failure and stay alive. A request whose guest
-                // faults (a poisoned input, a program bug) is the request's
-                // problem, not the worker's: exiting here lets any bad
-                // request kill every contemplant in the fleet one by one.
-                // Reporting `Unexecutable` lets hierophant settle the proof
-                // per its policy while this worker returns to Idle.
                 warn!("{error_msg}");
 
                 state
                     .proof_store_client
-                    .proof_status_update(
-                        request_id,
-                        ExecutionStatus::Unexecutable.into(),
-                        None,
-                    )
+                    .proof_status_update(request_id, ExecutionStatus::Unexecutable.into(), None)
                     .await;
 
-                // A transport death is a WORKER-health failure, not a
-                // request fault. The client already killed the child, so
-                // the next request respawns it; count consecutive deaths
-                // and, past the cap, force re-registration so
-                // `supported_vms()` drops OpenVM while other VMs keep
-                // serving (exact mirror of the SP1 CUDA arrangement).
+                // A transport death is a WORKER-health failure, not a request
+                // fault. The client already killed the child; count deaths
+                // and, past the cap, force re-registration so OpenVM is
+                // dropped while other VMs keep serving.
                 if transport_death {
                     let responded = !executor.worker_permanently_dead();
-                    let deaths =
-                        executor.worker_deaths.fetch_add(1, Ordering::Relaxed) + 1;
+                    let deaths = executor.worker_deaths.fetch_add(1, Ordering::Relaxed) + 1;
                     if deaths < MAX_CONSECUTIVE_WORKER_DEATHS {
                         error!(
                             "openvm-worker died (consecutive death {deaths} of \
-                             {MAX_CONSECUTIVE_WORKER_DEATHS}); it will be respawned on \
-                             the next request"
+                             {MAX_CONSECUTIVE_WORKER_DEATHS}); it will be respawned on the \
+                             next request"
                         );
                     } else if responded {
                         error!(
-                            "openvm-worker died {deaths} consecutive times; giving up \
-                             on respawns. Forcing re-registration to drop OpenVM from \
-                             this worker's capabilities; SP1/R0 capabilities are \
-                             unaffected."
+                            "openvm-worker died {deaths} consecutive times; giving up on \
+                             respawns. Forcing re-registration to drop OpenVM from this \
+                             worker's capabilities; SP1/R0 capabilities are unaffected."
                         );
                         state.reconnect.notify_one();
                     }

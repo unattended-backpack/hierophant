@@ -143,8 +143,8 @@ RUN --mount=type=cache,id=hierophant-cargo-registry-${BUILD_CACHE_ID},target=/ho
   echo "Using pre-built binary from ./out/hierophant"; \
   test -f /build/out/hierophant || (echo "ERROR: BUILD_TYPE=prebuilt but no binary found in ./out/hierophant" >&2 && exit 1); \
   cp /build/out/hierophant /build/hierophant-binary; \
-  test -f /build/out/openvm-worker || (echo "ERROR: BUILD_TYPE=prebuilt but no binary found in ./out/openvm-worker" >&2 && exit 1); \
-  cp /build/out/openvm-worker /build/openvm-worker-binary; \
+  test -f /build/out/openvm-worker-cpu || (echo "ERROR: BUILD_TYPE=prebuilt but no binary found in ./out/openvm-worker-cpu (the CUDA-free hierophant verify worker; run make build)" >&2 && exit 1); \
+  cp /build/out/openvm-worker-cpu /build/openvm-worker-binary; \
 else \
   echo "Building from source ..."; \
   cargo build --release --bin hierophant --locked; \

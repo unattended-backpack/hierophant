@@ -220,6 +220,15 @@ clean:
 	rm -rf target/
 	rm -f result result-*
 
+# Cargo target dirs, overridable so the release CI can point them at a
+# persistent on-disk cache (the self-hosted runner mounts one) while a
+# clean checkout still gives fresh sources. Two dirs on purpose: the
+# openvm-worker is an excluded workspace with a conflicting dep graph, so
+# sharing one target dir with the main workspace would thrash the cache.
+CARGO_TARGET_DIR ?= target
+OPENVM_WORKER_TARGET_DIR ?= src/openvm-worker/target
+export CARGO_TARGET_DIR
+
 .PHONY: build
 build:
 	@echo "Building native artifacts ..."
@@ -227,10 +236,17 @@ build:
 	mkdir -p out
 	cargo build --release --bin hierophant
 	cargo build --release --bin contemplant --features "$(NATIVE_CONTEMPLANT_MAIN_FEATURES)"
-	cargo build --release --manifest-path src/openvm-worker/Cargo.toml --features "$(NATIVE_OPENVM_WORKER_FEATURES)"
-	cp ./target/release/hierophant ./out/hierophant
-	cp ./target/release/contemplant ./out/contemplant
-	cp ./src/openvm-worker/target/release/openvm-worker ./out/openvm-worker
+	CARGO_TARGET_DIR=$(OPENVM_WORKER_TARGET_DIR) cargo build --release --manifest-path src/openvm-worker/Cargo.toml --features "$(NATIVE_OPENVM_WORKER_FEATURES)"
+	cp $(CARGO_TARGET_DIR)/release/hierophant ./out/hierophant
+	cp $(CARGO_TARGET_DIR)/release/contemplant ./out/contemplant
+	cp $(OPENVM_WORKER_TARGET_DIR)/release/openvm-worker ./out/openvm-worker
+	# Second, CUDA-free openvm-worker for the hierophant (verify only). The
+	# coordinator ships no CUDA, so its worker must not link libcudart/libcuda;
+	# built with NO features regardless of CONTEMPLANT_FEATURES (which carries
+	# the contemplant's GPU features). Consumed by Dockerfile.hierophant's
+	# prebuilt path as ./out/openvm-worker-cpu.
+	CARGO_TARGET_DIR=$(OPENVM_WORKER_TARGET_DIR) cargo build --release --manifest-path src/openvm-worker/Cargo.toml
+	cp $(OPENVM_WORKER_TARGET_DIR)/release/openvm-worker ./out/openvm-worker-cpu
 	@echo "Build complete."
 
 .PHONY: test

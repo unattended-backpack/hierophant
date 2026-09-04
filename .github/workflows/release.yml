@@ -76,6 +76,12 @@ jobs:
       options: --user 1000:1000 --group-add 960 --group-add 987
       volumes:
         - /opt/github-runner/secrets:/opt/github-runner/secrets:ro
+        # Persistent Rust build cache for the from-scratch native compile.
+        # The runner is single-tenant and the sources are lockfile-pinned +
+        # checksummed, so reusing compiled artifacts is safe. CARGO_HOME /
+        # CARGO_TARGET_DIR on the compile steps point here. One-time host
+        # setup: sudo install -d -o 1000 -g 1000 /opt/hierophant-ci-cache
+        - /opt/hierophant-ci-cache:/ci-cache
     outputs:
       build-timestamp: ${{ steps.metadata.outputs.timestamp }}
       sha-short: ${{ steps.metadata.outputs.sha_short }}
@@ -145,7 +151,9 @@ jobs:
       if: ${{ inputs.reuse_binaries_from == '' }}
       id: tests
       env:
-        CARGO_HOME: ${{ github.workspace }}/.cargo
+        CARGO_HOME: /ci-cache/cargo
+        CARGO_TARGET_DIR: /ci-cache/target-main
+        OPENVM_WORKER_TARGET_DIR: /ci-cache/target-openvm-worker
       run: |
         echo "Running tests using 'make test'..."
 
@@ -177,7 +185,9 @@ jobs:
       if: ${{ inputs.reuse_binaries_from == '' }}
       id: build-native
       env:
-        CARGO_HOME: ${{ github.workspace }}/.cargo
+        CARGO_HOME: /ci-cache/cargo
+        CARGO_TARGET_DIR: /ci-cache/target-main
+        OPENVM_WORKER_TARGET_DIR: /ci-cache/target-openvm-worker
 
         # The released contemplant feature set is read from .env.maintainer's
         # CONTEMPLANT_RELEASE_FEATURES (exported in the run script below) -
@@ -426,16 +436,27 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
-    - name: Clean up Docker resources
+    - name: Trim cold Docker resources (keep build cache warm)
       run: |
         echo "Current disk usage:"
         df -h
         docker system df || true
 
-        echo "Cleaning up Docker resources..."
-        docker builder prune -af || true
+        # Keep the BuildKit build cache and base images warm between
+        # runs. Prebuilt image assembly re-imports the petros store chunks
+        # and re-vendors the CDN assets, and BuildKit keys those layers on
+        # content digest, so a warm cache turns them into cache hits instead
+        # of re-running from cold each release (and each matrix leg). The
+        # runner has ample disk; cap the build cache at a generous ceiling so
+        # it self-limits without wiping hot entries, and reap only stopped
+        # containers and dangling (untagged) images so the petros base image
+        # and recent layers survive. (If a newer Docker rejects
+        # --keep-storage the `|| true` degrades to keeping the whole cache,
+        # which is the intent anyway.)
+        echo "Trimming only cold Docker resources; build cache kept warm..."
+        docker builder prune -f --keep-storage=80GB || true
         docker container prune -f || true
-        docker image prune -af || true
+        docker image prune -f || true
 
         echo "After cleanup:"
         df -h
