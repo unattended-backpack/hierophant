@@ -72,6 +72,14 @@ impl OpenVmExecutor {
     pub fn worker_permanently_dead(&self) -> bool {
         self.worker_deaths.load(Ordering::Relaxed) >= MAX_CONSECUTIVE_WORKER_DEATHS
     }
+
+    /// Evict the OpenVM worker to free its GPU VRAM (~15.5GB halo2 key) so
+    /// another zkVM can run on this contemplant. Kills the worker child; the
+    /// next OpenVM proof re-spawns it (reloading the key from disk). See
+    /// proof_executor::execute_proof's single-hot-backend residency switch.
+    pub fn release_gpu(&self) {
+        self.client.mark_dead();
+    }
 }
 
 fn to_proto_mode(mode: OpenVmProofMode) -> ProofMode {

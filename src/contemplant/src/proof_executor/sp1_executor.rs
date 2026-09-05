@@ -44,6 +44,17 @@ impl Sp1Executor {
     pub fn backend_permanently_dead(&self) -> bool {
         self.cuda_deaths.load(Ordering::Relaxed) >= MAX_CONSECUTIVE_CUDA_DEATHS
     }
+
+    /// Evict the CUDA backend to free its GPU VRAM (~2.5GB) so another zkVM
+    /// can run on this contemplant. Dropping the `Arc<CudaProver>` reaps
+    /// sp1-gpu-server via kill_on_drop; the next SP1 proof rebuilds it.
+    /// No-op for the CPU backend (no GPU) or if already cold.
+    pub async fn release_gpu(&self) {
+        let mut p = self.active_prover.write().await;
+        if matches!(&*p, ActiveSp1Prover::Cuda(_)) {
+            *p = ActiveSp1Prover::Cold;
+        }
+    }
 }
 
 /// Transport-level death signature of the local `sp1-gpu-server` child.
@@ -113,6 +124,16 @@ pub(super) async fn execute(
         };
 
         let elf = proof_request.elf.clone();
+        // Re-warm the CUDA backend if it was evicted (single-hot-backend
+        // residency: another zkVM may have run here and released it). Rebuild
+        // re-spawns sp1-gpu-server. Skipped for mock proofs, which use the
+        // mock prover rather than the CUDA backend.
+        if !mock && matches!(&*executor.active_prover.read().await, ActiveSp1Prover::Cold) {
+            let rebuilt =
+                crate::worker_state::build_sp1_active(crate::config::ProverBackend::Cuda, &None)
+                    .await;
+            *executor.active_prover.write().await = rebuilt;
+        }
         // Clone the prover handle out under a brief read lock rather than
         // holding it across the (minutes-long) prove.
         let active_prover = executor.active_prover.read().await.clone();
@@ -131,6 +152,7 @@ pub(super) async fn execute(
             let exec_res = match &active_prover {
                 ActiveSp1Prover::Cpu(p) => p.execute(elf.clone().into(), stdin.clone()).await,
                 ActiveSp1Prover::Cuda(p) => p.execute(elf.clone().into(), stdin.clone()).await,
+                ActiveSp1Prover::Cold => unreachable!("SP1 prover re-warmed before use"),
             };
             match exec_res {
                 Ok((_public_values, report)) => {
@@ -186,6 +208,9 @@ pub(super) async fn execute(
                                 Ok(p.prove(&pk, stdin.clone()).mode(sp1_mode).await?)
                             }
                             .await
+                        }
+                        ActiveSp1Prover::Cold => {
+                            unreachable!("SP1 prover re-warmed before use")
                         }
                     }
                 }

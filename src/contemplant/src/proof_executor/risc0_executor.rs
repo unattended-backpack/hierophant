@@ -33,6 +33,13 @@ impl Risc0Executor {
             compute_totals,
         }
     }
+
+    /// R0 proves in-process with a per-proof `default_prover()` whose buffers
+    /// are freed when the proof returns; only a small (~1GB) CUDA context
+    /// persists. Nothing heavy to evict, so this is intentionally a no-op,
+    /// kept for a uniform residency interface across the three executors.
+    /// See proof_executor::execute_proof.
+    pub fn release_gpu(&self) {}
 }
 
 // Progress is the cycle-rate ETA model (see rate_model): a quick execute pass
