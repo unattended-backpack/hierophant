@@ -261,36 +261,47 @@ impl WorkerRegistry {
         let needs_groth16 = proof_request.needs_groth16();
         let needs_openvm_evm = proof_request.needs_openvm_evm();
 
-        // iterate over all workers, filtered to those that can serve this
-        // specific request (right VM + Groth16 capability when needed).
-        for (worker_addr, worker_state) in self.workers.iter_mut() {
-            debug!("Worker {worker_addr} state {worker_state}");
-
-            if !worker_state.can_serve(proof_request) {
-                continue;
-            }
-
-            // skip a worker if it's busy or return early if there's already a worker proving this
+        // First honor idempotency: if a worker is already proving THIS exact
+        // request (a retried assignment), we are already done.
+        for (worker_addr, worker_state) in self.workers.iter() {
             if let WorkerStatus::Busy {
                 request_id: workers_request_id,
                 ..
-            } = worker_state.status
+            } = &worker_state.status
             {
-                if workers_request_id == request_id {
+                if *workers_request_id == request_id {
                     info!(
                         "Received proof request for {target_vm} {mode_name} proof {request_id} but worker {worker_addr} is already busy with it"
                     );
                     return true;
-                } else {
-                    continue;
                 }
             }
+        }
 
-            debug!(
-                "Attemping to assign {target_vm} proof request {request_id} to worker {} at {worker_addr}",
-                worker_state.name
-            );
+        // VM-affinity: among capable, idle workers, prefer one already HOT for
+        // target_vm (its GPU backend resident) so the contemplant skips the
+        // evict+reload switch; fall back to any other capable idle worker.
+        let mut candidates: Vec<String> = Vec::new();
+        let mut cold: Vec<String> = Vec::new();
+        for (worker_addr, worker_state) in self.workers.iter() {
+            if !worker_state.can_serve(proof_request)
+                || !matches!(worker_state.status, WorkerStatus::Idle)
+            {
+                continue;
+            }
+            if worker_state.last_vm == Some(target_vm) {
+                candidates.push(worker_addr.clone());
+            } else {
+                cold.push(worker_addr.clone());
+            }
+        }
+        candidates.extend(cold);
 
+        for worker_addr in candidates {
+            let Some(worker_state) = self.workers.get_mut(&worker_addr) else {
+                continue;
+            };
+            let hot = worker_state.last_vm == Some(target_vm);
             let from_hierophant_message =
                 FromHierophantMessage::ProofRequest(proof_request.clone());
             match worker_state
@@ -306,8 +317,9 @@ impl WorkerRegistry {
                 }
                 Ok(_) => {
                     info!(
-                        "{target_vm} {mode_name} proof request {request_id} assigned to worker {} at {worker_addr}",
-                        worker_state.name
+                        "{target_vm} {mode_name} proof request {request_id} assigned to worker {} at {worker_addr} ({})",
+                        worker_state.name,
+                        if hot { "hot" } else { "cold, will switch zkVM" }
                     );
                     worker_state.assigned_proof(request_id, target_vm, mode_name.clone());
                     return true;

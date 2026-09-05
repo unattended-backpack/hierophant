@@ -12,6 +12,11 @@ use tokio::{sync::mpsc, time::Instant};
 pub struct WorkerState {
     pub name: String,
     pub status: WorkerStatus,
+    // VM of the most recently assigned proof, retained after the worker
+    // returns to Idle. The registry prefers routing a proof to a contemplant
+    // already "hot" for that VM (its GPU backend resident) to avoid the
+    // evict+reload switch cost (see the contemplant residency mechanism).
+    pub last_vm: Option<VmKind>,
     // VM kinds + per-VM sub-capabilities, consolidated (replaces the old
     // supported_vms + groth16_enabled + openvm_evm_enabled trio).
     pub capabilities: Capabilities,
@@ -57,6 +62,7 @@ impl WorkerState {
         Self {
             name,
             status: WorkerStatus::Idle,
+            last_vm: None,
             capabilities: Capabilities {
                 vms: supported_vms,
                 risc0_groth16: groth16_enabled,
@@ -124,6 +130,7 @@ impl WorkerState {
             progress: None,
             time_of_last_update: SystemTime::now(),
         };
+        self.last_vm = Some(vm); // VmKind is Copy; retained for hot-VM affinity
         self.strikes = 0;
     }
 

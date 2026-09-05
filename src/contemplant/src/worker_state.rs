@@ -11,6 +11,11 @@ use tokio::sync::Mutex;
 pub enum ActiveSp1Prover {
     Cuda(Arc<CudaProver>),
     Cpu(Arc<CpuProver>),
+    /// GPU released: the CUDA backend was evicted to free VRAM for another
+    /// zkVM. Dropping the Arc<CudaProver> reaps sp1-gpu-server via
+    /// kill_on_drop; the next SP1 proof rebuilds it. See execute_proof's
+    /// single-hot-backend residency switch.
+    Cold,
 }
 
 #[derive(Clone)]
@@ -36,6 +41,12 @@ pub struct WorkerState {
     // ETA (see rate_model). In-memory + per-process: this box self-
     // calibrates as it works.
     pub rate_model: Arc<Mutex<crate::rate_model::RateModel>>,
+    // Which zkVM's GPU resources are currently resident ("hot"). Proofs are
+    // serial (the registry sends one at a time): repeat proofs of the hot VM
+    // stay warm, but a request for a different VM first evicts the hot one to
+    // free VRAM, since a single GPU cannot hold all three backends resident.
+    // See proof_executor::execute_proof.
+    pub resident_vm: Arc<Mutex<Option<VmKind>>>,
 }
 
 impl WorkerState {
@@ -117,6 +128,7 @@ impl WorkerState {
             instance_nonce,
             reconnect: Arc::new(tokio::sync::Notify::new()),
             rate_model: Arc::new(Mutex::new(crate::rate_model::RateModel::new())),
+            resident_vm: Arc::new(Mutex::new(None)),
         }
     }
 
